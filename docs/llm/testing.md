@@ -1,3 +1,9 @@
+---
+description: "Testing guide — writing and running tests, shared fixtures, markers, and the golden-data API-test framework"
+tags: [agent, testing]
+category: guide
+---
+
 # Gromozeka — Testing Guide
 
 > **Audience:** LLM agents  
@@ -33,7 +39,7 @@ The mirror layout is the only valid location for test files:
 
 Example: to test `lib/ai/manager.py`, create `tests/lib/ai/test_manager.py` — never `lib/ai/test_manager.py`.
 
-**Sanctioned exception — `tests/dependencies/`:** This directory is the home for **dependency-usage regression tests** that pin the *current* behavior of pinned third-party libraries (`python-dateutil`, `tomli`, `python-magic`, `html-to-markdown`, `numpy`, `sqlite-vec`) so that a version bump silently changing behavior fails loudly. 79 tests across 6 files; each asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`). These tests map to **libraries, not source files**, so the mirror-layout convention does not apply — but they still live under `tests/`, so the "no collocated tests" rule is honored.
+**Sanctioned exception — `tests/dependencies/`:** This directory is the home for **dependency-usage regression tests** that pin the *current* behavior of pinned third-party libraries (`python-dateutil`, `tomli`, `python-magic`, `html-to-markdown`, `sqlite-vec`) so that a version bump silently changing behavior fails loudly. 58 tests across 5 files; each asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`). These tests map to **libraries, not source files**, so the mirror-layout convention does not apply — but they still live under `tests/`, so the "no collocated tests" rule is honored.
 
 **Sanctioned exception — `lib/ext_modules/grabliarium/tests/`:** The `lib/ext_modules/` subtree holds vendored extension subpackages (e.g. `grabliarium`) that ship with their own `pyproject.toml` and a collocated `tests/` directory *inside* the subpackage. This carve-out is intentional: each subpackage is treated as a self-contained unit, which is also why `make format` iterates `lib/ext_modules/*/` separately rather than auto-traversing them (see `AGENTS.md`). New vendored subpackages added under `lib/ext_modules/` may follow the same pattern.
 
@@ -53,7 +59,6 @@ tests/
 │   ├── integration/
 │   ├── migrations/
 │   ├── performance/
-│   ├── providers/
 │   └── repositories/
 ├── dependencies/                            # Dependency-usage regression tests (pin pinned-library behavior; exception to mirror layout)
 ├── fixtures/                                # Golden data / test fixtures
@@ -63,17 +68,19 @@ tests/
 │   ├── aurumentation/
 │   ├── bayes_filter/
 │   ├── cache/
+│   ├── db/                                  # SQL provider abstraction tests (mirrors lib/db/)
+│   │   └── providers/                       # BaseSQLProvider / sqlite3 / vector search
 │   ├── divination/                          # Divination tests + golden data
 │   ├── geocode_maps/                        # Geocoding tests + golden data
 │   ├── markdown/
 │   ├── max_bot/                             # MaxBotClient tests
+│   ├── max_webhook_receiver/                # Max webhook receiver tests (ADR-025): test_repository.py (15) + test_app.py (20) + test_main.py (5) over the receiver's OWN database; bot-side table drop covered by tests/database/test_migration_029_drop_webhook_updates.py (6)
 │   ├── openweathermap/                      # Weather tests + golden data
 │   ├── rate_limiter/
 │   ├── sandbox/
 │   ├── stats/
 │   ├── utils/
 │   └── yandex_search/                       # Search tests + golden data
-├── max_webhook_receiver/                    # Max webhook receiver process tests
 ├── models/                                  # Model tests
 ├── scripts/                                 # Script tests
 ├── services/                                # Service tests
@@ -133,6 +140,8 @@ python_classes = ["Test*"]
 python_functions = ["test_*", "test*"]
 asyncio_mode = "auto"  # All async tests run automatically
 ```
+
+**Warnings policy:** `filterwarnings = ["error::ResourceWarning"]` — any `ResourceWarning` (unclosed file/socket/client, in test or production code) is a hard test failure repo-wide. Fix leaks with deterministic close (try/finally, context manager, fixture teardown); suppress only with the narrowest per-test `@pytest.mark.filterwarnings` and a comment naming the third-party cause.
 
 **Test markers** (registered in `pyproject.toml` under `markers = [...]`; none are auto-skipped):
 - `@pytest.mark.slow` — slow tests (deselect with `-m "not slow"`)
@@ -284,6 +293,8 @@ class TestMyDbOperation:
 ## 6. Golden Data Tests
 
 Golden data tests use the lib/aurumentation framework with transport-level httpx patching. This system captures actual HTTP traffic and replays it during tests without making real API calls.
+
+> **httpx2 alias note:** the repo runs on `httpx2` (aliased as `httpx` process-wide via `httpx2.alias_httpx()` at the top of `tests/conftest.py` and `main.py` — see [`architecture.md`](architecture.md) ADR-021). References below to "patches httpx" / `httpx.AsyncClient` are literally what the source reads; at runtime those are `httpx2` symbols, and the patching mechanism is unaffected by the alias. See [`aurumentation.md`](aurumentation.md) for the full internals.
 
 ### Golden Data Locations
 

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Shutdown State Dump
 
 Durable notes from the shutdown diagnostics dump implementation (2026-07-04). Read this when working on `HandlersManager` shutdown logic or rate limiter statistics.

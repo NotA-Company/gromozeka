@@ -14,11 +14,11 @@ from typing import List, Optional
 from telegram import Chat
 
 import lib.utils as libUtils
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import ExcludedValue
 
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
-from ..models import ChatInfoDict, ChatUserDict
-from ..providers.base import ExcludedValue
+from ..models import ChatBotStatus, ChatInfoDict, ChatUserDict
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -181,14 +181,16 @@ class ChatUsersRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             caseInsensitiveComparison = sqlProvider.getCaseInsensitiveComparison("username", "username")
-            row = await sqlProvider.executeFetchOne(
-                f"""
+            query = f"""
                 SELECT * FROM chat_users
                 WHERE
                     chat_id = :chatId
                     AND {caseInsensitiveComparison}
-                LIMIT 1
-            """,
+                ORDER BY updated_at DESC
+            """
+            query = sqlProvider.applyPagination(query=query, limit=1)
+            row = await sqlProvider.executeFetchOne(
+                query,
                 {
                     "chatId": chatId,
                     "username": username,
@@ -268,17 +270,33 @@ class ChatUsersRepository(BaseRepository):
             logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
 
-    async def getUserChats(self, userId: int, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
+    async def getUserChats(
+        self,
+        userId: int,
+        *,
+        dataSource: Optional[str] = None,
+        botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE,
+    ) -> List[ChatInfoDict]:
         """
         Get chats user was seen in.
+
+        Returns chat information including the user's message count per chat.
 
         Args:
             userId: User identifier
             dataSource: Optional data source name. If None in multi-source mode,
                        aggregates from all sources and deduplicates by (userId, chatId).
+            botStatus: Optional filter for bot accessibility status. Defaults to
+                       ``ChatBotStatus.ACTIVE`` to exclude inaccessible chats. Pass
+                       ``None`` to return all chats regardless of status.
 
         Returns:
-            List of ChatInfoDict
+            List of ChatInfoDict with messages_count field populated per chat.
+
+        Note:
+            Multi-source deduplication keeps the first source's messages_count.
+            This is acceptable for an operational counter that may have minor
+            discrepancies across sources.
         """
 
         # Multi-source aggregation
@@ -293,13 +311,15 @@ class ChatUsersRepository(BaseRepository):
                 sqlProvider = await self.manager.getProvider(dataSource=sourceName, readonly=True)
                 rows = await sqlProvider.executeFetchAll(
                     """
-                    SELECT ci.* FROM chat_info ci
+                    SELECT ci.*, cu.messages_count FROM chat_info ci
                     JOIN chat_users cu ON cu.chat_id = ci.chat_id
                     WHERE
-                        user_id = :userId
+                        cu.user_id = :userId
+                        AND (:botStatus IS NULL OR ci.bot_status = :botStatus)
                 """,
                     {
                         "userId": userId,
+                        "botStatus": botStatus,
                     },
                 )
                 for row in rows:
@@ -315,13 +335,18 @@ class ChatUsersRepository(BaseRepository):
         logger.debug(f"Aggregated {len(allResults)} unique chats for user {userId}")
         return allResults
 
-    async def getAllGroupChats(self, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
+    async def getAllGroupChats(
+        self, *, dataSource: Optional[str] = None, botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE
+    ) -> List[ChatInfoDict]:
         """
         Get all group chats.
 
         Args:
             dataSource: Optional data source name. If None in multi-source mode,
                        aggregates from all sources and deduplicates by chatId.
+            botStatus: Optional filter for bot accessibility status. Defaults to
+                       ``ChatBotStatus.ACTIVE`` to exclude inaccessible chats. Pass
+                       ``None`` to return all chats regardless of status.
 
         Returns:
             List of ChatInfoDict
@@ -340,10 +365,12 @@ class ChatUsersRepository(BaseRepository):
                     SELECT ci.* FROM chat_info ci
                     WHERE
                         type in (:groupChat, :supergroupChat)
+                        AND (:botStatus IS NULL OR ci.bot_status = :botStatus)
                 """,
                     {
                         "groupChat": Chat.GROUP,
                         "supergroupChat": Chat.SUPERGROUP,
+                        "botStatus": botStatus.value if botStatus else None,
                     },
                 )
                 for row in rows:

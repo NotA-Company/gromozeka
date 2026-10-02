@@ -25,11 +25,13 @@ from .utils import (
     extractInt,
     getAgeInSecs,
     jsonDumps,
+    kebabToCamelCase,
     load_dotenv,
     now,
     packDict,
     parseDelay,
     slottedObjectToDict,
+    substituteEnvVars,
     unpackDict,
 )
 
@@ -41,11 +43,13 @@ __all__ = [
     "extractInt",
     "getAgeInSecs",
     "jsonDumps",
+    "kebabToCamelCase",
     "load_dotenv",
     "now",
     "packDict",
     "parseDelay",
     "slottedObjectToDict",
+    "substituteEnvVars",
     "unpackDict",
     # ttl_dict
     "TTLDict",

@@ -25,6 +25,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
 
 from lib import utils
@@ -43,6 +44,32 @@ logger = logging.getLogger(__name__)
 
 _R = TypeVar("_R", ModelRunResult, ModelStructuredResult)
 
+_requestSessionIdVar: ContextVar[Optional[str]] = ContextVar("llmRequestSessionId", default=None)
+"""Task-local session identifier for the in-flight LLM request.
+
+Set by the public ``AbstractModel.generate*`` wrappers for the duration of
+a single request so provider code that builds per-request payloads (e.g.
+``_getExtraParams`` implementations adding ``extra_headers`` like
+``x-opencode-session``) can read the conversation identity without
+extending every internal method signature. Each asyncio task gets its own
+copy, so concurrent requests never observe each other's session ID.
+"""
+
+
+def getCurrentRequestSessionId() -> Optional[str]:
+    """Return the session ID of the in-flight LLM request, if any.
+
+    Reads the task-local ``ContextVar`` populated by the public
+    ``AbstractModel.generate*`` wrappers. Provider/model code that needs the
+    conversation identity (e.g. to fill the ``x-opencode-session`` header
+    used by OpenCode Go for prompt-cache affinity) should call this helper.
+
+    Returns:
+        The session ID string for the current request, or ``None`` when
+        called outside a ``generate*`` call that received one.
+    """
+    return _requestSessionIdVar.get()
+
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM model implementations.
@@ -56,7 +83,13 @@ class AbstractModel(ABC):
         provider: The LLM provider instance that created this model.
         modelId: Unique identifier for the model.
         modelVersion: Version string for the model.
-        temperature: Temperature setting for text generation (0.0 to 2.0).
+        customParams: Per-model custom parameters passed through to the
+            underlying LLM API call. Common keys: ``temperature`` (float,
+            default 0.5), ``top_p``, ``max_tokens``, ``frequency_penalty``,
+            ``presence_penalty``, ``stop``, etc. Image-API keys (``size``,
+            ``quality``, ``n``, ...) are sent as-is when using image
+            generation. Provider-specific extensions (e.g. OpenRouter's
+            ``extra_headers``) are merged in by provider overrides.
         contextSize: Maximum context size in tokens.
         tiktokenEncoding: The tiktoken encoding name used for tokenization.
         tokensCountCoeff: Coefficient for token count estimation (default: 1.1).
@@ -81,10 +114,10 @@ class AbstractModel(ABC):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ):
         """Initialize model with provider and configuration.
 
@@ -92,14 +125,19 @@ class AbstractModel(ABC):
             provider: The LLM provider instance that manages this model.
             modelId: Unique identifier for the model (e.g., "gpt-4", "yandexgpt").
             modelVersion: Version string for the model (e.g., "latest", "v1").
-            temperature: Temperature setting for generation (0.0 = deterministic,
-                2.0 = very creative).
             contextSize: Maximum context size in tokens.
             statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call. Common keys: ``temperature`` (float,
+                default 0.5), ``top_p``, ``max_tokens``, ``frequency_penalty``,
+                ``presence_penalty``, ``stop``, etc. Image-API keys (``size``,
+                ``quality``, ``n``, ...) are sent as-is when using image
+                generation. Provider-specific extensions (e.g. OpenRouter's
+                ``extra_headers``) are merged in by provider overrides. When
+                ``None`` (default), an empty dict is stored.
 
         Raises:
-            ValueError: If temperature is not between 0.0 and 2.0.
             ValueError: If contextSize is negative.
         """
         self._config: Dict[str, Any] = extraConfig or {}
@@ -107,7 +145,7 @@ class AbstractModel(ABC):
         self.provider = provider
         self.modelId = modelId
         self.modelVersion = modelVersion
-        self.temperature = temperature
+        self._customParams: Dict[str, Any] = dict(customParams) if customParams is not None else {}
         self.contextSize = contextSize
 
         self.tiktokenEncoding = "o200k_base"
@@ -155,6 +193,7 @@ class AbstractModel(ABC):
         *,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text using the model with optional tools and fallback models.
 
@@ -173,6 +212,9 @@ class AbstractModel(ABC):
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
             consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             ModelRunResult containing the generated text, status, and metadata.
@@ -183,53 +225,58 @@ class AbstractModel(ABC):
                 CONTENT_FILTER, UNKNOWN, or ERROR) and no fallback models are provided,
                 or if all models (primary + fallbacks) fail.
         """
-        if fallbackModels:
-            # Use fallback mechanism when fallback models are provided
-            return await self._runWithFallback(
-                [self, *fallbackModels],
-                lambda model: model.generateText(
-                    messages=messages,
-                    tools=tools,
-                    fallbackModels=None,
-                    consumerId=consumerId,
-                ),
-                ModelRunResult,
-            )
-
-        # Original logic when no fallbacks
-        tokensCount = self.getEstimateTokensCount(messages)
-        logger.debug(
-            f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
-            f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
-        )
-
-        if self.contextSize and tokensCount > self.contextSize * 2:
-            # If estimated tokens twice exceed model context, return error immediately
-            return ModelRunResult(
-                rawResult=None,
-                status=ModelResultStatus.ERROR,
-                error=Exception(
-                    f"Context too large: Estimated tokens: {tokensCount} model context: {self.contextSize}"
-                ),
-            )
-
-        startTime = time.time()
+        token = _requestSessionIdVar.set(sessionId)
         try:
-            ret = await self._generateText(messages=messages, tools=tools)
-            ret.elapsedTime = time.time() - startTime
-        except Exception as e:
-            await self._recordAttemptStats(
-                consumerId,
-                ModelRunResult(
-                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
-                ),
-                "text",
-            )
-            raise
+            if fallbackModels:
+                # Use fallback mechanism when fallback models are provided
+                return await self._runWithFallback(
+                    [self, *fallbackModels],
+                    lambda model: model.generateText(
+                        messages=messages,
+                        tools=tools,
+                        fallbackModels=None,
+                        consumerId=consumerId,
+                        sessionId=sessionId,
+                    ),
+                    ModelRunResult,
+                )
 
-        await self._recordAttemptStats(consumerId, ret, "text")
-        self.printJSONLog(messages, ret, consumerId=consumerId)
-        return ret
+            # Original logic when no fallbacks
+            tokensCount = self.getEstimateTokensCount(messages)
+            logger.debug(
+                f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
+                f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
+            )
+
+            if self.contextSize and tokensCount > self.contextSize * 2:
+                # If estimated tokens twice exceed model context, return error immediately
+                return ModelRunResult(
+                    rawResult=None,
+                    status=ModelResultStatus.ERROR,
+                    error=Exception(
+                        f"Context too large: Estimated tokens: {tokensCount} model context: {self.contextSize}"
+                    ),
+                )
+
+            startTime = time.time()
+            try:
+                ret = await self._generateText(messages=messages, tools=tools)
+                ret.elapsedTime = time.time() - startTime
+            except Exception as e:
+                await self._recordAttemptStats(
+                    consumerId,
+                    ModelRunResult(
+                        rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                    ),
+                    "text",
+                )
+                raise
+
+            await self._recordAttemptStats(consumerId, ret, "text")
+            self.printJSONLog(messages, ret, consumerId=consumerId)
+            return ret
+        finally:
+            _requestSessionIdVar.reset(token)
 
     @abstractmethod
     async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
@@ -259,6 +306,7 @@ class AbstractModel(ABC):
         *,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate an image using the model with optional fallback models.
 
@@ -275,6 +323,9 @@ class AbstractModel(ABC):
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
             consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             ModelRunResult containing the generated image URL or data, status,
@@ -289,35 +340,40 @@ class AbstractModel(ABC):
             estimation or context size validation before calling the provider.
             This preserves existing behavior for image generation.
         """
-        if fallbackModels:
-            return await self._runWithFallback(
-                [self, *fallbackModels],
-                lambda model: model.generateImage(
-                    messages=messages,
-                    fallbackModels=None,
-                    consumerId=consumerId,
-                ),
-                ModelRunResult,
-            )
-
-        # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
-        startTime = time.time()
+        token = _requestSessionIdVar.set(sessionId)
         try:
-            ret = await self._generateImage(messages=messages)
-            ret.elapsedTime = time.time() - startTime
-        except Exception as e:
-            await self._recordAttemptStats(
-                consumerId,
-                ModelRunResult(
-                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
-                ),
-                "image",
-            )
-            raise
+            if fallbackModels:
+                return await self._runWithFallback(
+                    [self, *fallbackModels],
+                    lambda model: model.generateImage(
+                        messages=messages,
+                        fallbackModels=None,
+                        consumerId=consumerId,
+                        sessionId=sessionId,
+                    ),
+                    ModelRunResult,
+                )
 
-        await self._recordAttemptStats(consumerId, ret, "image")
-        self.printJSONLog(messages, ret, consumerId=consumerId)
-        return ret
+            # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
+            startTime = time.time()
+            try:
+                ret = await self._generateImage(messages=messages)
+                ret.elapsedTime = time.time() - startTime
+            except Exception as e:
+                await self._recordAttemptStats(
+                    consumerId,
+                    ModelRunResult(
+                        rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                    ),
+                    "image",
+                )
+                raise
+
+            await self._recordAttemptStats(consumerId, ret, "image")
+            self.printJSONLog(messages, ret, consumerId=consumerId)
+            return ret
+        finally:
+            _requestSessionIdVar.reset(token)
 
     async def _generateStructured(
         self,
@@ -367,6 +423,7 @@ class AbstractModel(ABC):
         strict: bool = True,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> ModelStructuredResult:
         """Generate structured output with automatic fallback to another model.
 
@@ -385,6 +442,9 @@ class AbstractModel(ABC):
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
             consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             ModelStructuredResult with status, parsed data, token usage, etc.
@@ -398,59 +458,64 @@ class AbstractModel(ABC):
         if not self._config.get("support_structured_output", False):
             raise NotImplementedError(f"Structured output isn't supported by {self.modelId}")
 
-        # If fallback models provided, use the fallback mechanism
-        if fallbackModels:
-            return await self._runWithFallback(
-                [self, *fallbackModels],
-                lambda model: model.generateStructured(
+        token = _requestSessionIdVar.set(sessionId)
+        try:
+            # If fallback models provided, use the fallback mechanism
+            if fallbackModels:
+                return await self._runWithFallback(
+                    [self, *fallbackModels],
+                    lambda model: model.generateStructured(
+                        messages=messages,
+                        schema=schema,
+                        schemaName=schemaName,
+                        strict=strict,
+                        fallbackModels=None,
+                        consumerId=consumerId,
+                        sessionId=sessionId,
+                    ),
+                    ModelStructuredResult,
+                )
+
+            # Original logic when no fallbacks
+            tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
+            logger.debug(
+                f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
+                f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
+            )
+
+            if self.contextSize and tokensCount > self.contextSize * 2:
+                return ModelStructuredResult(
+                    rawResult=None,
+                    status=ModelResultStatus.ERROR,
+                    error=Exception(
+                        f"Context too large: estimated tokens {tokensCount} " f"vs model context {self.contextSize}"
+                    ),
+                )
+
+            startTime = time.time()
+            try:
+                ret = await self._generateStructured(
                     messages=messages,
                     schema=schema,
                     schemaName=schemaName,
                     strict=strict,
-                    fallbackModels=None,
-                    consumerId=consumerId,
-                ),
-                ModelStructuredResult,
-            )
+                )
+                ret.elapsedTime = time.time() - startTime
+            except Exception as e:
+                await self._recordAttemptStats(
+                    consumerId,
+                    ModelRunResult(
+                        rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                    ),
+                    "structured",
+                )
+                raise
 
-        # Original logic when no fallbacks
-        tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
-        logger.debug(
-            f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
-            f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
-        )
-
-        if self.contextSize and tokensCount > self.contextSize * 2:
-            return ModelStructuredResult(
-                rawResult=None,
-                status=ModelResultStatus.ERROR,
-                error=Exception(
-                    f"Context too large: estimated tokens {tokensCount} " f"vs model context {self.contextSize}"
-                ),
-            )
-
-        startTime = time.time()
-        try:
-            ret = await self._generateStructured(
-                messages=messages,
-                schema=schema,
-                schemaName=schemaName,
-                strict=strict,
-            )
-            ret.elapsedTime = time.time() - startTime
-        except Exception as e:
-            await self._recordAttemptStats(
-                consumerId,
-                ModelRunResult(
-                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
-                ),
-                "structured",
-            )
-            raise
-
-        await self._recordAttemptStats(consumerId, ret, "structured")
-        self.printJSONLog(messages, ret, consumerId=consumerId)
-        return ret
+            await self._recordAttemptStats(consumerId, ret, "structured")
+            self.printJSONLog(messages, ret, consumerId=consumerId)
+            return ret
+        finally:
+            _requestSessionIdVar.reset(token)
 
     @property
     def supportsEmbedding(self) -> bool:
@@ -495,12 +560,13 @@ class AbstractModel(ABC):
         *,
         attempts: int = 3,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> list[float]:
         """Generate an embedding vector for the given text, with retry on transient failures.
 
         This is the public method for embedding generation. It validates the
-        input, then retries the underlying ``_generateEmbeddings`` call up
-        to ``attempts`` times with exponential backoff on transient errors,
+        input, then retries the underlying ``_generateEmbeddings`` call up to
+        ``attempts`` times with exponential backoff on transient errors,
         records stats, and returns the embedding on success.
 
         Unlike :meth:`generateText` / :meth:`generateImage`, this method
@@ -517,6 +583,9 @@ class AbstractModel(ABC):
             attempts: Max retry attempts on transient failures (default: 3).
             consumerId: Optional consumer identifier for stats recording
                 (e.g. chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             Embedding vector as list of floats.
@@ -536,44 +605,50 @@ class AbstractModel(ABC):
         if not isinstance(attempts, int) or attempts < 1:
             raise ValueError("attempts must be a positive integer")
 
-        lastError: Optional[Exception] = None
-        lastElapsed: float = 0.0
-        for attempt in range(1, attempts + 1):
-            startTime = time.time()
-            try:
-                embedding = await self._generateEmbeddings(text)
-                elapsed = time.time() - startTime
-                await self._recordEmbeddingStats(
-                    consumerId,
-                    success=True,
-                    error=None,
-                    elapsed=elapsed,
-                    attempts=attempt,
-                )
-                return embedding
-            except (NotImplementedError, ValueError, TypeError):
-                # Deterministic failures: never retry.
-                raise
-            except Exception as e:
-                lastError = e
-                lastElapsed = time.time() - startTime
-                logger.warning(f"generateEmbeddings attempt {attempt}/{attempts} failed for " f"{self.modelId}: {e}")
-                if attempt < attempts:
-                    # Exponential backoff: 0.5s, 1s, 2s, ...
-                    backoff = 0.5 * (2 ** (attempt - 1))
-                    await asyncio.sleep(backoff)
+        token = _requestSessionIdVar.set(sessionId)
+        try:
+            lastError: Optional[Exception] = None
+            lastElapsed: float = 0.0
+            for attempt in range(1, attempts + 1):
+                startTime = time.time()
+                try:
+                    embedding = await self._generateEmbeddings(text)
+                    elapsed = time.time() - startTime
+                    await self._recordEmbeddingStats(
+                        consumerId,
+                        success=True,
+                        error=None,
+                        elapsed=elapsed,
+                        attempts=attempt,
+                    )
+                    return embedding
+                except (NotImplementedError, ValueError, TypeError):
+                    # Deterministic failures: never retry.
+                    raise
+                except Exception as e:
+                    lastError = e
+                    lastElapsed = time.time() - startTime
+                    logger.warning(
+                        f"generateEmbeddings attempt {attempt}/{attempts} failed for " f"{self.modelId}: {e}"
+                    )
+                    if attempt < attempts:
+                        # Exponential backoff: 0.5s, 1s, 2s, ...
+                        backoff = 0.5 * (2 ** (attempt - 1))
+                        await asyncio.sleep(backoff)
 
-        # All attempts failed.
-        await self._recordEmbeddingStats(
-            consumerId,
-            success=False,
-            error=lastError,
-            elapsed=lastElapsed,
-            attempts=attempts,
-        )
-        raise RuntimeError(
-            f"Embedding generation failed for {self.modelId} after {attempts} attempts: {lastError}"
-        ) from lastError
+            # All attempts failed.
+            await self._recordEmbeddingStats(
+                consumerId,
+                success=False,
+                error=lastError,
+                elapsed=lastElapsed,
+                attempts=attempts,
+            )
+            raise RuntimeError(
+                f"Embedding generation failed for {self.modelId} after {attempts} attempts: {lastError}"
+            ) from lastError
+        finally:
+            _requestSessionIdVar.reset(token)
 
     async def getDimensions(self, forceDetect: bool = False) -> int:
         """Return the number of dimensions in the embedding vector.
@@ -703,21 +778,25 @@ class AbstractModel(ABC):
         """Get model information and configuration.
 
         Returns a dictionary containing the model's metadata including provider,
-        model ID, version, temperature, context size, and capabilities.
+        model ID, version, custom parameters, context size, and capabilities.
 
         Returns:
             Dictionary with model metadata containing:
                 - provider: Provider class name
                 - model_id: Model identifier
                 - model_version: Model version
-                - temperature: Temperature setting
+                - customParams: Per-model custom parameters passed through to
+                    the underlying LLM API call (temperature, top_p, etc.)
                 - context_size: Maximum context size
                 - support_tools: Whether the model supports tools
                 - support_text: Whether the model supports text generation
                 - support_images: Whether the model supports image generation
+                - support_image_input: Whether the model supports image input
+                    (vision / "can see"); distinct from support_images, which
+                    is image generation (output)
                 - support_structured_output: Whether the model supports structured output
                 - support_embeddings: Whether the model supports text embeddings
-                - tier: Model tier (e.g., "bot_owner")
+                - tier: Model tier (e.g., "bot-owner")
                 - extra: Additional configuration options
 
         Example:
@@ -726,14 +805,15 @@ class AbstractModel(ABC):
                 'provider': 'OpenAIProvider',
                 'model_id': 'gpt-4',
                 'model_version': 'latest',
-                'temperature': 0.7,
+                'customParams': {'temperature': 0.7},
                 'context_size': 8192,
                 'support_tools': True,
                 'support_text': True,
                 'support_images': False,
+                'support_image_input': False,
                 'support_structured_output': False,
                 'support_embeddings': False,
-                'tier': 'bot_owner',
+                'tier': 'bot-owner',
                 'extra': {}
             }
         """
@@ -741,14 +821,15 @@ class AbstractModel(ABC):
             "provider": self.provider.__class__.__name__,
             "model_id": self.modelId,
             "model_version": self.modelVersion,
-            "temperature": self.temperature,
+            "customParams": dict(self._customParams),
             "context_size": self.contextSize,
             "support_tools": self._config.get("support_tools", False),
             "support_text": self._config.get("support_text", True),
             "support_images": self._config.get("support_images", False),
+            "support_image_input": self._config.get("support_image_input", False),
             "support_structured_output": self._config.get("support_structured_output", False),
             "support_embeddings": self._config.get("support_embeddings", False),
-            "tier": self._config.get("tier", "bot_owner"),
+            "tier": self._config.get("tier", "bot-owner"),
             "extra": self._config.copy(),
         }
 
@@ -850,17 +931,28 @@ class AbstractModel(ABC):
         """
         try:
             info = self.getInfo()
+            stats: dict[str, float | int] = {
+                f"generation_{generationType}": 1,
+                "request_count": 1,
+                "input_tokens": result.inputTokens or 0,
+                "output_tokens": result.outputTokens or 0,
+                "total_tokens": result.totalTokens or 0,
+                "is_error": 1 if result.status in ERROR_STATUSES else 0,
+                "tool_calls_count": len(result.toolCalls),
+                f"status_{result.status.name}": 1,
+                "elapsed_time": result.elapsedTime or 0,
+            }
+            # Optional provider-reported metrics: recorded only when the
+            # provider actually reported them, so aggregates stay truthful
+            # (absent metric == not reported, not zero).
+            if result.cachedInputTokens is not None:
+                stats["cached_input_tokens"] = result.cachedInputTokens
+            if result.reasoningTokens is not None:
+                stats["reasoning_tokens"] = result.reasoningTokens
+            if result.cost is not None:
+                stats["cost"] = result.cost
             await self.statsStorage.record(
-                stats={
-                    f"generation_{generationType}": 1,
-                    "request_count": 1,
-                    "input_tokens": result.inputTokens or 0,
-                    "output_tokens": result.outputTokens or 0,
-                    "total_tokens": result.totalTokens or 0,
-                    "is_error": 1 if result.status in ERROR_STATUSES else 0,
-                    f"status_{result.status.name}": 1,
-                    "elapsed_time": result.elapsedTime or 0,
-                },
+                stats=stats,
                 consumerId=consumerId,
                 labels={
                     "modelName": info.get("model_id", "unknown"),
@@ -936,10 +1028,10 @@ class AbstractLLMProvider(ABC):
 
     Example:
         class CustomProvider(AbstractLLMProvider):
-            def addModel(self, name, modelId, modelVersion, temperature,
-                        contextSize, extraConfig={}):
-                model = CustomModel(self, modelId, modelVersion, temperature,
-                                   contextSize, extraConfig)
+            def addModel(self, name, modelId, modelVersion, contextSize,
+                        extraConfig={}, customParams=None):
+                model = CustomModel(self, modelId, modelVersion, contextSize,
+                                   extraConfig, customParams=customParams)
                 self.models[name] = model
                 return model
     """
@@ -966,10 +1058,10 @@ class AbstractLLMProvider(ABC):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a model to this provider.
 
@@ -980,10 +1072,13 @@ class AbstractLLMProvider(ABC):
             name: Human-readable name for the model (used as key in models dict).
             modelId: Provider-specific model identifier (e.g., "gpt-4", "yandexgpt").
             modelVersion: Version string for the model (e.g., "latest", "v1").
-            temperature: Temperature setting for generation (0.0 to 2.0).
             contextSize: Maximum context size in tokens.
             statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams` for the full
+                key inventory.
 
         Returns:
             The created AbstractModel instance.

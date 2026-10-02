@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Gromozeka Markdown Specification v1.0
 
 ## Overview

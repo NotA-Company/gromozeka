@@ -20,7 +20,7 @@ When reading archived files, be aware of these known architectural changes:
 
 ### Database Layer Migration (completed ~2026-05-02)
 - **Old path:** `internal/database/wrapper.py` (3,000+ line monolith) — **DELETED**
-- **New pattern:** `internal/database/database.py` (Database façade) + `internal/database/repositories/` (11 domain repositories) + `internal/database/providers/` (sql abstraction)
+- **New pattern:** `internal/database/database.py` (Database façade) + `internal/database/repositories/` (11 domain repositories) + `internal/database/providers/` (sql abstraction) (since moved to `lib/db/providers/` — see ADR-022)
 - Many archive docs reference `DatabaseWrapper` — see current code instead
 
 ### Handler Architecture
@@ -38,6 +38,7 @@ When reading archived files, be aware of these known architectural changes:
 ```
 archive/
 ├── design/          # Historical design docs and ADRs (23 archived docs + 1 README)
+├── llm-memories/    # Superseded agent memory files (5 docs + 1 README)
 ├── llm-sessions/    # Frozen LLM session snapshots (1 doc)
 ├── plans/           # Implementation plans, some superseded (66 archived docs + 1 README)
 ├── reports/         # Phase reports and analysis (40+ historical reports)
@@ -49,6 +50,9 @@ archive/
 
 #### `design/`
 Contains design documents, ADRs (Architecture Decision Records), and early architectural explorations (23 archived design docs + 1 README). See [`design/README.md`](design/README.md) for specific file status notes.
+
+#### `llm-memories/`
+Superseded task-specific agent memory files moved from `docs/llm/memories/` on 2026-09-06 (5 docs + 1 README). Excluded from the markdown-mcp index/search; see [`llm-memories/README.md`](llm-memories/README.md) for the per-file index with reasons.
 
 #### `llm-sessions/`
 Frozen LLM session snapshots. Historical records; internal paths not maintained.
@@ -121,5 +125,5 @@ If you find a broken link from an active doc pointing into `archive/`, update th
 
 ---
 
-*Last updated: 2026-07-18*
+*Last updated: 2026-09-06*
 *Archive policy: Historical records only — no active guidance*

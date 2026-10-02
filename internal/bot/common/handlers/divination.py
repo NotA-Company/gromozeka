@@ -39,6 +39,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.session import buildSessionId, hashSessionIdComponent
 from lib.divination import (
     BaseDivinationSystem,
     Layout,
@@ -602,6 +603,10 @@ class DivinationHandler(BaseBotHandler):
             6. Persist the divination row (best-effort; failure is logged).
             7. Return JSON summary when ``returnToolJson=True``, else ``""``.
 
+        All lib/ai generation calls of one invocation (interpretation +
+        optional image) share a single ``sessionId`` keyed by chat and
+        originating message — prompt-cache affinity for the reading bucket.
+
         Args:
             systemId: Divination system id (``"tarot"`` / ``"runes"``).
             ensuredMessage: The originating user message.
@@ -690,12 +695,19 @@ class DivinationHandler(BaseBotHandler):
             typingManager.action = TypingAction.TYPING
             await typingManager.sendTypingAction()
 
+        # One reading invocation shares one prompt-cache session: the
+        # interpretation call and the (optional) image call below carry the
+        # same sessionId. Keyed by persistent ids only (chat + originating
+        # message) so the bucket is stable across restarts.
+        readingSessionId: str = buildSessionId("divination", str(chatId), ensuredMessage.messageId.asStr())
+
         llmRet = await self.llmService.generateText(
             messages,
             chatId=chatId,
             chatSettings=chatSettings,
             modelKey=ChatSettingsKey.CHAT_MODEL,
             fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
+            sessionId=readingSessionId,
         )
         if llmRet.status != ModelResultStatus.FINAL:
             if isLLMCall:
@@ -738,6 +750,7 @@ class DivinationHandler(BaseBotHandler):
                     imagePrompt,
                     chatId=chatId,
                     chatSettings=chatSettings,
+                    sessionId=readingSessionId,
                 )
             except Exception as e:
                 logger.error(f"Image generation raised: {e}")
@@ -994,6 +1007,10 @@ class DivinationHandler(BaseBotHandler):
         1. Calls LLM with tools enabled to get layout description via web search
         2. Delegates to _extractLayoutFromText with the description
 
+        The web-search call carries a content-keyed ``sessionId`` derived
+        from ``canonicalLayoutId`` (hashed): identical layout-discovery
+        requests share one prompt-cache bucket across chats.
+
         Args:
             systemCls: The divination system class.
             layoutName: Raw user-provided layout name.
@@ -1025,6 +1042,16 @@ class DivinationHandler(BaseBotHandler):
             ),
         ]
 
+        # Content-keyed session: discovery of the same canonical layout
+        # produces the same system+user prompt prefix regardless of which
+        # chat asks for it, so all invocations for one canonical layout
+        # share a single prompt-cache bucket. canonicalLayoutId keeps
+        # Cyrillic letters (see _generateLayoutId) and is unbounded user
+        # input, so it is hashed — raw sanitization would collapse distinct
+        # Cyrillic names onto identical dash-runs and long names could
+        # exceed the 128-char session-id cap.
+        discoverySessionId: str = buildSessionId("divination-discovery", hashSessionIdComponent(canonicalLayoutId))
+
         try:
             # Call LLM with tools enabled (web_search)
             logger.debug(
@@ -1046,6 +1073,7 @@ class DivinationHandler(BaseBotHandler):
                     "ensuredMessage": ensuredMessage,
                     "typingManager": typingManager,
                 },
+                sessionId=discoverySessionId,
             )
         except Exception as e:
             logger.error(
@@ -1098,7 +1126,10 @@ class DivinationHandler(BaseBotHandler):
         Note:
             The Layout object's id field is set to canonicalLayoutId to ensure
             cache consistency. The LLM-provided layout_id is discarded in favor
-            of the canonical ID derived from user input.
+            of the canonical ID derived from user input. The generateStructured
+            call carries a content-keyed sessionId derived from
+            canonicalLayoutId (hashed) — same canonical key, same prompt-cache
+            bucket.
         """
         # Get prompts from chat settings
         chatSettings = await self.getChatSettings(chatId=chatId)
@@ -1120,6 +1151,14 @@ class DivinationHandler(BaseBotHandler):
                 ),
             ),
         ]
+
+        # Content-keyed one-shot: canonicalLayoutId is the same canonical key
+        # used for DB cache consistency, so one canonical layout always maps
+        # to one prompt-cache bucket. Hashed rather than passed raw for the
+        # same reasons as the discovery call above: _generateLayoutId keeps
+        # Cyrillic letters (sanitizing them would collide distinct names onto
+        # identical dash-runs) and the raw id is unbounded user input.
+        structuredSessionId: str = buildSessionId("layout", hashSessionIdComponent(canonicalLayoutId))
 
         try:
             # Call LLM with structured output
@@ -1150,6 +1189,7 @@ class DivinationHandler(BaseBotHandler):
                 chatSettings=chatSettings,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
+                sessionId=structuredSessionId,
             )
             jsonRet: Optional[Dict[str, Any]] = structuredRet.data
         except Exception as e:

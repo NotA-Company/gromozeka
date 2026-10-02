@@ -1,3 +1,9 @@
+---
+category: guide
+description: Index and quick reference for the agent documentation set — start here before non-trivial work.
+tags: [agent]
+---
+
 # Gromozeka LLM Agent Guide — Index & Quick Reference
 
 > **Audience:** LLM agents (Roo, Cline, GitHub Copilot, Cursor, etc.)  
@@ -7,26 +13,28 @@
 ---
 
 ## Navigation — Which Doc Should I Read?
-
  | If you need to... | Read this doc |
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
 | Understand architecture, ADRs, design decisions | [`architecture.md`](architecture.md) |
+| Set up Max webhook mode (two-process deployment) | [`docs/max-webhook-setup.md`](../max-webhook-setup.md) |
 | Create or modify a bot command handler | [`handlers.md`](handlers.md) |
 | Add/modify database tables, migrations, or queries | [`database.md`](database.md) |
 | Use Cache, Queue, LLM, Storage, or RateLimiter services | [`services.md`](services.md) |
 | Use lib/ai, lib/cache, lib/markdown, lib/max_bot, etc. | [`libraries.md`](libraries.md) |
 | Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
+| Regenerate model catalogs from models.dev, maintain the manual Yandex AI Studio catalogs, or migrate stale model ids in `chat_settings` | [`model-catalogs.md`](model-catalogs.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
+| Maintain or extend the golden-data record/replay library (`lib/aurumentation`) | [`aurumentation.md`](aurumentation.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
 | Maintain `CHANGELOG.md` (when to update, entry style, semver) | [`changelog.md`](changelog.md) |
 | Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
 | Review large diffs that exceed single-pass agent budget | [`reviewing-large-changes.md`](reviewing-large-changes.md) |
+| Work the docs tree itself (read/edit via markdown-mcp) | [`docs/docs-playbook/mcp-docs-workflow.md`](../docs-playbook/mcp-docs-workflow.md) |
 | Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
-
 ## 1. Project Identity
 
 | Field | Value |
@@ -35,19 +43,20 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | 3390+ (as of 2026-07-18; verify with `./venv/bin/pytest --collect-only -q`) |
+| Test count | ~3737 (as of 2026-08-08; verify with `./venv/bin/pytest --collect-only -q`) |
 | Status | Production-ready, active development |
 
 ### Key Features
 
 - Multi-platform bot support (Telegram and Max Messenger)
-- Max Messenger webhook mode: standalone aiohttp webhook-receiver process that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013)
+- Max Messenger webhook mode: standalone aiohttp webhook-receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — own config file + own database since ADR-025) that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013/ADR-025)
 - Advanced LLM integration with multiple providers (YC SDK, OpenAI-compatible, OpenRouter)
 - Comprehensive API integrations (Weather, Search, Geocoding)
 - ML-powered spam detection with Bayes filter
 - Golden data testing framework for reliable API testing
 - Service layer with cache and queue services
 - Multi-source database routing with SQLite
+- Chat accessibility tracking: the bot records per-chat presence in `chat_info.bot_status`, excludes kicked/inaccessible chats from chat lists by default (so `/configure` and similar no longer crash on them), surfaces them to the owner via `/list_chats all`, and auto-recovers on the next inbound message. Design: [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
 
 ---
 
@@ -65,6 +74,10 @@ make test
 
 # Run single test file
 ./venv/bin/pytest tests/database/test_db_wrapper.py -v
+
+# Docs tree maintenance (markdown-mcp) — after bulk out-of-band docs edits
+markdown-mcp index   # incremental index repair; never --force (embedding rebuild times out)
+markdown-mcp lint    # structural lint: duplicate slugs, front matter
 ```
 
 ---
@@ -83,7 +96,8 @@ make test
 | Classes | PascalCase | `BaseBotHandler`, `CacheService` |
 | Constants | UPPER_CASE | `DEFAULT_THREAD_ID`, `MIGRATION_VERSION_KEY` |
 
-**Source:** [`AGENTS.md`](../../AGENTS.md)
+Snake_case is **wrong here even though it is idiomatic Python** — this convention
+overrides the language default everywhere in this repo.
 
 ### 3.2 Docstrings (MUST have)
 
@@ -105,8 +119,6 @@ def getChatSettings(self, chatId: Optional[int], *, returnDefault: bool = True) 
     """
 ```
 
-**Source:** [`AGENTS.md`](../../AGENTS.md)
-
 ### 3.3 Type Hints (MUST have)
 
 - ALWAYS write type hints for function/method arguments
@@ -122,6 +134,21 @@ def parseCommand(self, ensuredMessage: EnsuredMessage) -> Optional[Tuple[str, st
 # WRONG - no type hints
 def parseCommand(self, ensuredMessage):
     ...
+```
+
+**No `Any` type.** Never use `Any` except when a method genuinely accepts any type
+(e.g., a generic container, a passthrough decorator). Always use the concrete
+type. For singletons, import the class and use it directly rather than typing
+parameters as `Any`:
+
+```python
+# CORRECT - concrete singleton type
+def getCache(self) -> CacheService:
+    return CacheService.getInstance()
+
+# WRONG - Any instead of the concrete type
+def getCache(self) -> Any:
+    return CacheService.getInstance()
 ```
 
 ### 3.4 Python Runtime (MUST follow)
@@ -154,6 +181,8 @@ make test
 
 **Linting tools:** Black (120 chars), Flake8, Pyright, isort  
 **Config:** [`pyproject.toml`](../../pyproject.toml)
+
+**Docs changes:** when markdown-mcp is available (MCP tools or CLI), docs changes additionally keep `doc_lint`/CLI `markdown-mcp lint` clean (structure) alongside `make check-docs` (links); when neither is available, proceed with the manual workflow and note the skipped structural check.
 
 ### 3.6 Enum Conventions
 
@@ -191,15 +220,60 @@ For **optional dependencies** that may not be installed, use a module-level
 .. code-block:: python
 
    try:
-       from httpx_socks import AsyncProxyTransport
-       _HTTPX_SOCKS_AVAILABLE = True
+       import sqlite_vec
+       _SQLITE_VEC_AVAILABLE = True
    except ImportError:
-       _HTTPX_SOCKS_AVAILABLE = False
+       _SQLITE_VEC_AVAILABLE = False
 
 The ``_AVAILABLE`` flag is checked at usage sites rather than relying on a
-runtime ``ImportError`` during execution. Inline imports are **only** acceptable
-when a genuine cyclic dependency makes a top-level import impossible — this is
-vanishingly rare in the Gromozeka codebase.
+runtime ``ImportError`` during execution.
+
+Do **not** assign ``None`` or define a dummy stub class in the ``except`` branch —
+leave the block empty aside from the ``_AVAILABLE`` flag. Do **not** use PEP 695
+``type`` aliases (``type AsyncProxyTransport = NoneType``) for conditional-import
+fallbacks either: pyright cannot reconcile a union of a runtime class and a
+``TypeAliasType``. Pyright follows the ``try`` branch for type resolution, and the
+``_AVAILABLE`` guard prevents runtime access to the undefined name.
+
+Inline imports are **only** acceptable when a genuine cyclic dependency makes a
+top-level import impossible — this is vanishingly rare in the Gromozeka codebase.
+When adding imports to the top of a file, run ``make format`` afterwards so isort
+organises them.
+
+### 3.8 Dependencies (`requirements.txt` Is Frozen)
+
+`requirements.txt` is a **frozen/locked file**. Never add non-pinned dependency
+entries to it, and never edit it by hand. To add a new direct dependency:
+
+1. Add it to `requirements.direct.txt` (under the `# Runtime` section) with an
+   exact version pin.
+2. Regenerate `requirements.txt` from `requirements.direct.txt` via
+   `freeze-requirements` (`make freeze-requirements`).
+
+### 3.9 No Pydantic
+
+The repo deliberately avoids pydantic. Model data with raw dicts plus
+hand-rolled, type-hinted classes or `TypedDict` definitions instead. Validation
+and defaults are written in plain Python, not declared as pydantic models.
+
+### 3.10 Prefer Class-Based Designs
+
+When a feature has related operations that share state or compose together, put
+them in a cohesive class with methods rather than a collection of module-level
+free functions. Apply the established project patterns from the start rather
+than retrofitting them later: `StrEnum` for string enums, `TypedDict` /
+type-hinted classes for structured data, singletons accessed via
+`getInstance()`.
+
+### 3.11 Regression Tests on Every Bug Fix
+
+When fixing a bug — whether in production code, test code, or config — write a
+regression test that **fails before the fix** and **passes after it**. Include
+tests for the edge cases the bug touched (e.g., `Optional`/`Union` conversion,
+`None` handling, schema column mismatches). Never rely on existing test coverage
+to catch regressions. The
+[write-regression-test skill](../../.agents/skills/write-regression-test/SKILL.md)
+is the step-by-step recipe.
 
 ---
 
@@ -239,8 +313,10 @@ vanishingly rare in the Gromozeka codebase.
 | [`StorageService`](../../internal/services/storage/service.py) | `from internal.services.storage import StorageService` | `StorageService.getInstance()` |
 | [`RateLimiterManager`](../../lib/rate_limiter/manager.py) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
 | [`ProxyService`](../../internal/services/proxy/service.py) | `from internal.services.proxy import ProxyService` | `ProxyService.getInstance()` |
+| [`STTService`](../../internal/services/stt/service.py) | `from internal.services.stt import STTService` | `STTService.getInstance()` (default-off; see ADR-020) |
 | [`SandboxManager`](../../lib/sandbox/manager.py) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
 | [`ProxyHelper`](../../lib/proxy/__init__.py) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
+| [`StatsAggregationService`](../../internal/services/stats/service.py) | `from internal.services.stats import StatsAggregationService` | `StatsAggregationService.getInstance()` |
 
 ### 4.4 Critical File Paths
 
@@ -256,6 +332,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
+| [`internal/services/stats/service.py`](../../internal/services/stats/service.py) | `StatsAggregationService` singleton |
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` – provider + model registry |
 
@@ -264,14 +341,14 @@ vanishingly rare in the Gromozeka codebase.
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread`/`get_messages_by_ids` LLM tools, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread`/`get_messages_by_ids` LLM tools, `StatsHandler` for `/stats`/`/stats_web`, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | Max Messenger bot application |
 | [`internal/bot/models/`](../../internal/bot/models/) | Bot model types (EnsuredMessage, ChatSettings, etc.) |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
-| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (SQL provider layer lives in `lib/db/` — see ADR-022) |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
 | [`internal/models/`](../../internal/models/) | Shared types (`MessageId` class, `MessageType` enum) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
@@ -280,33 +357,41 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
 | [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
-| [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates`, serves them to the bot via GET /updates. Run with `./venv/bin/python3 -m internal.max_webhook_receiver`. See [`architecture.md`](architecture.md) ADR-013. |
 
 ### 4.6 `lib/` Directory
-
 | Path | Purpose |
 |---|---|
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` — model + provider registry |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
+| [`lib/ai/session.py`](../../lib/ai/session.py) | Session-id construction for LLM requests — `buildSessionId` / `sanitizeSessionIdComponent` / `hashSessionIdComponent` (token-safe charset, 128-char cap; semantic session domains per [`architecture.md`](architecture.md) ADR-026) |
 | [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `fastembed`) |
-| [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC |
+| [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, `DatabaseManager` multi-source routing, and `utils.py` (SQL decode trio + `getCurrentTimestamp`/`DEFAULT_THREAD_ID`). Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022/ADR-023. |
+| [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC (get/set/clear/`clearOld`/getStats) |
 | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py) | In-memory dict-based cache impl |
+| [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) | `GenericDatabaseCache[K,V]` — database-backed cache impl; owns the `cache`-table SQL inline via `DatabaseManager` (see [`architecture.md`](architecture.md) ADR-024) |
 | [`lib/rate_limiter/interface.py`](../../lib/rate_limiter/interface.py) | `RateLimiterInterface` — ABC |
 | [`lib/rate_limiter/manager.py`](../../lib/rate_limiter/manager.py) | `RateLimiterManager` singleton |
 | [`lib/rate_limiter/sliding_window.py`](../../lib/rate_limiter/sliding_window.py) | `SlidingWindowRateLimiter` impl |
 | [`lib/bayes_filter/bayes_filter.py`](../../lib/bayes_filter/bayes_filter.py) | Naive Bayes spam filter |
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
+#### Integrations, receivers, and utilities
+
+| Path | Purpose |
+|---|---|
+| [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates` in its OWN SQLite file (`webhook_receiver_data.db`), serves them to the bot via GET /updates. Fully standalone — own TOML config file, own `DatabaseManager`, zero internal imports (see [`architecture.md`](architecture.md) ADR-025). Run with `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml`. Two-process model: ADR-013. |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
 | [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType`/`HealthCheckType` StrEnums, `ProxyKwargs`/`ProxyLifecycleConfigDict` TypedDicts |
 | [`internal/services/proxy/`](../../internal/services/proxy/) | `ProxyService` singleton (lifecycle orchestration) + `ProxyLifecycle` (per-config process manager) |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
-| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
+| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; SQL impl `DatabaseStatsStorage` in `sql_storage.py` — takes `DatabaseManager`, constructed by the `StatsAggregationService` factory, see ADR-023; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
+| [`lib/stats/stats_pages/`](../../lib/stats/stats_pages/) | Module-invocable stats-page HTML generator: STDIN JSON → self-contained HTML file → stdout `{"pageId","url"}` (subprocess CLI contract), plus `launcher.runCliCommand` — the shared subprocess helper `StatsHandler` uses for both generation and TTL deletion; zero new deps |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
 | [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |
+| [`lib/stt/`](../../lib/stt/) | Provider-neutral Speech-to-Text library — data models/enums (`STTErrorCode`, `TranscriptionResult`, etc.), typed extraction exceptions, `AbstractSTTProvider` (never-raise `stt(data)` entry), PyAV `extractAudio`, and the concrete Yandex SpeechKit v3 provider (`YandexSpeechKitProvider`). The transcript formatter moved to `internal/services/stt/formatter.py` (thin). Held directly by the stateless `STTService`; owns no DB/bot/config. Spec: [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md); golden suite: [`aurumentation.md`](aurumentation.md) (`tests/lib/stt/golden/`) |
 | [`lib/utils/`](../../lib/utils/) | Utilities: `TTLDict` (TTL-enabled dict), `getAgeInSecs`, `parseDelay`, `jsonDumps`, `packDict`/`unpackDict` |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
 
@@ -321,7 +406,6 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 ---
 
 ## See Also
-
 - [`architecture.md`](architecture.md) — ADRs, component dependencies, design patterns
 - [`handlers.md`](handlers.md) — Handler system, creation checklist, command decorators
 - [`database.md`](database.md) — DB operations, migrations, schema, multi-source routing
@@ -329,7 +413,9 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 - [`libraries.md`](libraries.md) — lib/ai, lib/cache, lib/markdown, lib/max_bot and more
 - [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
+- [`model-catalogs.md`](model-catalogs.md) — Model catalog generation from models.dev, manual Yandex AI Studio catalogs, enabling models via overlays, model-id migration in `chat_settings`
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
+- [`aurumentation.md`](aurumentation.md) — `lib/aurumentation` internals: HTTP record/replay transports, masking, the consumer suite pattern, gotchas
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
 - [`changelog.md`](changelog.md) — Canonical changelog process (Keep a Changelog, semver, entry style)
 - [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
@@ -339,4 +425,4 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-07-18*
+*Last updated: 2026-09-14*

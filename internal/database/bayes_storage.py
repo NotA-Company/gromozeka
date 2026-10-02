@@ -11,11 +11,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats
 from lib.bayes_filter.storage_interface import BayesStorageInterface
+from lib.db import utils as dbUtils
+from lib.db.providers import ParametrizedQuery
+from lib.db.providers.base import ExcludedValue
 
-from . import utils as dbUtils
 from .database import Database
-from .providers import ParametrizedQuery
-from .providers.base import ExcludedValue
 
 logger = logging.getLogger(__name__)
 

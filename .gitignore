@@ -4,11 +4,17 @@
 /configs/*
 !/configs/00-defaults
 /*.db
+/*.db-wal
+/*.db-shm
 /bak/
 /*.json
 /*.jsonl
 /*.yaml
 /storage
+# Webhook receiver: operator's root-level config (secret-bearing) and the
+# project-local docker data dir bind-mounted at run time.
+/webhook-receiver*.toml
+/data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -50,3 +56,7 @@ Thumbs.db
 lib/ext_modules/*/
 .opencode/audit
 .opencode/memory-audit-manifest.json
+/*.mp4
+
+# markdown-mcp local index state
+.markdown-mcp/

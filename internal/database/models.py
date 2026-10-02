@@ -105,6 +105,27 @@ class SpamReason(StrEnum):
     """User was unbanned."""
 
 
+class ChatBotStatus(StrEnum):
+    """Durable accessibility state of the bot for a chat (``chat_info.bot_status``).
+
+    Members:
+        ACTIVE: The bot is (or is assumed to be) present in the chat. This is the
+            optimistic default for every row — newly inserted chats and all pre-existing
+            rows backfilled by migration 026 start here. Recovery (inbound activity in
+            the preprocessor) flips ``INACCESSIBLE`` back to ``ACTIVE``.
+        INACCESSIBLE: A platform API call failed because the bot is no longer in the
+            chat / was blocked (Telegram ``Forbidden`` / ``BadRequest("chat not found")``
+            / Max ``NotFoundError``). Set lazily at the ``getChatAdmins`` catch sites.
+            Chat-listing consumers exclude these chats by default.
+    """
+
+    ACTIVE = "active"
+    """Bot is present or assumed present (optimistic default)."""
+
+    INACCESSIBLE = "inaccessible"
+    """Bot was kicked/blocked/removed; last ``getChatAdmins`` probe failed."""
+
+
 class ChatMessageDict(TypedDict):
     """Dictionary representing a chat message with user information.
 
@@ -141,6 +162,9 @@ class ChatMessageDict(TypedDict):
     """Media attachment identifier."""
     created_at: datetime.datetime
     """Record creation timestamp."""
+    model_id: NotRequired[Optional[int]]
+    """Embedding model lookup key (FK to models.model_id); ``None`` when
+    not yet embedded. Absent on rows produced before ``migration_025``."""
     metadata: str
     """Optional JSON metadata. Should be valid MetadataDict"""
     markup: str
@@ -186,32 +210,6 @@ class ChatUserDict(TypedDict):
     """Record last update timestamp."""
 
 
-class MessageEmbeddingDict(TypedDict):
-    """Embedding vector and its bookkeeping for a single message.
-
-    Returned by :meth:`ChatEmbeddingsRepository.getMessageEmbedding`.
-    The dict only carries the ``message_embeddings`` columns — there is
-    no JOIN against ``chat_messages`` anymore, so message text is not
-    included; callers that need the message text should fetch it from
-    :meth:`ChatMessagesRepository.getChatMessageByMessageId` (or use
-    the backfill helper :meth:`ChatEmbeddingsRepository.getMessagesWithoutEmbeddings`
-    which returns full :class:`ChatMessageDict` rows).
-    """
-
-    message_id: MessageId
-    """Message identifier."""
-    embedding: list[float]
-    """The raw float vector (decoded from the BLOB column)."""
-    dimensions: int
-    """Number of dimensions in the vector."""
-    model: str
-    """Model that produced the embedding."""
-    created_at: datetime.datetime
-    """Embedding row creation timestamp."""
-    updated_at: datetime.datetime
-    """Embedding row last-update timestamp."""
-
-
 class ChatInfoDict(TypedDict):
     """Dictionary representing chat information."""
 
@@ -225,10 +223,19 @@ class ChatInfoDict(TypedDict):
     """Chat type."""
     is_forum: bool
     """Whether chat is a forum."""
+    bot_status: ChatBotStatus
+    """Accessibility state of the bot for this chat."""
     created_at: datetime.datetime
     """Record creation timestamp."""
     updated_at: datetime.datetime
     """Record last update timestamp."""
+    messages_count: NotRequired[int]
+    """User's message count in this chat (operational counter).
+
+    Note: This field is only populated when querying via getUserChats
+    (which JOINs with the chat_users table). Direct queries to the
+    chat_info table (e.g., getChatInfo) will not include this field.
+    """
 
 
 class ChatTopicInfoDict(TypedDict):
@@ -300,28 +307,6 @@ class DelayedTaskDict(TypedDict):
     """Record last update timestamp."""
 
 
-class WebhookUpdatesRow(TypedDict):
-    """Dictionary representing a webhook_updates row.
-
-    Each row stores one incoming Max webhook payload awaiting consumption.
-    ``processed`` is an integer boolean (0/1). ``processed_at`` is ``None``
-    for rows that have not yet been consumed.
-    """
-
-    id: str
-    """Application-generated UUID identifying the update."""
-    received_at: datetime.datetime
-    """When the webhook payload was received and stored."""
-    update_type: str
-    """Coarse update_type tag extracted from the Max payload."""
-    raw_json: str
-    """Full webhook request body serialized as a JSON string."""
-    processed: int
-    """Whether the update has been consumed (0 = pending, 1 = processed)."""
-    processed_at: Optional[datetime.datetime]
-    """When the update was marked processed, or None if still pending."""
-
-
 class SpamMessageDict(TypedDict):
     """Dictionary representing a spam message record."""
 
@@ -364,19 +349,6 @@ class ChatSummarizationCacheDict(TypedDict):
     summary: str
     """Generated summary."""
 
-    created_at: datetime.datetime
-    """Record creation timestamp."""
-    updated_at: datetime.datetime
-    """Record last update timestamp."""
-
-
-class CacheDict(TypedDict):
-    """Weather cache entry from database."""
-
-    key: str
-    """Cache key."""
-    data: str
-    """JSON-serialized response data."""
     created_at: datetime.datetime
     """Record creation timestamp."""
     updated_at: datetime.datetime
@@ -552,10 +524,9 @@ class UserMemoryDict(TypedDict):
     """Row shape returned by ``UserMemoriesRepository`` read methods.
 
     Keys are snake_case to match DB column names (repo convention — see
-    ``ChatMessageDict`` / ``MessageEmbeddingDict`` in
-    ``internal/database/models.py``). Repository METHOD parameters stay
-    camelCase per AGENTS.md; only the dict keys mirror the columns so
-    the universal converter ``dbUtils.sqlToTypedDict`` can map them
+    ``ChatMessageDict`` in ``internal/database/models.py``). Repository METHOD
+    parameters stay camelCase per AGENTS.md; only the dict keys mirror the
+    columns so the universal converter ``dbUtils.sqlToTypedDict`` can map them
     directly.
 
     Attributes:
@@ -572,10 +543,12 @@ class UserMemoryDict(TypedDict):
         tags: Decoded list of tag strings (stored as JSON TEXT in the row).
         permanent: True if the memory is always injected into the system block.
         source: Provenance — refinement | chat | migration | user.
-        embedding_model: Name of the model that produced the stored vec0
-            embedding, or ``None`` when the memory has not been embedded yet.
-        embedding_dimensions: Dimension count of the stored embedding, or
-            ``None`` when not yet embedded.
+        model_id: Embedding model lookup key (FK to ``models.model_id``);
+            ``None`` when the memory has not been embedded yet.
+            Post-``migration_025`` shape: the legacy
+            ``embedding_model`` / ``embedding_dimensions`` provenance pair
+            was normalised into the ``models`` lookup table keyed by this
+            integer.
         created_at: Creation timestamp.
         updated_at: Last-update timestamp.
         score: Cosine similarity (0.0–1.0) when returned by semantic
@@ -592,8 +565,42 @@ class UserMemoryDict(TypedDict):
     tags: list[str]
     permanent: bool
     source: UserMemorySource
-    embedding_model: Optional[str]
-    embedding_dimensions: Optional[int]
+    model_id: Optional[int]
     created_at: datetime.datetime
     updated_at: datetime.datetime
     score: NotRequired[float]
+
+
+class ModelDict(TypedDict):
+    """Row in the ``models`` embedding-provenance lookup table.
+
+    Backs :class:`internal.database.repositories.embedding_models.EmbeddingModelsRepository`.
+    The ``models`` table is created by ``migration_025`` (Phase 2 of the
+    embedding-model-lookup refactor). Each row represents one distinct
+    ``(model, dimensions)`` pair seen by the system; the small integer
+    ``model_id`` is the FK-like key stored on every embedding-bearing row
+    (``chat_messages.model_id``, ``user_memories.model_id``, and the vec0
+    partition keys) so the provenance pair itself is stored exactly once.
+
+    Keys are snake_case to match the DB column names (repo convention —
+    see ``UserMemoryDict`` and ``ChatMessageDict``).
+
+    Attributes:
+        model_id: App-generated sequential integer primary key (Decision D2
+            of the embedding-model-lookup refactor — small ints are more
+            compact and faster as vec0 partition keys than UUID strings;
+            the DB does not generate IDs).
+        model: Embedding model name string (e.g. the resolved value of the
+            ``EMBEDDING_MODEL`` chat setting).
+        dimensions: Vector dimensionality (e.g. 384, 1024).
+        created_at: Row creation timestamp (set app-side; no DB default).
+    """
+
+    model_id: int
+    """App-generated sequential integer primary key."""
+    model: str
+    """Embedding model name string (e.g. the resolved ``EMBEDDING_MODEL`` value)."""
+    dimensions: int
+    """Vector dimensionality (e.g. 384, 1024)."""
+    created_at: datetime.datetime
+    """Row creation timestamp (set app-side; no DB default)."""

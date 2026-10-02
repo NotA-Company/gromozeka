@@ -53,6 +53,8 @@ A single change may match multiple rows. Apply all that match.
 
 ## Step 2 — Update `docs/llm/` (the LLM-agent canon)
 
+**Mechanism (conditional preference):** when the markdown-mcp MCP tools are available, perform every `docs/`-tree update through `doc_section_edit` (preferred) or `doc_write`, per [`docs/docs-playbook/mcp-docs-workflow.md`](../../../docs/docs-playbook/mcp-docs-workflow.md): `doc_read` the target first (it yields the CAS token — the section's served body for `doc_section_edit`, the file `sha256` for `doc_write`), apply the edit, then check `reindex.status` in the result (`indexed` = done; `error` = run incremental `markdown-mcp index` later). Slugs come from `doc_outline` or the edit result's returned `outline` — never hard-coded. Files outside the docs root (Steps 3, 5, 6) stay on manual tools regardless. Without MCP, plain `read` + `edit` on the linked paths is the exact substitute.
+
 | If you changed… | Update |
 |---|---|
 | New handler | [`docs/llm/handlers.md`](../../../docs/llm/handlers.md). `docs/llm/index.md` §4.5 lists handlers as an aggregate row — update it only if the aggregate summary is now misleading (e.g. handler count, or calling out a new flagship handler). |
@@ -68,7 +70,7 @@ A single change may match multiple rows. Apply all that match.
 | New gotcha / anti-pattern | [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) — §2 for anti-patterns, §3 for gotchas table, §4 for lessons-learned narratives. |
 | New repo-wide durable memory | [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md). Keep it compact; only store cross-task facts or workflow lessons. |
 | New subsystem-specific durable memory | Relevant file under [`docs/llm/memories/`](../../../docs/llm/memories/) **and** [`docs/llm/memories/index.md`](../../../docs/llm/memories/index.md). If you create a new memory file or change discovery flow, also update [`docs/llm/index.md`](../../../docs/llm/index.md) and the pointers in [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md). |
-| Refactor | Search all `docs/llm/**/*.md` (include `docs/llm/memories/`) for old paths/symbol names. |
+| Refactor | Search all `docs/llm/**/*.md` (include `docs/llm/memories/`) for old paths/symbol names. With MCP, `doc_search("old-symbol", file_glob="llm/*.md")` is the direct replacement (`*` crosses `/` under fnmatch, so this covers `memories/`) — but search is semantic and score-floored, **not exhaustive**, and stale after out-of-band edits: run incremental `markdown-mcp index` first after bulk refactors, and keep a raw Grep sweep as the exhaustive-completion check. |
 
 ### How to add entries
 
@@ -109,6 +111,8 @@ These three files go stale together; leaving any of them behind creates contradi
 
 ## Step 5 — Update inline READMEs (scan, don't trust hardcoded lists)
 
+**Manual tools — outside docs root.** These READMEs live under `lib/**` and `internal/**`, outside the markdown-mcp docs root; scan and edit them with the normal file tools (`glob`, `read`, `edit`) only.
+
 Library/service READMEs drift over time. Instead of trusting a hardcoded list, scan:
 
 ```
@@ -120,6 +124,8 @@ glob lib/ext_modules/*/README.md
 Open any that describe files, APIs, or behavior you touched and update them. Common candidates: `lib/cache/`, `lib/rate_limiter/`, `lib/openweathermap/`, `lib/geocode_maps/`, `lib/markdown/test/`, `internal/services/storage/`, `internal/database/migrations/`.
 
 ## Step 6 — Update `CHANGELOG.md` and root `README.md` for user-visible changes
+
+**Manual tools — outside docs root.** `CHANGELOG.md` and root `README.md` sit at the repo root, outside the markdown-mcp docs root; update them with the normal file tools only.
 
 User-facing docs at the repo root go stale quietly. After a code change, ask: would a **user or operator** (not just an agent reading `docs/llm/`) notice this change? If yes, add a `CHANGELOG.md` entry (mandatory) and run the root `README.md` staleness check below.
 
@@ -149,7 +155,7 @@ Each entry: declarative and past tense per [`docs/llm/changelog.md`](../../../do
 
 ## Step 7 — Update the human developer guide (only if it covers your change)
 
-[`docs/developer-guide.md`](../../../docs/developer-guide.md) is human-oriented and partially redundant with `docs/llm/`. Find relevant sections **by heading**, not section number (numbers rot). Update when your change invalidates an example or description there.
+[`docs/developer-guide.md`](../../../docs/developer-guide.md) is human-oriented and partially redundant with `docs/llm/`. Find relevant sections **by heading**, not section number (numbers rot). Update when your change invalidates an example or description there. With MCP, "find by heading" is directly expressible: `doc_outline("developer-guide.md")` to locate the section, then `doc_section_edit` to replace it (slug from the outline, never hard-coded).
 
 ## Step 8 — Secrets discipline
 
@@ -176,8 +182,9 @@ Before declaring docs complete:
 - [ ] **Root `README.md` staleness check** run; updated only if user-facing capabilities/commands/config it documents actually changed.
 - [ ] `make format lint && make test` still green — this catches code examples that drifted.
 
-> **Note:** If you are `docs-writer` (or another agent restricted from running `make format`/`make test`), substitute `make lint && make check-docs` as your verification gate. The full `make format lint && make test` remains the canonical gate for agents that can run it (`software-developer`, `debugger`, etc.).
-- [ ] `make check-docs` run; no broken markdown links (read-only; exit 1 if any local link is broken).
+> **Note:** If you are `docs-writer` (or another agent restricted from running `make format`/`make test`), substitute `make lint && make check-docs` plus the structural-lint tier below (when its tooling is available) as your verification gate. The full `make format lint && make test` remains the canonical gate for agents that can run it (`software-developer`, `debugger`, etc.).
+- [ ] `make check-docs` run; no broken markdown links (read-only; exit 1 if any local link is broken). This validates **links**, which `doc_lint` does not — both gates stay.
+- [ ] Docs-tree structural lint run, tiered by availability: MCP `doc_lint()` when the markdown-mcp tools are available → else CLI `markdown-mcp lint` if it is installed and you are permitted to run it (the CLI stays authoritative on disputes — older MCP builds surfaced excluded-path noise) → else skip the structural check, proceed with the manual workflow, and NOTE the skipped check in your result. Checks structure (duplicate slugs, front matter), not links.
 
 If any step fails, fix it before closing the task. Stale docs are worse than verbose docs.
 

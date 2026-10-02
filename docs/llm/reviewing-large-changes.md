@@ -1,3 +1,7 @@
+---
+category: process
+---
+
 # Gromozeka — Reviewing Large Changes
 
 > **Audience:** `code-reviewer` agent (read-only, structured reports), `teamlead` agent (orchestrates review campaigns)
@@ -103,6 +107,7 @@ The output is a **classification table** with columns: feature batch slug, file 
 ### 3.2 Batch Size Guardrails
 
 - **Target:** 15-20 files per batch. This fits within the `code-reviewer` agent's typical ~60 step budget.
+- **Density adjustment (refined 2026-08-08):** 15-20 is right for typical code; dense production code with external I/O dependencies (async HTTP, PyAV, boto3) batches at **4-5 files**; light-depth docs (~16 files) and config files (~4) are fine at their natural sizes. Campaign record with the refinement rationale: [`memories/stt-media-transcription.md`](memories/stt-media-transcription.md).
 - **Upper bound:** 24 files. Above this, split the feature into sub-batches (e.g., data layer vs. handler layer within the same feature).
 - **Lower bound:** No strict lower limit. A 3-file batch is fine; a single-file batch is also valid if it represents an independent concern (e.g., a standalone migration).
 
@@ -181,7 +186,7 @@ The `code-reviewer` agent's multi-pass analysis (architectural fit, correctness,
 | Production logic (handlers, services, repos, providers) | Full review: all 5 passes | Correctness, security, error handling, conventions, concurrency |
 | Tests | Focused: correctness + coverage | Test logic correctness, edge case coverage, async patterns, fixture usage, no mocks that mask bugs |
 | Config TOML files | Light: consistency | Keys match code expectations, no broken references, correct TOML syntax, defaults present for new settings |
-| Documentation (markdown) | Light: consistency | Descriptions match code changes, no stale references, no broken links, examples use correct commands |
+| Documentation (markdown) | Light: consistency | Descriptions match code changes, no stale references, no broken links, examples use correct commands; reviewers may run `doc_lint` (markdown-mcp) for structural findings |
 
 ### 4.4 Special Attention Tags
 
@@ -198,7 +203,7 @@ When certain risk tags appear in a batch, the orchestrator must append domain-sp
 
 #### `[NEW-HANDLER]`
 
-- `LLMMessageHandler` ordering invariant: new handler is registered **before** `LLMMessageHandler` in `HandlersManager` (line ~534 in `manager.py`).
+- `LLMMessageHandler` ordering invariant: new handler is registered **before** `LLMMessageHandler` in `HandlersManager` (line ~639 in `manager.py`).
 - camelCase naming on all methods and variables in the handler.
 - `BaseBotHandler` pattern compliance: extends `BaseBotHandler`, calls `super().__init__()`, implements `newMessageHandler()` returning `HandlerResultStatus`.
 - Config-gating: if feature is optional, registered conditionally via `configManager.get(...)` check.
@@ -250,7 +255,7 @@ One final `code-reviewer` pass on the **full diff** (all files since the base co
 
 1. **Cross-batch inconsistencies:** Duplicate logic, conflicting config keys, incompatible style choices between batches.
 2. **Orphaned references:** A class or function imported in one batch's file but only referenced in another batch's file. An import added in Batch A and used in Batch B should have been visible during Batch B's review, but if neither review caught the full import chain, the integration pass will.
-3. **Stale documentation:** Docs that reference pre-change state, config keys that were renamed in one batch but not updated in docs, code examples in docs that no longer compile.
+3. **Stale documentation:** Docs that reference pre-change state, config keys that were renamed in one batch but not updated in docs, code examples in docs that no longer compile. `doc_search` (markdown-mcp, fresh after an incremental `markdown-mcp index`) is a useful stale-reference sweep input alongside a raw Grep pass.
 4. **Conflicting styles:** Two batches that chose different patterns for the same problem (e.g., one batch uses `Optional[Type]` and another uses `Type | None`) -- inconsistencies like these should be normalised.
 5. **Missed quality gates:** Files that bypassed a specific convention check because each per-batch reviewer assumed another batch would handle it.
 

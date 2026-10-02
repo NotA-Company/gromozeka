@@ -73,10 +73,16 @@ class CompactMemoryIdsDict(TypedDict):
     Attributes:
         permanentIds: UUID hex strings of permanent memories.
         shortTermIds: UUID hex strings of short-term memories.
+        shortTermScores: Optional mapping from short-term memory UUID to
+            semantic-relevance score (0.0–1.0) produced by
+            :meth:`UserMemoriesRepository.searchMemories` at injection time.
+            Only present for semantically-retrieved ephemeral memories; permanent
+            memories and latest-mode ephemeral retrieval never populate this field.
     """
 
     permanentIds: list[str]
     shortTermIds: list[str]
+    shortTermScores: NotRequired[dict[str, float]]
 
 
 CondensedDateRangeDict = TypedDict("CondensedDateRangeDict", {"from": float, "to": float})

@@ -7,27 +7,47 @@ The main class, TheBot, abstracts platform-specific differences and provides a c
 API for bot operations across different messaging platforms.
 """
 
+import asyncio
 import hashlib
 import logging
-from collections.abc import MutableSet, Sequence
-from typing import Any, Dict, List, Optional, Tuple, Union
+import random
+import time
+from collections.abc import Awaitable, Callable, MutableSet, Sequence
+from datetime import timedelta
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import magic
 import telegram
+import telegram.error
 import telegram.ext
 
 import lib.max_bot as libMax
+import lib.max_bot.exceptions as maxExceptions
 import lib.max_bot.models as maxModels
 from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import (
+    BOT_ID_CACHE_TTL_SECONDS,
+    BOT_ID_FAILURE_GRACE_SECONDS,
+    BOT_USERNAME_CACHE_TTL_SECONDS,
+    BOT_USERNAME_FAILURE_GRACE_SECONDS,
+    TELEGRAM_RETRY_AFTER_CAP_SECONDS,
+    TELEGRAM_SEND_MAX_ATTEMPTS,
+    TELEGRAM_SEND_RETRY_DELAY_BASE,
+    TELEGRAM_SEND_RETRY_JITTER,
+)
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
-from internal.database.models import ChatInfoDict
+from internal.database.models import ChatBotStatus, ChatInfoDict
 from internal.models import MessageId, MessageType
 from internal.services.cache import CacheService
 from lib import utils
 from lib.markdown.parser import markdownToMarkdownV2
 
 logger = logging.getLogger(__name__)
+
+
+_TelegramSendReturnT = TypeVar("_TelegramSendReturnT")
+"""TypeVar for the return type of :meth:`TheBot._retryTelegramSend`."""
 
 
 class TheBot:
@@ -114,42 +134,134 @@ class TheBot:
         logger.debug(f"Bot Owners: byId: {self.botOwnersId}, byUsername: {self.botOwnersUsername}")
         self.cache = CacheService.getInstance()
 
+        # Cache for bot identity (stable for process lifetime, with TTL)
+        self._botId: Optional[int] = None
+        self._botIdCachedAt: float = 0.0
+        self._botUserName: Optional[str] = None
+        self._botUserNameCachedAt: float = 0.0
+
         ###
 
     # Different helpers
     ###
 
     async def getBotId(self) -> int:
-        """Get bot's unique identifier.
+        """Get bot's unique ID.
+
+        The bot ID is cached for BOT_ID_CACHE_TTL_SECONDS (3600 seconds) to avoid
+        repeated platform API calls. After the TTL expires, the ID is re-resolved
+        from the platform, enabling recovery from temporary glitches (e.g., bot
+        re-creation on the platform).
+
+        For Max, the refresh bypasses the client-level cache (getMyInfo with
+        useCache=False), so TheBot's TTL is the only caching layer; one uncached
+        request per TTL window.
+
+        On refresh failure, if a stale cached value exists and the cache age is
+        less than (TTL + GRACE), the stale value is returned instead of raising.
+        This provides graceful degradation for transient platform issues.
+        Failures are never cached.
 
         Returns:
             Bot's unique ID from the active platform
 
         Raises:
-            RuntimeError: If no active bot client is configured
+            RuntimeError: If no active bot client; or if refresh fails and no
+                stale cache is available (no cache, or cache older than TTL+GRACE).
         """
-        if self.tgBot:
-            return self.tgBot.id
-        elif self.maxBot:
-            return (await self.maxBot.getMyInfo()).user_id
+        now = time.monotonic()
+        cacheAge = now - self._botIdCachedAt
+        hasCachedValue = self._botIdCachedAt > 0
 
-        raise RuntimeError("No Active bot found")
+        # Return cached value if it exists and hasn't expired
+        if hasCachedValue and cacheAge < BOT_ID_CACHE_TTL_SECONDS:
+            # hasCachedValue > 0 guarantees _botId was set on a prior successful resolution
+            assert self._botId is not None
+            return self._botId
+
+        # Try a refresh
+        try:
+            # Resolve from platform API
+            botId: Optional[int] = None
+            if self.tgBot:
+                botId = self.tgBot.id
+            elif self.maxBot:
+                botId = (await self.maxBot.getMyInfo(useCache=False)).user_id
+            else:
+                raise RuntimeError("No Active bot found")
+
+            # Cache only on successful resolution
+            self._botId = botId
+            self._botIdCachedAt = now
+            return botId
+        except Exception:
+            # If we have a cached value within grace window, return it
+            if hasCachedValue and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS):
+                logger.exception("Bot ID refresh failed, returning stale value")
+                # hasCachedValue > 0 guarantees _botId was set on a prior successful resolution
+                assert self._botId is not None
+                # Return stale value within grace window
+                return self._botId
+
+            # No cache or cache too old — raise the original exception
+            raise
 
     async def getBotUserName(self) -> Optional[str]:
         """Get bot's username.
+
+        The bot username is cached for BOT_USERNAME_CACHE_TTL_SECONDS (3600 seconds) to avoid
+        repeated platform API calls. After the TTL expires, the username is re-resolved
+        from the platform, enabling recovery from temporary glitches (e.g., bot
+        re-creation or username change on the platform).
+
+        For Max, the refresh bypasses the client-level cache (getMyInfo with
+        useCache=False), so TheBot's TTL is the only caching layer; one uncached
+        request per TTL window.
+
+        On refresh failure, if a stale cached value exists and the cache age is
+        less than (TTL + GRACE), the stale value is returned instead of raising.
+        This provides graceful degradation for transient platform issues.
+        Failures are never cached.
 
         Returns:
             Bot's username from the active platform, or None if not set
 
         Raises:
-            RuntimeError: If no active bot client is configured
+            RuntimeError: If no active bot client; or if refresh fails and no
+                stale cache is available (no cache, or cache older than TTL+GRACE).
         """
-        if self.tgBot:
-            return self.tgBot.username
-        elif self.maxBot:
-            return (await self.maxBot.getMyInfo()).username
+        now = time.monotonic()
+        cacheAge = now - self._botUserNameCachedAt
+        hasCachedValue = self._botUserNameCachedAt > 0
 
-        raise RuntimeError("No Active bot found")
+        # Return cached value if it exists and hasn't expired
+        if hasCachedValue and cacheAge < BOT_USERNAME_CACHE_TTL_SECONDS:
+            return self._botUserName
+
+        # Try a refresh
+        try:
+            # Resolve from platform API
+            botUserName: Optional[str] = None
+            if self.tgBot:
+                botUserName = self.tgBot.username
+            elif self.maxBot:
+                botUserName = (await self.maxBot.getMyInfo(useCache=False)).username
+            else:
+                raise RuntimeError("No Active bot found")
+
+            # Cache only on successful resolution
+            self._botUserName = botUserName
+            self._botUserNameCachedAt = now
+            return botUserName
+        except Exception:
+            # If we have a cached value within grace window, return it
+            if hasCachedValue and cacheAge < (BOT_USERNAME_CACHE_TTL_SECONDS + BOT_USERNAME_FAILURE_GRACE_SECONDS):
+                logger.exception("Bot username refresh failed, returning stale value")
+                # Return stale value within grace window
+                return self._botUserName
+
+            # No cache or cache too old — raise the original exception
+            raise
 
     def isBotOwner(self, user: MessageSender) -> bool:
         """Check if a user is a bot owner.
@@ -168,15 +280,29 @@ class TheBot:
         Checks the cache first; fetches from the appropriate platform API if not cached,
         then stores the result in cache before returning.
 
+        When the bot is no longer in the chat or has no access (e.g., kicked/blocked on
+        Telegram or NotFoundError on Max), logs a warning, marks the chat as inaccessible,
+        and returns an empty dict without caching the failure. This allows the caller
+        (e.g., isAdmin) to treat the result as "no admins in this chat" and gracefully
+        exclude it from lists.
+
         Args:
             chat: The target chat to fetch administrators for.
 
         Returns:
             Dict mapping admin user IDs (int) to their username + display names (Tuple[str, str]).
+            Returns an empty dict if the bot has no access to the chat.
 
         Raises:
             RuntimeError: If the configured bot provider is neither Telegram nor Max.
         """
+        # Short-circuit: if the chat is marked INACCESSIBLE, skip the platform API call.
+        # isChatInaccessible is cache-aside (cheap on a cache hit, may read DB on miss).
+        # Returns the same {} the failure path would, so callers degrade identically.
+        # Recovery flips the status back to ACTIVE.
+        if await self.cache.isChatInaccessible(chat.id):
+            return {}
+
         # If chat is passed, check if user is admin of given chat
         chatAdmins: Optional[Dict[int, Tuple[str, str]]] = self.cache.getChatAdmins(chat.id)
         if chatAdmins is not None:
@@ -184,23 +310,45 @@ class TheBot:
 
         chatAdmins = {}  # userID -> username
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
-            for admin in await self.tgBot.get_chat_administrators(chat_id=chat.id):
-                adminUsername = admin.user.username or ""
-                if adminUsername:
-                    adminUsername = "@" + adminUsername
-                chatAdmins[admin.user.id] = (adminUsername, admin.user.full_name)
+            try:
+                for admin in await self.tgBot.get_chat_administrators(chat_id=chat.id):
+                    adminUsername = admin.user.username or ""
+                    if adminUsername:
+                        adminUsername = "@" + adminUsername
+                    chatAdmins[admin.user.id] = (adminUsername, admin.user.full_name)
+            except telegram.error.Forbidden as exc:
+                # Bot was kicked/blocked or has no access to the chat
+                logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Telegram): {exc}")
+                await self.cache.markChatInaccessible(chat.id)
+                return {}
+            except telegram.error.BadRequest as exc:
+                # Conservative: only treat as inaccessible if clearly about access.
+                # A miss safely re-raises - if Telegram's wording changes, we want real errors surfaced.
+                excMsg = str(exc)
+                if "chat not found" in excMsg.lower():
+                    logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Telegram): {exc}")
+                    await self.cache.markChatInaccessible(chat.id)
+                    return {}
+                # Re-raise other BadRequest errors - they're likely real API usage errors
+                raise
 
         elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
-            maxChatAdmins = (await self.maxBot.getAdmins(chatId=chat.id)).members
-            for admin in maxChatAdmins:
-                adminFullName = admin.first_name
-                if admin.last_name:
-                    adminFullName += " " + admin.last_name
-                adminUsername = admin.username or ""
-                if adminUsername:
-                    adminUsername = "@" + adminUsername
+            try:
+                maxChatAdmins = (await self.maxBot.getAdmins(chatId=chat.id)).members
+                for admin in maxChatAdmins:
+                    adminFullName = admin.first_name
+                    if admin.last_name:
+                        adminFullName += " " + admin.last_name
+                    adminUsername = admin.username or ""
+                    if adminUsername:
+                        adminUsername = "@" + adminUsername
 
-                chatAdmins[admin.user_id] = (adminUsername, adminFullName)
+                    chatAdmins[admin.user_id] = (adminUsername, adminFullName)
+            except maxExceptions.NotFoundError as exc:
+                # Bot not in chat or chat not found
+                logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Max): {exc}")
+                await self.cache.markChatInaccessible(chat.id)
+                return {}
 
         else:
             raise RuntimeError(f"Unexpected platform: {self.botProvider}")
@@ -299,7 +447,8 @@ class TheBot:
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             ret = None
             if text is None:
-                ret = await self.tgBot.edit_message_reply_markup(
+                ret = await self._retryTelegramSend(
+                    self.tgBot.edit_message_reply_markup,
                     chat_id=chatId,
                     message_id=messageId.asInt(),
                     reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
@@ -309,7 +458,8 @@ class TheBot:
                 if useMarkdown:
                     kwargs["parse_mode"] = telegram.constants.ParseMode.MARKDOWN_V2
                     text = markdownToMarkdownV2(text)
-                ret = await self.tgBot.edit_message_text(
+                ret = await self._retryTelegramSend(
+                    self.tgBot.edit_message_text,
                     text=text,
                     chat_id=chatId,
                     message_id=messageId.asInt(),
@@ -623,6 +773,73 @@ class TheBot:
 
         return ensuredReplyList
 
+    async def _retryTelegramSend(
+        self,
+        sendCallable: Callable[..., Awaitable[_TelegramSendReturnT]],
+        **kwargs: Any,
+    ) -> _TelegramSendReturnT:
+        """Retry a Telegram Bot API send/edit call on transient errors.
+
+        Retries on ``telegram.error.TimedOut``, other ``telegram.error.NetworkError``
+        (excluding ``BadRequest``), and ``telegram.error.RetryAfter``. Non-retryable
+        exceptions (``BadRequest``, ``Forbidden``, ``Conflict``, ``ChatMigrated``,
+        etc.) propagate immediately on the first attempt.
+
+        ``BadRequest`` subclasses ``NetworkError`` but is semantically a 400
+        (client error), so it is excluded from retry and re-raised.
+
+        Args:
+            sendCallable: The bound ``self.tgBot.send_*`` / ``edit_message_*``
+                coroutine factory. Called as ``await sendCallable(**kwargs)``.
+            **kwargs: Keyword arguments forwarded verbatim to ``sendCallable``.
+
+        Returns:
+            Whatever ``sendCallable`` returns on a successful attempt
+            (typically ``telegram.Message`` or ``Sequence[telegram.Message]``).
+
+        Raises:
+            The last transient exception if all attempts are exhausted; the
+            original non-retryable exception immediately if one is raised.
+        """
+        for attempt in range(TELEGRAM_SEND_MAX_ATTEMPTS):
+            try:
+                return await sendCallable(**kwargs)
+            except telegram.error.BadRequest:
+                # BadRequest is a client error (400), never retry
+                raise
+            except telegram.error.RetryAfter as e:
+                if attempt == TELEGRAM_SEND_MAX_ATTEMPTS - 1:
+                    # Last attempt exhausted, re-raise
+                    raise
+                # Read the property exactly once: each access may emit a
+                # PTBDeprecationWarning while PTB_TIMEDELTA is unset (int mode).
+                retryAfterValue: Union[int, timedelta] = e.retry_after
+                # Honor retry_after, capped to prevent absurdly long sleeps
+                if isinstance(retryAfterValue, timedelta):
+                    delaySeconds = retryAfterValue.total_seconds()
+                else:
+                    delaySeconds = float(retryAfterValue)
+                delaySeconds = min(delaySeconds, TELEGRAM_RETRY_AFTER_CAP_SECONDS)
+                logger.warning(
+                    f"Telegram send (attempt {attempt + 1}/{TELEGRAM_SEND_MAX_ATTEMPTS}), "
+                    f"honoring retry_after={retryAfterValue}, sleeping {delaySeconds:.1f}s: "
+                    f"{type(e).__name__}#{e}"
+                )
+                await asyncio.sleep(delaySeconds)
+            except telegram.error.NetworkError as e:
+                if attempt == TELEGRAM_SEND_MAX_ATTEMPTS - 1:
+                    # Last attempt exhausted, re-raise
+                    raise
+                # Exponential backoff with jitter
+                delay = TELEGRAM_SEND_RETRY_DELAY_BASE * (2**attempt) + random.uniform(0, TELEGRAM_SEND_RETRY_JITTER)
+                logger.warning(
+                    f"Telegram send (attempt {attempt + 1}/{TELEGRAM_SEND_MAX_ATTEMPTS}), "
+                    f"retrying in {delay:.2f}s: {type(e).__name__}#{e}"
+                )
+                await asyncio.sleep(delay)
+        # This line is unreachable — the loop always returns or raises on the last iteration
+        raise RuntimeError("_retryTelegramSend: exhausted retry loop without return")  # pragma: no cover
+
     async def _sendTelegramMessage(
         self,
         replyToMessage: Optional[EnsuredMessage],
@@ -730,20 +947,33 @@ class TheBot:
                 if tryMarkdownV2 and messageText is not None:
                     try:
                         messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
-                        # logger.debug(f"Sending MarkdownV2: {replyText}")
-                        # TODO: One day start using self.tgBot
-                        replyMessage = await self.tgBot.send_photo(
-                            caption=messageTextParsed,
-                            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
-                            **replyKwargs,
-                        )
                     except Exception as e:
-                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                        # Probably error in markdown formatting, fallback to raw text
+                        # Markdown conversion failed (formatter bug, bad input, etc.) —
+                        # broad catch is intentional: the markdown pipeline is best-effort
+                        # and must never prevent sending the message at all.
+                        logger.error(f"Error formatting markdown: {type(e).__name__}#{e}")
+                        messageTextParsed = None
+                    else:
+                        try:
+                            # logger.debug(f"Sending MarkdownV2: {replyText}")
+                            # TODO: One day start using self.tgBot
+                            replyMessage = await self._retryTelegramSend(
+                                self.tgBot.send_photo,
+                                caption=messageTextParsed,
+                                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
+                                **replyKwargs,
+                            )
+                        except telegram.error.BadRequest as e:
+                            # Telegram rejected the markdown — fallback to raw text.
+                            # Transient errors (TimedOut/NetworkError/RetryAfter) have
+                            # already been retried inside _retryTelegramSend and bubble
+                            # past this except to the outer handler.
+                            logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
 
                 if replyMessage is None:
                     _messageText = messageText if messageText is not None else ""
-                    replyMessage = await self.tgBot.send_photo(
+                    replyMessage = await self._retryTelegramSend(
+                        self.tgBot.send_photo,
                         caption=addMessagePrefix + _messageText,
                         **replyKwargs,
                     )
@@ -820,19 +1050,33 @@ class TheBot:
                     if tryMarkdownV2:
                         try:
                             messageTextParsed = markdownToMarkdownV2(addMessagePrefix + _messageText)
-                            # logger.debug(f"Sending MarkdownV2: {replyText}")
-                            replyMessage = await self.tgBot.send_message(
-                                text=messageTextParsed,
-                                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
-                                **replyKwargs,
-                            )
                         except Exception as e:
-                            logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                            # Probably error in markdown formatting, fallback to raw text
+                            # Markdown conversion failed (formatter bug, bad input, etc.) —
+                            # broad catch is intentional: the markdown pipeline is best-effort
+                            # and must never prevent sending the message at all.
+                            logger.error(f"Error formatting markdown: {type(e).__name__}#{e}")
+                            messageTextParsed = None
+                        else:
+                            try:
+                                # logger.debug(f"Sending MarkdownV2: {replyText}")
+                                replyMessage = await self._retryTelegramSend(
+                                    self.tgBot.send_message,
+                                    text=messageTextParsed,
+                                    parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
+                                    **replyKwargs,
+                                )
+                            except telegram.error.BadRequest as e:
+                                # Telegram rejected the markdown — fallback to raw text.
+                                # Transient errors (TimedOut/NetworkError/RetryAfter) have
+                                # already been retried inside _retryTelegramSend and bubble
+                                # past this except to the outer handler.
+                                logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
 
                     if replyMessage is None:
-                        replyMessage = await self.tgBot.send_message(
-                            text=addMessagePrefix + _messageText, **replyKwargs
+                        replyMessage = await self._retryTelegramSend(
+                            self.tgBot.send_message,
+                            text=addMessagePrefix + _messageText,
+                            **replyKwargs,
                         )
 
                     if replyMessage is not None:
@@ -1128,6 +1372,7 @@ class TheBot:
                 "type": message.recipient.chatType,
                 "created_at": now,
                 "updated_at": now,
+                "bot_status": ChatBotStatus.ACTIVE,
             }
 
         elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
@@ -1149,6 +1394,7 @@ class TheBot:
                 "type": message.recipient.chatType,
                 "created_at": now,
                 "updated_at": now,
+                "bot_status": ChatBotStatus.ACTIVE,
             }
 
         else:

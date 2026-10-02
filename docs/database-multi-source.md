@@ -1,6 +1,10 @@
+---
+category: guide
+---
+
 # Multi-Source Database Configuration Guide
 
-> **Status:** ✅ OPERATIONAL — This is a current/reference-style documentation retained at `docs/` root for easy access
+> **Status:** OPERATIONAL — This is a current/reference-style documentation retained at `docs/` root for easy access
 > **Note:** Multi-source database architecture is implemented and operational using the provider abstraction pattern. This guide is kept at `docs/` root as it serves as operational reference documentation rather than a forward-looking implementation plan.
 
 **Version:** 1.0
@@ -40,7 +44,36 @@ The multi-source database architecture allows Gromozeka to work with multiple SQ
 
 ## Configuration Structure
 
-Multi-source configuration is provided via a dictionary passed to [`Database.__init__()`](../internal/database/database.py:180):
+Multi-source configuration lives in the `[database]` TOML section (live example: [`configs/00-defaults/00-config.toml`](../configs/00-defaults/00-config.toml)). `[database] default` names the fallback source, each provider is declared as `[database.providers.<name>]` with a `provider` type and a `[database.providers.<name>.parameters]` sub-table of constructor kwargs, and `[database.chatMapping]` pins individual chats to named sources:
+
+```toml
+[database]
+default = "primary"
+
+[database.providers.primary]
+provider = "sqlite3"
+
+[database.providers.primary.parameters]
+dbPath = "bot.db"
+readOnly = false
+timeout = 30
+
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "archive.db"
+readOnly = true
+timeout = 30
+
+[database.chatMapping]
+-1001234567890 = "archive"
+-1009876543210 = "primary"
+```
+
+### Python (programmatic) form
+
+The parsed TOML reaches [`Database.__init__()`](../internal/database/database.py:199) as a `DatabaseManagerConfig` dictionary (same shape; the TypedDict is defined at [`lib/db/manager.py`](../lib/db/manager.py:28)) — useful in tests and scripts:
 
 ```python
 from internal.database import Database
@@ -72,35 +105,6 @@ config = {
 }
 
 db = Database(config=config)
-```
-
-### TOML Configuration
-
-In TOML configuration files:
-
-```toml
-[database]
-default = "primary"
-
-[database.providers.primary]
-provider = "sqlite3"
-
-[database.providers.primary.parameters]
-dbPath = "bot.db"
-readOnly = false
-timeout = 30
-
-[database.providers.archive]
-provider = "sqlite3"
-
-[database.providers.archive.parameters]
-dbPath = "archive.db"
-readOnly = true
-timeout = 30
-
-[database.chatMapping]
--1001234567890 = "archive"
--1009876543210 = "primary"
 ```
 
 ## Provider Configuration
@@ -182,7 +186,7 @@ Chat mapping routes specific chats to specific data providers. This is useful fo
 - Segregating test chats from production
 - Distributing load across multiple databases
 
-### Configuration
+### Chat Mapping Configuration
 
 ```python
 "chatMapping": {
@@ -204,13 +208,13 @@ Example:
 
 ```python
 # Uses archive provider (from chatMapping)
-messages = db.chatMessages.getChatMessagesSince(chatId=-1001234567890)
+messages = await db.chatMessages.getChatMessagesSince(chatId=-1001234567890)
 
 # Overrides mapping, uses primary provider explicitly
-messages = db.chatMessages.getChatMessagesSince(chatId=-1001234567890, dataSource="primary")
+messages = await db.chatMessages.getChatMessagesSince(chatId=-1001234567890, dataSource="primary")
 
 # No chatId, uses default provider
-settings = db.common.getSettings()
+settings = await db.common.getSettings()
 ```
 
 ## Connection Management
@@ -235,7 +239,7 @@ Readonly providers provide safe access to databases that should not be modified.
 3. **Backup Databases**: Query backups without modification risk
 4. **Shared Databases**: Multiple bots reading from same source
 
-### Configuration
+### Readonly Provider Configuration
 
 ```python
 "archive": {
@@ -257,7 +261,7 @@ Readonly providers provide safe access to databases that should not be modified.
 
 ```python
 # This will raise ValueError
-db.chatMessages.saveChatMessage(date=..., chatId=-1001234567890, userId=..., messageId=...)  # If chat mapped to readonly provider
+await db.chatMessages.saveChatMessage(date=..., chatId=-1001234567890, userId=..., messageId=...)  # If chat mapped to readonly provider
 
 # Error message:
 # ValueError: Cannot perform write operation on readonly source 'archive'. This source is configured as readonly.
@@ -421,10 +425,10 @@ When querying specific providers, be explicit:
 
 ```python
 # Query archive explicitly
-old_messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
+old_messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
 # Query all providers
-all_chats = db.chatUsers.getAllGroupChats(dataSource=None)  # Aggregates from all providers
+all_chats = await db.chatUsers.getAllGroupChats(dataSource=None)  # Aggregates from all providers
 ```
 
 ### 5. Monitor and Adjust
@@ -445,7 +449,7 @@ all_chats = db.chatUsers.getAllGroupChats(dataSource=None)  # Aggregates from al
 **Solution**:
 - Check if chat is mapped to readonly provider
 - Remove chat from mapping or change provider to writable
-- Use explicit `dataSource` parameter to write to different provider
+- Remap the chat in `chatMapping` to a writable provider (repository write methods route by `chatId` and do not accept `dataSource`)
 
 ```python
 # Check mapping
@@ -503,10 +507,10 @@ print(f"Available providers: {list(db.manager.config['providers'].keys())}")
 
 ```python
 # Instead of querying all providers
-messages = db.chatMessages.getChatMessagesSince(chatId=123)  # Queries mapped provider
+messages = await db.chatMessages.getChatMessagesSince(chatId=123)  # Queries mapped provider
 
 # Be explicit when needed
-messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="primary")
+messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="primary")
 ```
 
 ## Examples
@@ -551,16 +555,16 @@ config = {
 db = Database(config=config)
 
 # Read from primary (default)
-messages = db.chatMessages.getChatMessagesSince(chatId=-1009876543210)
+messages = await db.chatMessages.getChatMessagesSince(chatId=-1009876543210)
 
 # Read from archive (via mapping)
-old_messages = db.chatMessages.getChatMessagesSince(chatId=-1001234567890)
+old_messages = await db.chatMessages.getChatMessagesSince(chatId=-1001234567890)
 
 # Read from specific provider (explicit)
-backup_messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
+backup_messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
 # Cross-provider aggregation
-all_chats = db.chatUsers.getAllGroupChats()  # Queries all providers, deduplicates results
+all_chats = await db.chatUsers.getAllGroupChats()  # Queries all providers, deduplicates results
 ```
 
 ## API Reference
@@ -581,7 +585,7 @@ Database(
 
 ### DatabaseManager
 
-The [`DatabaseManager`](../internal/database/manager.py:39) handles provider routing and connection management:
+The [`DatabaseManager`](../lib/db/manager.py:39) handles provider routing and connection management:
 
 ```python
 async def getProvider(
@@ -605,15 +609,15 @@ async def getProvider(
 
 ### Repository Methods
 
-All repository methods accept an optional `dataSource` parameter for explicit provider selection:
+Read methods accept a keyword-only `dataSource` parameter for explicit provider selection. Write methods route by `chatId` and do not expose `dataSource` — see [Write Methods](#write-methods) below:
 
 ```python
-# Examples using repositories
-db.chatMessages.getChatMessagesSince(chatId, dataSource="archive")
-db.chatInfo.getChatInfo(chatId, dataSource="primary")
-db.chatUsers.getUserChats(userId, dataSource=None)  # Queries all providers
-db.chatUsers.getAllGroupChats(dataSource="primary")
-db.mediaAttachments.getMediaAttachment(mediaId, dataSource="backup")
+# Examples using repositories (reads)
+await db.chatMessages.getChatMessagesSince(chatId=-1001234567890, dataSource="archive")
+await db.chatInfo.getChatInfo(chatId=-1001234567890, dataSource="primary")
+await db.chatUsers.getUserChats(userId=123, dataSource=None)  # Queries all providers
+await db.chatUsers.getAllGroupChats(dataSource="primary")
+await db.mediaAttachments.getMediaAttachment(mediaId="abc", dataSource="backup")
 ```
 
 ### Write Methods
@@ -624,7 +628,7 @@ when routed to a readonly provider. Repository write methods do not expose a
 
 ```python
 # Routed based on chatId mapping (or default when the chat is unmapped)
-db.chatMessages.saveChatMessage(date=..., chatId=123, userId=..., messageId=...)
+await db.chatMessages.saveChatMessage(date=..., chatId=123, userId=..., messageId=...)
 ```
 
 > The underlying `DatabaseManager.getProvider(*, dataSource=..., readonly=False)`
@@ -683,10 +687,10 @@ db.chatMessages.saveChatMessage(date=..., chatId=123, userId=..., messageId=...)
 
 ```python
 # Good: Explicit provider for known location
-messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="primary")
+messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="primary")
 
 # Less efficient: Cross-provider aggregation
-all_messages = db.chatMessages.getChatMessagesSince(chatId=123)  # Checks mapping, queries the mapped/default provider
+all_messages = await db.chatMessages.getChatMessagesSince(chatId=123)  # Checks mapping, queries the mapped/default provider
 ```
 
 ### Timeout Tuning
@@ -776,7 +780,7 @@ config = {
 }
 
 # Read from other bot
-other_messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="other_bot")
+other_messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="other_bot")
 ```
 
 ### Use Case 3: Test/Production Segregation
@@ -845,7 +849,7 @@ config = {
 
 ## Configuration Validation
 
-The [`DatabaseManager`](../internal/database/manager.py:39) validates configuration on initialization:
+The [`DatabaseManager`](../lib/db/manager.py:39) validates configuration on initialization:
 
 ### Validation Rules
 
@@ -875,7 +879,7 @@ config = {"providers": {"primary": {"parameters": {"dbPath": "bot.db"}}}}
 
 - [Multi-Source Database Architecture Design](archive/design/multi-source-database-architecture-v2.md)
 - [Database Implementation](../internal/database/database.py)
-- [DatabaseManager Implementation](../internal/database/manager.py)
+- [DatabaseManager Implementation](../lib/db/manager.py)
 - [Configuration Examples](../docs/examples/)
 - [Migration System Documentation](../internal/database/migrations/README.md)
 

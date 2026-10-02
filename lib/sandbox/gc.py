@@ -1,7 +1,7 @@
 """Garbage collection for sandbox workspaces and metadata.
 
 Removes expired sessions, orphan workspace directories, stale run records,
-and orphan Docker containers.
+stale staging artifacts under ``<root>/tmp``, and orphan Docker containers.
 """
 
 import logging
@@ -189,6 +189,20 @@ class GarbageCollector:
                 if runId in activeRunIds:
                     continue  # Skip containers for active runs
 
+                # Update containers (pre-filter/stage) carry their staging
+                # run id instead of a metadata run id. The run dir under
+                # <root>/tmp is the liveness marker: it exists for exactly
+                # the container's working lifetime — the manager removes it
+                # once the outcome is collected, and a failed (kept,
+                # post-mortem) container's run dir is removed too, so kept
+                # containers stay reapable. Without this check a GC tick in
+                # the container's final retention window would kill a
+                # legitimate in-flight update (the container has no run
+                # metadata to appear in activeRunIds).
+                stagingRunId = container.labels.get("sandbox.stagingRunId")
+                if stagingRunId and (self._rootDir / "tmp" / stagingRunId).is_dir():
+                    continue  # Active update container (its staging run dir is live)
+
                 createdAt = container.createdAt
                 if createdAt:
                     try:
@@ -206,11 +220,64 @@ class GarbageCollector:
 
         return removed
 
-    async def collectAll(self) -> tuple[int, int, int, int, list[str]]:
-        """Run all collection passes and return counts.
+    async def collectStagingArtifacts(self) -> int:
+        """Remove stale staging entries under ``<root>/tmp`` (plan §4.6).
+
+        Reaps staging run directories (the ``io/``/``newpool``/``oldpool``
+        trees of interrupted staged installs or updates, including a run dir
+        preserved after a failed swap rollback) plus any stale list-command
+        stdout/stderr litter, by mtime
+        age. Entries newer than ``orphanWorkspaceRetentionMinutes`` are kept
+        so in-flight runs (minutes at most) and milliseconds-lived
+        ``.tmp-*`` metadata temp files are never caught.
 
         Returns:
-            Tuple containing (removedContainers, removedSessions, removedRuns, removedOrphans, errors).
+            Number of stale staging entries removed.
+        """
+        tmpDir = self._rootDir / "tmp"
+        if not tmpDir.exists():
+            return 0
+
+        cutoff = datetime.now(timezone.utc).timestamp() - (self._config.orphanWorkspaceRetentionMinutes * 60)
+
+        removed = 0
+        for entry in tmpDir.iterdir():
+            try:
+                entryMtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if entryMtime >= cutoff:
+                logger.debug("GC: skipping recent staging artifact %s", entry)
+                continue
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError as exc:
+                logger.warning("GC: failed to remove staging artifact %s: %s", entry, exc)
+                continue
+            logger.info("GC: removing stale staging artifact %s", entry)
+            removed += 1
+
+        return removed
+
+    async def collectAll(self, *, includeStaging: bool = True) -> tuple[int, int, int, int, list[str]]:
+        """Run all collection passes and return counts.
+
+        Staging artifacts reaped from ``<root>/tmp`` are accounted under
+        ``removedOrphans`` (they are orphaned resources).
+
+        Args:
+            includeStaging: When False, the staging-artifact pass under
+                ``<root>/tmp`` is skipped. Crash recovery uses this to keep
+                a failed runtime's leftovers retryable — they may already be
+                older than retention and reaping them would destroy the only
+                recoverable pool copies.
+
+        Returns:
+            Tuple containing (removedContainers, removedSessions, removedRuns,
+            removedOrphans incl. staging artifacts, errors).
         """
         errors: list[str] = []
 
@@ -237,5 +304,11 @@ class GarbageCollector:
         except Exception as exc:
             errors.append(f"collectOrphanWorkspaces: {exc}")
             removedOrphans = 0
+
+        if includeStaging:
+            try:
+                removedOrphans += await self.collectStagingArtifacts()
+            except Exception as exc:
+                errors.append(f"collectStagingArtifacts: {exc}")
 
         return removedContainers, removedSessions, removedRuns, removedOrphans, errors

@@ -14,8 +14,9 @@ import time
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import CacheType
+from lib.cache import GenericDatabaseCache
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture
@@ -46,18 +47,18 @@ class TestCachePerformance:
     @pytest.mark.asyncio
     async def test_cache_performance(self, db):
         """Test cache query performance."""
-        repo = db.cache
+        cache = GenericDatabaseCache(db.manager, namespace=CacheType.WEATHER)
 
         # Insert 1000 cache entries
         start = time.time()
         for i in range(1000):
-            await repo.setCacheEntry(f"key{i}", f"data{i}", CacheType.WEATHER)
+            await cache.set(f"key{i}", f"data{i}")
         insertTime = time.time() - start
 
         # Query 1000 cache entries
         start = time.time()
         for i in range(1000):
-            await repo.getCacheEntry(f"key{i}", CacheType.WEATHER)
+            await cache.get(f"key{i}")
         queryTime = time.time() - start
 
         print(f"Cache Insert: {insertTime:.3f}s, Query: {queryTime:.3f}s")
@@ -88,23 +89,23 @@ class TestCachePerformance:
     @pytest.mark.asyncio
     async def test_cache_clear_performance(self, db):
         """Test cache clear performance."""
-        repo = db.cache
+        cache = GenericDatabaseCache(db.manager, namespace=CacheType.WEATHER)
 
         # Insert 1000 entries
         for i in range(1000):
-            await repo.setCacheEntry(f"key{i}", f"data{i}", CacheType.WEATHER)
+            await cache.set(f"key{i}", f"data{i}")
 
         # Clear all entries
         start = time.time()
-        await repo.clearCacheEntries()
+        await cache.clear()
         clearTime = time.time() - start
 
         print(f"Cache Clear: {clearTime:.3f}s")
         assert clearTime < 5.0
 
         # Verify all cleared
-        entries = await repo.getCacheEntries()
-        assert len(entries) == 0
+        entry = await cache.get("key1")
+        assert entry is None
 
 
 class TestChatMessagePerformance:
@@ -291,7 +292,7 @@ class TestBatchPerformance:
         await provider.execute("CREATE TABLE test_batch (id INTEGER PRIMARY KEY, name TEXT)")
 
         # Prepare batch queries
-        from internal.database.providers.base import ParametrizedQuery
+        from lib.db.providers.base import ParametrizedQuery
 
         queries = [
             ParametrizedQuery("INSERT INTO test_batch (id, name) VALUES (:id, :name)", {"id": i, "name": f"test{i}"})
@@ -324,7 +325,7 @@ class TestBatchPerformance:
         individualTime = time.time() - start
 
         # Batch inserts
-        from internal.database.providers.base import ParametrizedQuery
+        from lib.db.providers.base import ParametrizedQuery
 
         queries = [
             ParametrizedQuery("INSERT INTO test_batch (id, name) VALUES (:id, :name)", {"id": i, "name": f"test{i}"})

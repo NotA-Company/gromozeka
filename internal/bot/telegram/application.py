@@ -29,6 +29,7 @@ from internal.services.proxy import ProxyService
 from internal.services.queue_service import QueueService
 from lib import utils
 from lib.proxy import ProxyType
+from lib.stats import StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,8 @@ class TelegramBotApplication:
         configManager: ConfigManager,
         botToken: str,
         database: Database,
+        messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
     ):
         """Initialize Telegram bot application.
 
@@ -77,14 +80,19 @@ class TelegramBotApplication:
             configManager: Configuration manager instance
             botToken: Telegram bot token for authentication
             database: Database object for data persistence
-            llmManager: LLM manager for language model operations
+            messageStatsStorage: Stats storage for message events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
         self.application = None
         self.handlerManager = HandlersManager(
-            configManager=configManager, database=database, botProvider=BotProvider.TELEGRAM
+            configManager=configManager,
+            database=database,
+            botProvider=BotProvider.TELEGRAM,
+            messageStatsStorage=messageStatsStorage,
+            commandStatsStorage=commandStatsStorage,
         )
         self.queueService = QueueService.getInstance()
 
@@ -357,7 +365,7 @@ class TelegramBotApplication:
 
         # Apply proxy to both the main HTTP client and the get_updates client.
         # PTB builder uses .proxy() for HTTP proxies and .request() with a
-        # custom HTTPXRequest for SOCKS5 (which uses a transport).
+        # custom HTTPXRequest for SOCKS5 (native httpx2 proxy="socks5://...").
         match proxyConfig.type:
             case ProxyType.HTTP:
                 proxyUrl = proxyConfig.getProxyURL()
@@ -369,8 +377,8 @@ class TelegramBotApplication:
 
             case ProxyType.SOCKS5:
                 # Create separate HTTPXRequest instances for the main client and
-                # the get_updates client. Each gets its own AsyncProxyTransport
-                # so the two polling loops do not share connection state.
+                # the get_updates client so the two polling loops do not share
+                # connection state.
                 mainRequest = HTTPXRequest(httpx_kwargs=proxyConfig.toKwargs())  # pyright: ignore[reportArgumentType]
                 getUpdatesRequest = HTTPXRequest(
                     httpx_kwargs=proxyConfig.toKwargs()  # pyright: ignore[reportArgumentType]

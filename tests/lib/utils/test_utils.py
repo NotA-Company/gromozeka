@@ -4,7 +4,7 @@ Test suite for lib/utils.py
 
 import unittest
 
-from lib.utils import parseDelay
+from lib.utils import kebabToCamelCase, parseDelay
 
 
 class TestUtils(unittest.TestCase):
@@ -102,6 +102,34 @@ class TestUtils(unittest.TestCase):
         # Test large values
         self.assertEqual(parseDelay("100d0h0m0s"), 8640000)  # 100 days
         self.assertEqual(parseDelay("100:00:00"), 360000)  # 100 hours
+
+    def test_kebab_to_camel_case_basic(self):
+        """Test conversion of typical kebab-case strings to camelCase"""
+        self.assertEqual(kebabToCamelCase("foo-bar"), "fooBar")
+        self.assertEqual(kebabToCamelCase("foo-bar-baz"), "fooBarBaz")
+        self.assertEqual(kebabToCamelCase("a-b-c"), "aBC")
+
+    def test_kebab_to_camel_case_no_hyphens(self):
+        """String without hyphens is returned unchanged"""
+        self.assertEqual(kebabToCamelCase("foo"), "foo")
+        self.assertEqual(kebabToCamelCase("FooBar"), "FooBar")
+        self.assertEqual(kebabToCamelCase("foo_bar"), "foo_bar")
+
+    def test_kebab_to_camel_case_preserves_existing_case(self):
+        """Existing capitalisation in segments is preserved"""
+        self.assertEqual(kebabToCamelCase("foo-Bar"), "fooBar")
+        self.assertEqual(kebabToCamelCase("HTTP-Header"), "HTTPHeader")
+
+    def test_kebab_to_camel_case_consecutive_and_trailing_hyphens(self):
+        """Consecutive, leading, and trailing hyphens collapse cleanly"""
+        self.assertEqual(kebabToCamelCase("foo--bar"), "fooBar")
+        self.assertEqual(kebabToCamelCase("-foo-bar"), "fooBar")
+        self.assertEqual(kebabToCamelCase("foo-bar-"), "fooBar")
+
+    def test_kebab_to_camel_case_empty(self):
+        """Empty and hyphen-only inputs return empty string"""
+        self.assertEqual(kebabToCamelCase(""), "")
+        self.assertEqual(kebabToCamelCase("---"), "")
 
 
 if __name__ == "__main__":

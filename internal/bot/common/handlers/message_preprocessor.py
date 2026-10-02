@@ -9,7 +9,7 @@ normalized and persisted before being passed to other handlers.
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import telegram
 
@@ -17,6 +17,7 @@ from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
+    CompactMemoryIdsDict,
     EnsuredMessage,
     LLMMessageFormat,
     MessageRecipient,
@@ -25,8 +26,8 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
+from lib.db.utils import DEFAULT_THREAD_ID
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -104,6 +105,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
             ensuredMessage.threadId or DEFAULT_THREAD_ID,
         )
         shortTermMemories = []
+        shortTermScores: Dict[str, float] = {}
         if queryEmbedding is None:
             shortTermMemories = await self.db.userMemories.getLatestMemories(
                 chatId=ensuredMessage.recipient.id,
@@ -119,6 +121,9 @@ class MessagePreprocessorHandler(BaseBotHandler):
                 embeddingModel=embeddingModel,
                 permanent=False,
             )
+            # In semantic mode, extract the scores for later merging.
+            # Only include entries with a valid memory_id and a score.
+            shortTermScores = {m["memory_id"]: m["score"] for m in shortTermMemories if "score" in m}
 
         # Write compact memory IDs to metadata["memories"] for persistence and
         # lazy resolution. formatForLLM resolves these IDs to content via
@@ -126,10 +131,14 @@ class MessagePreprocessorHandler(BaseBotHandler):
         # lazily (cache-aside) on that first read, not warmed here. Entries
         # without a usable id are silently dropped (walrus + truthy guard;
         # ``id`` is NotRequired on SingleMemoryDict).
-        ensuredMessage.metadata["memories"] = {
+        memoryDict: CompactMemoryIdsDict = {
             "permanentIds": [mid for m in permanentMemories if (mid := m.get("id"))],
             "shortTermIds": [m["memory_id"] for m in shortTermMemories if m["memory_id"]],
         }
+        # Only include shortTermScores when we have data (semantic mode only).
+        if shortTermScores:
+            memoryDict["shortTermScores"] = shortTermScores
+        ensuredMessage.metadata["memories"] = memoryDict
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
@@ -151,6 +160,16 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Raises:
             Exception: If media processing or database operations fail.
         """
+        chatId = ensuredMessage.recipient.id
+
+        # Recovery: if a chat marked INACCESSIBLE receives an inbound message,
+        # the bot is back. Gate on isChatInaccessible (cache-aside) so active chats
+        # skip the markActive write; an INACCESSIBLE chat receiving a message
+        # recovers to ACTIVE.
+        if await self.cache.isChatInaccessible(chatId):
+            await self.cache.markChatActive(chatId)
+            logger.info(f"Chat {chatId} recovered to ACTIVE by inbound activity")
+
         messageCategory: MessageCategory = MessageCategory.USER
         # Telegram has different messages for each media\document
         # While Each Max Message can contain multiple attachments of different types

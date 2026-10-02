@@ -11,7 +11,6 @@ name = "docker"
 
 [sandbox.backend.docker]
 base-url = "unix:///var/run/docker.sock"
-image-pull-policy = "if-not-present"
 
 [sandbox.defaults]
 idle-ttl-minutes = 30
@@ -59,16 +58,3 @@ PYTHONPATH = "/sandbox/libs"
 timeout-seconds = 600
 memory-mb = 1024
 pids-limit = 256
-
-# Used by scripts/sandbox-bootstrap.py — not by the library itself.
-[sandbox.bootstrap]
-starter-packages = [
-    "numpy",
-    "pandas",
-    "matplotlib",
-    "scipy",
-    "sympy",
-    "scikit-learn",
-    "pillow",
-    "requests",
-]

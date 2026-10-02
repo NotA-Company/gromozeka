@@ -7,15 +7,39 @@ implementation.
 
 Classes:
     Runtime: Protocol for language runtimes.
+    StagingRun: Container-side plan (command + mounts) for one staging container.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
 from ..config import BasicRuntimeConfig
 from ..enums import RuntimeName
 from ..types import ContainerOutcome, PackageInfo, ResourceLimits
+
+
+@dataclass(frozen=True, slots=True)
+class StagingRun:
+    """Container-side plan for one staging container (pre-filter or stage).
+
+    Built and returned by the runtime — the owner of its container-side
+    layout — and consumed verbatim by :class:`SandboxManager` when
+    assembling the :class:`ContainerSpec`.
+
+    Attributes:
+        command: Container argv (single argv, no shell).
+        mounts: Volume mount specifications, same shape as
+            :attr:`ContainerSpec.mounts`.
+    """
+
+    command: list[str]
+    """Container argv (single argv, no shell)."""
+
+    mounts: list[dict[str, str]]
+    """Volume mount specifications (hostPath, containerPath, mode)."""
 
 
 class Runtime(ABC):
@@ -83,20 +107,51 @@ class Runtime(ABC):
         ...
 
     @abstractmethod
-    def installCommand(
-        self,
-        packages: Sequence[str],
-        *,
-        upgrade: bool,
-    ) -> list[str]:
-        """Build the command-line invocation for installing packages.
+    def reportRun(self, hostStagingIoDir: Path, specs: Sequence[str]) -> StagingRun:
+        """Build the full container plan for the dry-run pre-filter (report mode).
+
+        The runtime owns its container-side layout: it returns the complete
+        argv plus the mount list (the staging io subtree bind rw and the
+        helper script bind ro), so the manager never assembles mounts itself.
 
         Args:
-            packages: Package names to install.
-            upgrade: If True, upgrade existing packages.
+            hostStagingIoDir: Host-side per-run staging I/O directory (the
+                run dir's ``io/`` subtree) to bind rw into the container.
+            specs: Package specs to resolve (already validated host-side).
 
         Returns:
-            Command and arguments as a list of strings.
+            The StagingRun plan (command + mounts) for the pre-filter container.
+        """
+        ...
+
+    @abstractmethod
+    def stageRun(self, hostStagingIoDir: Path, specs: Sequence[str]) -> StagingRun:
+        """Build the full container plan for the staged install (install mode).
+
+        The runtime owns its container-side layout: it returns the complete
+        argv plus the mount list (the staging io subtree bind rw and the
+        helper script bind ro), so the manager never assembles mounts itself.
+
+        Args:
+            hostStagingIoDir: Host-side per-run staging I/O directory (the
+                run dir's ``io/`` subtree) to bind rw into the container.
+            specs: Package specs to install into the staging delta.
+
+        Returns:
+            The StagingRun plan (command + mounts) for the stage container.
+        """
+        ...
+
+    @abstractmethod
+    def updateHelperHostPath(self) -> Path:
+        """Return the host-side path of the update helper script.
+
+        The runtime uses this path to construct the helper's read-only bind
+        mount in its StagingRun plan. The manager also uses it to verify
+        that the helper exists before staging.
+
+        Returns:
+            Path derived from the install Dockerfile's directory.
         """
         ...
 

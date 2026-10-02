@@ -118,9 +118,10 @@ class QueueService:
             self.backgroundTasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
             self.queueLastUpdated = time.time()
 
-            self.delayedActionsQueue = asyncio.PriorityQueue()
+            self.delayedActionsQueue: asyncio.PriorityQueue[DelayedTask] = asyncio.PriorityQueue()
             self.tasksHandlers: Dict[DelayedTaskFunction, List[DelayedTaskHandler]] = {}
 
+            self.verboseLogging = False
             self.initialized = True
             logger.info("QueueService initialized")
 
@@ -132,6 +133,14 @@ class QueueService:
             QueueService: The singleton QueueService instance
         """
         return cls()
+
+    def setVerboseLogging(self, verbose: bool) -> None:
+        """Set verbose logging flag for the queue service.
+
+        Args:
+            verbose (bool): True to enable verbose logging, False to disable
+        """
+        self.verboseLogging = verbose
 
     async def beginShutdown(self) -> None:
         """Initiate graceful shutdown of the queue service.
@@ -340,6 +349,8 @@ class QueueService:
                 # logger.debug("_pDQ(): Iteration...")
                 delayedTask = await self.delayedActionsQueue.get()
                 tasksCount = self.delayedActionsQueue.qsize()
+                if self.verboseLogging:
+                    logger.debug(f"Got {delayedTask}...")
 
                 if not isinstance(delayedTask, DelayedTask):
                     self.delayedActionsQueue.task_done()
@@ -358,9 +369,10 @@ class QueueService:
                     while iteration < maxSleepIterations and tasksCount == self.delayedActionsQueue.qsize():
                         await asyncio.sleep(1)
                         iteration = iteration + 1
-                        # logger.debug(
-                        #     f"Iteration: {iteration}, taskCount={tasksCount}:{self.delayedActionsQueue.qsize()}...",
-                        # )
+                        if self.verboseLogging:
+                            logger.debug(
+                                f"Iteration: {iteration}, taskCount={tasksCount}:{self.delayedActionsQueue.qsize()}...",
+                            )
                     continue
 
                 if delayedTask.function != DelayedTaskFunction.CRON_JOB:
@@ -377,7 +389,11 @@ class QueueService:
                 else:
                     for handler in self.tasksHandlers[delayedTask.function]:
                         try:
+                            if self.verboseLogging:
+                                logger.debug(f"Running handler {handler.__name__} for {delayedTask}...")
                             await handler(delayedTask)
+                            if self.verboseLogging:
+                                logger.debug(f"Handler {handler.__name__} finished for {delayedTask}...")
                         except Exception as e:
                             logger.error(f"Error in handler {handler.__name__}: {e}")
                             logger.exception(e)

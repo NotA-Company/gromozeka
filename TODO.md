@@ -1,10 +1,23 @@
 # Our TODO list
+
+- [x] `/sandbox update` to update packages
+- [ ] Add ability to store resized images + send them to context
+- [ ] `Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:`
+- [ ] gifs from sandbox sent as static image
+- [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
+- [ ] check video stt
+- [ ] Log + store reasoning
+- [ ] teamlead - say about markdown-mcp write ability
+- [ ] add ability to add bot-memory. think how to inject it
+- [ ] `Handler MessagePreprocessorHandler returned next` - add messageID+chatID
+- [x] move Max Webhook reciver to lib
+- [x] move database providers to lib
+- [ ] On llm-tool-call-fix save wrong + fixed call to file
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
 - [ ] refactor models
-- [x] Review all docs
-- [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
-- [ ] tool for navigating thru documentation (rag + markdown parser )
+- [ ] Add proper web stats
+- [ ] slash-commands for getting description, prompt
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs
@@ -21,6 +34,7 @@
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
+- [ ] migrations squashing?
 # Vector search: 
 - [x] Tool for last messages, last discussion messages, user messages
 - [x] Add support for embeddings + Vector search on chat's database
@@ -41,3 +55,13 @@
 - [ ] Logging: try to not log same messages if possible
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Add replied message to context more close to message (maybe in message metadata)
+
+# Done:
+- [x] Add non-blocking rate-limiter variant (applyLimit that returns False instead of waiting) — surfaced by stats web tier (U12)
+- [x] add cache for botUsername
+- [x] revert dot-notation in internal/config/manager.py:get
+- [x] short-term memories - add score
+- [x] retry to send message on `telegram.error.TimedOut: Timed out`
+- [x] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [x] migrate to httpx2
+- [x] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md

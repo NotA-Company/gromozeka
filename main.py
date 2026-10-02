@@ -11,27 +11,43 @@ import json
 import logging
 import os
 import sys
-from typing import Optional
+import threading
+import time
+import traceback
+from typing import Callable, Dict, List, Optional, cast
 
-from internal.bot.max.application import MaxBotApplication
-from internal.bot.models.enums import BotProvider
-from internal.bot.telegram.application import TelegramBotApplication
-from internal.config.manager import ConfigManager
-from internal.database import Database
-from internal.database.stats_storage import DatabaseStatsStorage
-from internal.services.llm import LLMService
-from internal.services.proxy import ProxyService
-from internal.services.queue_service import QueueService
-from lib.ai.manager import LLMManager
-from lib.logging_utils import initLogging
-from lib.rate_limiter import RateLimiterManager
-from lib.stats import StatsStorage
+import httpx2
+
+# Process-wide: make `import httpx` resolve to `httpx2` so python-telegram-bot's
+# internal httpx.AsyncClient becomes an httpx2.AsyncClient (PTB cannot be edited).
+# MUST run before any import that transitively pulls httpx (e.g. the Max/Telegram
+# application imports below). See docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
+
+from internal.bot.max.application import MaxBotApplication  # noqa: E402
+from internal.bot.models.enums import BotProvider  # noqa: E402
+from internal.bot.telegram.application import TelegramBotApplication  # noqa: E402
+from internal.config.manager import ConfigManager  # noqa: E402
+from internal.database import Database  # noqa: E402
+from internal.services.llm import LLMService  # noqa: E402
+from internal.services.proxy import ProxyService  # noqa: E402
+from internal.services.queue_service import QueueService  # noqa: E402
+from internal.services.stats import StatsAggregationService  # noqa: E402
+from internal.services.stt import STTService  # noqa: E402
+from lib.ai.manager import LLMManager  # noqa: E402
+from lib.logging_utils import initLogging  # noqa: E402
+from lib.rate_limiter import RateLimiterManager  # noqa: E402
+from lib.stats.stats_storage import StatsStorage  # noqa: E402
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-# set higher logging level for httpx to avoid all GET and POST requests being logged
-logging.getLogger("httpx").setLevel(logging.WARNING)
+# set higher logging level for httpx2 to avoid all GET and POST requests being logged
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# Seconds the exit guard waits for straggler non-daemon threads to finish
+# before forcing process termination (see installExitGuard).
+EXIT_GUARD_GRACE_SECONDS: float = 5.0
 
 
 class GromozekBot:
@@ -58,43 +74,64 @@ class GromozekBot:
         )
 
         # Start the delayed task scheduler as a background task on the shared loop.
-        # This creates the coroutine so the scheduler registers its built-in
-        # DO_EXIT handler (_doExitHandler) before ProxyService does. On
-        # shutdown the handlers run in registration order — the queue drain
-        # runs first (proxy still available for HTTP/LLM calls), then proxy
-        # processes stop.
+        # The scheduler registers its built-in DO_EXIT handler (_doExitHandler) when
+        # the loop first runs. ProxyService.initialize registers _dtOnExit synchronously
+        # below. Since handlers execute in registration order, proxies stop BEFORE the
+        # queue drains on shutdown.
         self._schedulerTask = loop.create_task(
             QueueService.getInstance().startDelayedScheduler(self.database),
             name="delayed-scheduler",
         )
 
-        # Initialize proxy lifecycle management AFTER the scheduler task has
-        # started (loop.run_until_complete above drives the event loop, which
-        # runs the scheduler coroutine created earlier). This ensures
-        # QueueService._doExitHandler registers before ProxyService._dtOnExit,
-        # so on shutdown the queue drains background tasks (needing the proxy)
-        # before proxy processes are stopped.
+        # Initialize proxy lifecycle management.
+        # ProxyService.initialize registers _dtOnExit synchronously (below).
+        # The scheduler's _doExitHandler registers later, when the loop first runs.
+        # Handlers execute in registration order, so on shutdown proxies stop
+        # BEFORE the queue drains (reverse of the desired ordering).
         # In the same time it MUST be initialized BEFORE LLMManager as it uses proxy.
         ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
-        # Initialize stats storage for LLM usage tracking
-        llmStatsStorage: Optional[StatsStorage] = None
+        # Initialize stats aggregation service (sync — registers CRON_JOB handler)
+        # Factory reads [stats] enabled itself, so call before any createStatsStorage.
+        # Registered synchronously during GromozekBot.__init__, before bot startup
+        # / before the first CRON tick in default deployments (no global proxy lifecycle)
+        StatsAggregationService.getInstance().initialize(self.configManager, self.database)
+
+        # Get stats config for data source resolution (factory handles enabled gate)
         statsConfig = self.configManager.getStatsConfig()
-        if statsConfig.get("enabled", False):
-            llmStatsStorage = DatabaseStatsStorage(
-                db=self.database,
-                eventType="llm_request",
-                dataSource=statsConfig.get("llm-stats-data-source", self.database.manager.default),
+
+        # Initialize stats storages in registration order (llm_request, llm_tool_call, stt_request, message, command)
+        # EventType to config key mapping
+        statsStorageConfigs = [
+            ("llm_request", "llm-stats-data-source"),
+            ("llm_tool_call", "tool-stats-data-source"),
+            ("stt_request", "stt-stats-data-source"),
+            ("message", "message-stats-data-source"),
+            ("command", "command-stats-data-source"),
+        ]
+
+        statsStorageMap: Dict[str, StatsStorage] = {}
+        # Create all stats storages preserving order and defaults
+        for eventType, configKey in statsStorageConfigs:
+            statsStorageMap[eventType] = StatsAggregationService.getInstance().createStatsStorage(
+                eventType, statsConfig.get(configKey, self.database.manager.default)
             )
 
         # Initialize LLM Manager
         self.llmManager = LLMManager(
             self.configManager.getModelsConfig(),
-            statsStorage=llmStatsStorage,
+            statsStorage=statsStorageMap["llm_request"],
         )
         LLMService.getInstance().injectLLMManager(self.llmManager)
 
-        # Initialize rate limiter manager
+        # Inject tool stats storage into LLMService
+        LLMService.getInstance().injectStatsStorage(statsStorageMap["llm_tool_call"])
+
+        # Initialize STT service (default-OFF; constructs/skips the provider)
+        STTService.getInstance().initialize(self.configManager, statsStorage=statsStorageMap["stt_request"])
+
+        # Initialize rate limiter manager (must be after all stats storages are registered
+        # so the first CRON tick sees the complete registry; loadConfig feeds RateLimiterManager only)
         self.rateLimiterManager = RateLimiterManager.getInstance()
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
@@ -108,12 +145,16 @@ class GromozekBot:
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
+                    messageStatsStorage=statsStorageMap["message"],
+                    commandStatsStorage=statsStorageMap["command"],
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
+                    messageStatsStorage=statsStorageMap["message"],
+                    commandStatsStorage=statsStorageMap["command"],
                 )
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")
@@ -132,6 +173,7 @@ class GromozekBot:
             await queueService.beginShutdown()
             logger.info("Step 2.2: Waiting for delayed scheduler task...")
             if self._schedulerTask is not None:
+                QueueService.getInstance().setVerboseLogging(True)
                 await self._schedulerTask
         except Exception:
             logger.exception("Error during scheduler shutdown")
@@ -148,7 +190,14 @@ class GromozekBot:
             logger.exception("Error closing LLM manager during shutdown")
 
         try:
-            logger.info("Step 2.5: Closing database...")
+            logger.info("Step 2.5: Closing STT provider...")
+            await STTService.getInstance().aclose()
+            logger.info("STT provider closed...")
+        except Exception:
+            logger.exception("Error closing STT provider during shutdown")
+
+        try:
+            logger.info("Step 2.6: Closing database...")
             await self.database.manager.closeAll()
             logger.info("Database closed...")
         except Exception:
@@ -295,9 +344,127 @@ def prettyPrintConfig(config_manager: ConfigManager):
     print("=== Configuration loaded successfully, dood! ===")
 
 
+def strandedNonDaemonThreads() -> List[threading.Thread]:
+    """List live non-daemon threads (excluding the main thread).
+
+    These are exactly the threads ``threading._shutdown()`` joins during
+    interpreter finalization — any of them stuck in a non-returning call
+    hangs the process forever after ``main()`` returns.
+
+    Returns:
+        Live non-daemon threads other than the main thread.
+    """
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread is not threading.main_thread() and not thread.daemon and thread.is_alive()
+    ]
+
+
+def forceExitIfStrandedThreads(gracePeriodSeconds: float) -> None:
+    """Force-quit the process if non-daemon threads are still alive at exit.
+
+    Context (Max/Telegram Ctrl+C hang, 2026-09-03): httpx2 defaults to
+    ``truststore.SSLContext``, a subclass of ``ssl.SSLContext``. anyio's
+    ``TLSStream.wrap()`` offloads ``wrap_bio`` of any non-stdlib context to a
+    NON-daemon "AnyIO worker thread" — one thread per process, reused for every
+    HTTPS connection. anyio stops that worker via a root-task callback that
+    only takes effect AFTER the currently running function returns; a function
+    blocked forever on a ``threading`` lock therefore survives shutdown, and
+    ``Py_Finalize → threading._shutdown → join`` hangs the process after
+    "Bot stopped by user" is logged (all graceful cleanup already done).
+
+    This guard gives such threads a grace period, dumps their stacks for
+    diagnosis, then terminates via ``os._exit(0)`` — the graceful shutdown has
+    already completed at this point, so stranded threads are leaked resources,
+    not pending work.
+
+    Args:
+        gracePeriodSeconds: Seconds to wait for straggler threads to exit
+            before forcing termination.
+
+    Returns:
+        None: Never returns normally when threads remain stranded.
+    """
+    if not strandedNonDaemonThreads():
+        return
+
+    deadline = time.monotonic() + gracePeriodSeconds
+    while strandedNonDaemonThreads() and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    stranded = strandedNonDaemonThreads()
+    if not stranded:
+        return
+
+    framesById = sys._current_frames()
+    for thread in stranded:
+        stackText = "<no frame available>"
+        if thread.ident is not None:
+            frame = framesById.get(thread.ident)
+            if frame is not None:
+                stackText = "".join(traceback.format_stack(frame))
+        logger.warning("Stranded non-daemon thread %s (ident=%s) stack:\n%s", thread.name, thread.ident, stackText)
+    logger.warning(
+        "%d non-daemon thread(s) still alive after graceful shutdown; forcing process exit: %s",
+        len(stranded),
+        [thread.name for thread in stranded],
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        logging.shutdown()
+    except Exception:  # noqa: BLE001 — last-resort guard; must never prevent os._exit below
+        pass
+    os._exit(0)
+
+
+def installExitGuard(gracePeriodSeconds: float = EXIT_GUARD_GRACE_SECONDS) -> None:
+    """Install a last-resort guard against non-daemon threads blocking exit.
+
+    Uses ``threading._register_atexit`` (the same private-but-stable hook
+    ``concurrent.futures`` uses; the public ``atexit`` module fires only
+    AFTER the join that hangs, so it cannot help). ``threading._shutdown()``
+    runs registered callbacks in REVERSE registration order BEFORE joining
+    non-daemon threads. Installing this at the very start of ``main()`` —
+    before any executor or anyio worker thread exists — makes the guard run
+    last: after ``concurrent.futures``' own cleanup (so idle executor threads
+    are already gone and never trigger false positives), but before the joins
+    that would hang. Note for profiling runs: cProfile dumps its output when
+    ``main()`` returns, i.e. BEFORE this guard can fire, so profiles are not
+    lost.
+
+    Args:
+        gracePeriodSeconds: Seconds to wait for straggler threads to exit
+            before forcing termination.
+
+    Returns:
+        None.
+    """
+    # ``_register_atexit`` is underscore-private (absent from typeshed), hence
+    # the getattr indirection; it has been stable since Python 3.9 and is the
+    # mechanism concurrent.futures itself relies on for thread cleanup.
+    registerThreadingAtexit = cast(
+        Optional[Callable[[Callable[..., None], float], None]],
+        getattr(threading, "_register_atexit", None),
+    )
+    if registerThreadingAtexit is None:
+        logger.warning(
+            "threading._register_atexit is unavailable on this Python; " "stranded-thread exit guard disabled"
+        )
+        return
+    registerThreadingAtexit(forceExitIfStrandedThreads, gracePeriodSeconds)
+
+
 def main():
     """Main entry point."""
     args = parse_arguments()
+
+    # Install BEFORE any component init: registration order vs the executor
+    # cleanup callback determines execution order in threading._shutdown()
+    # (see installExitGuard docstring).
+    installExitGuard()
+
     configManager = ConfigManager(
         configPath=args.config,
         configDirs=args.config_dir,

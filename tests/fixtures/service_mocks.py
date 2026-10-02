@@ -12,16 +12,14 @@ from unittest.mock import AsyncMock, Mock
 
 def createMockConfigManager(
     botConfig: Optional[Dict[str, Any]] = None,
-    providerConfig: Optional[Dict[str, Any]] = None,
-    modelConfig: Optional[Dict[str, Any]] = None,
+    modelsConfig: Optional[Dict[str, Any]] = None,
 ) -> Mock:
     """
     Create a mock ConfigManager.
 
     Args:
         botConfig: Bot configuration (default: basic config)
-        providerConfig: Provider configuration (default: empty)
-        modelConfig: Model configuration (default: empty)
+        modelsConfig: Models configuration (default: empty)
 
     Returns:
         Mock: Mocked ConfigManager instance
@@ -44,8 +42,9 @@ def createMockConfigManager(
     }
 
     mock.getBotConfig.return_value = botConfig or defaultBotConfig
-    mock.getProviderConfig.return_value = providerConfig or {}
-    mock.getModelConfig.return_value = modelConfig or {}
+    mock.getModelsConfig.return_value = modelsConfig or {}
+    mock.getStatsConfig.return_value = {}
+    mock.getStatsPagesConfig.return_value = {}
 
     return mock
 

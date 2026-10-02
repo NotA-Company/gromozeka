@@ -21,3 +21,21 @@ type = "fastembed"
 # hosted model unless the model overrides it via its own `cache_dir` key.
 # When commented out, fastembed's built-in default (~/.cache/fastembed) is used.
 #cache_dir = "/var/lib/gromozeka/fastembed-cache"
+
+# OpenCode Go subscription gateway (https://opencode.ai/docs/go/#endpoints).
+# Opt-in: kept commented so default installs register no provider. To enable,
+# copy this block into your own config layer (e.g. configs/common/01-opencode-go.toml
+# or configs/local/) and set OPENCODE_GO_API_KEY in the matching .env file.
+# Unset ${VAR}s are NOT errors - they pass through literally - so an uncommented
+# block without the env var would silently register a provider with a bogus key.
+#
+# Model catalog: configs/00-defaults/opencode-go-models.toml (generated, all
+# models disabled by default - enable per-model in your overlay).
+#
+#[models.providers.opencode-go]
+#type = "opencode-go"
+#base_url = "https://opencode.ai/zen/go/v1"
+#api_key = "${OPENCODE_GO_API_KEY}"
+# Optional: x-opencode-session value when a request has no conversation identity
+# (mandatory header since 2026-09-06; see lib/ai/providers/opencode_go_provider.py)
+#session_fallback = "gromozeka"

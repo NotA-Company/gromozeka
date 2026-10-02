@@ -38,6 +38,7 @@ from internal.database.models import (
 from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum, UserActiveConfigurationDict
 from lib.ai import ModelMessage, ModelRunResult
+from lib.ai.session import buildSessionId
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -248,6 +249,11 @@ class SummarizationHandler(BaseBotHandler):
 
         fallbackPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
 
+        # D3: one summarization run = one session bucket. Computed once so
+        # every sequential batch stays sticky-routed to the same prompt-cache
+        # bucket without polluting the live conversation bucket.
+        summarySessionId = buildSessionId("summary", str(chatId), ensuredMessage.messageId.asStr())
+
         # Summarise each chunk of messages
         while startPos < len(parsedMessages):
             currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
@@ -281,6 +287,7 @@ class SummarizationHandler(BaseBotHandler):
                         chatSettings=chatSettings,
                         modelKey=llmModel,
                         fallbackKey=ChatSettingsKey.SUMMARY_FALLBACK_MODEL,
+                        sessionId=summarySessionId,
                     )
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:

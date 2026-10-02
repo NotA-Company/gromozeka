@@ -1,0 +1,163 @@
+{
+  "opencode-go": {
+    "name": "opencode-go",
+    "models": {
+      "deepseek-v4-flash": {
+        "name": "DeepSeek V4 Flash (opencode-go)",
+        "limit": {"context": 1048576, "output": 32768},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "cost": {"input": 3, "output": 1, "cache_read": 0.3}
+      },
+      "glm-5.3-flash": {
+        "name": "GLM 5.3 Flash (opencode-go)",
+        "limit": {"context": 200000, "output": 32000},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true
+      },
+      "qwen3-coder": {
+        "name": "Qwen3 Coder (opencode-go)",
+        "limit": {"context": 262144, "output": 32768},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": false,
+        "structured_output": true
+      },
+      "minimax-m2": {
+        "name": "MiniMax M2 (opencode-go)",
+        "limit": {"context": 204800, "output": 16384},
+        "modalities": {"input": ["text"], "output": ["text"]}
+      },
+      "grok-code-fast-1": {
+        "name": "Grok Code Fast 1 (opencode-go)",
+        "limit": {"context": 256000, "output": 32768},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": false
+      },
+      "vendor-a/pro": {
+        "name": "Vendor A Pro",
+        "limit": {"context": 128000, "output": 16384},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": false
+      },
+      "vendor-b/pro": {
+        "name": "Vendor B Pro",
+        "limit": {"context": 128000, "output": 16384},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": false
+      }
+    }
+  },
+  "openrouter": {
+    "name": "OpenRouter",
+    "models": {
+      "anthropic/claude-haiku-4.5": {
+        "name": "Claude Haiku 4.5 (OpenRouter)",
+        "limit": {"context": 200000, "output": 64000},
+        "modalities": {"input": ["text", "image"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}
+      },
+      "deepseek/deepseek-chat-v3.1": {
+        "name": "DeepSeek Chat V3.1 (OpenRouter)",
+        "limit": {"context": 163840, "output": 8192},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true
+      },
+      "deepseek/deepseek-v4-flash": {
+        "name": "DeepSeek V4 Flash (OpenRouter)",
+        "limit": {"context": 1048576, "output": 32768},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "cost": {"input": 0.5, "output": 1.5, "cache_read": 0.05}
+      },
+      "qwen/qwen3-235b-a22b": {
+        "name": "Qwen3 235B A22B (OpenRouter)",
+        "limit": {"context": 131072, "output": 16384},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "cost": {"input": -1, "output": 2}
+      },
+      "qwen/qwen3.5-flash-02-23": {
+        "name": "Qwen3.5 Flash 02-23 (OpenRouter)",
+        "limit": {"context": 1000000, "output": 65536},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true
+      },
+      "qwen/qwen3-vl-235b-a22b-instruct": {
+        "name": "Qwen3 VL 235B A22B Instruct (OpenRouter)",
+        "limit": {"context": 262144, "output": 32768},
+        "modalities": {"input": ["text", "image"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true
+      },
+      "qwen/qwen3.6-plus": {
+        "name": "Qwen3.6 Plus (OpenRouter)",
+        "limit": {"context": 1000000, "output": 65536},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "cost": {"input": 0, "output": 0}
+      },
+      "openrouter/free": {
+        "name": "Free Models Router (OpenRouter)",
+        "limit": {"context": 200000, "output": 65536},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "cost": {"input": 0, "output": 0}
+      },
+      "google/gemini-2.5-flash-image": {
+        "name": "Gemini 2.5 Flash Image (OpenRouter)",
+        "limit": {"context": 32768, "output": 8192},
+        "modalities": {"input": ["text", "image"], "output": ["image", "text"]},
+        "tool_call": true,
+        "structured_output": false
+      },
+      "google/gemini-3-pro-image-preview": {
+        "name": "Gemini 3 Pro Image Preview (OpenRouter)",
+        "limit": {"context": 65536, "output": 16384},
+        "modalities": {"input": ["text", "image"], "output": ["image", "text"]},
+        "tool_call": true,
+        "structured_output": false
+      },
+      "openai/gpt-audio-mini": {
+        "name": "GPT Audio Mini (OpenRouter)",
+        "limit": {"context": 128000, "output": 16384},
+        "modalities": {"input": ["audio"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": false
+      },
+      "zai/glm-4.5-air-deprecated": {
+        "name": "GLM 4.5 Air (deprecated, OpenRouter)",
+        "limit": {"context": 131072, "output": 16384},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true,
+        "status": "deprecated"
+      }
+    }
+  },
+  "anthropic": {
+    "name": "Anthropic",
+    "models": {
+      "claude-sonnet-4.5": {
+        "name": "Claude Sonnet 4.5",
+        "limit": {"context": 200000, "output": 64000},
+        "modalities": {"input": ["text", "image"], "output": ["text"]},
+        "tool_call": true,
+        "structured_output": true
+      }
+    }
+  }
+}

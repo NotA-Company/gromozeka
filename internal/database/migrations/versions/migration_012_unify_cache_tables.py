@@ -21,7 +21,8 @@ The unified cache table structure:
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
+
 from ..base import BaseMigration
 
 

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Chat History Search — Durable Memory
 
 Durable task-specific memory for the completed chat history search feature (Steps 1 & 2 completed
@@ -11,6 +15,17 @@ How to use this file:
   [`../teamlead-memory.md`](../teamlead-memory.md).
 - Never store secrets, tokens, `.env` values, or raw logs.
 
+## Post-migration_025 update (2026-07-21)
+
+The embedding-model-lookup refactor reshaped the chat-history embedding storage:
+
+- **No BLOB sidecar.** Chat embeddings are now stored as `chat_messages.model_id` (FK into the new `models` lookup table) + vec0 only — the `message_embeddings` BLOB table (and its index + both vec0 families) was DROPPED. Pre-existing vec0 tables were dropped lazily and recreated with `model_id INTEGER PARTITION KEY` (was TEXT `model`).
+- **Single-write.** The previous dual-write (BLOB + vec0) is retired. The write path is now `UPDATE chat_messages.model_id` + vec0 INSERT (lazy-create on dimension).
+- **numpy fallback retired in chat-search scope.** `_loadEmbeddingsFromDb` was DELETED (no BLOB to load from); `_semanticSearch` collapsed to vec0-or-`[]`. numpy is no longer a direct dep (`numpy==2.5.1` removed from `requirements.direct.txt`; still transitive via `fastembed`).
+- **`EmbeddingModelsRepository`** (`internal/database/repositories/embedding_models.py`, process-local cache) backs the lookup. The three refactored repos take a constructor-injected `modelIdResolver` (D10) that translates `(modelName, dimensions) -> model_id`. Handler signatures are unchanged (D6).
+
+The historical decision/anti-pattern notes below describe the pre-migration architecture and remain accurate for the design intent; storage-shape specifics (BLOB table, dual-write, numpy fallback) are superseded by migration_025.
+
 ## Overview
 
 - **Implementation plan**: `docs/archive/plans/chat-history-search-plan.md`
@@ -22,8 +37,7 @@ How to use this file:
   `bot-defaults.toml` under `[bot.defaults]`
 - **Alternative model**: `local/jinaai/jina-embeddings-v3` (1024d, ~2.24 GB, ~100 languages, 1024
   token context) in `fastembed-models.toml`
-- **Version**: `fastembed==0.8.0` pinned in `requirements.direct.txt`; `numpy==2.5.1` in
-  requirements
+- **Version**: `fastembed==0.8.0` pinned in `requirements.direct.txt`; numpy is a transitive dep via fastembed (no longer a direct dep after `migration_025_embedding_model_lookup`)
 - **Key repositories**:
   - `ChatEmbeddingsRepository` — embedding CRUD (all embedding methods + semantic search moved
     here from `ChatMessagesRepository`)
@@ -98,7 +112,6 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
 ## Implementation Decisions (2026-06-20 / 2026-06-21)
 
 ### Architecture & Design Decisions
-
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
 - **Backfill chat discovery**: round-robin over the in-memory
   `_trackedChats` set (populated by `newMessageHandler` when
@@ -129,11 +142,12 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
   — it only registers `CRON_JOB`. The `QueueService` has its own built-in `_doExitHandler`.
   Handlers that own resources (sandbox runs, pending sends, periodic cleanups) register one;
   `ChatSearchHandler` does not.
-- **Semantic search wired into `/search`**: keywords → `generateEmbeddings` → `queryEmbedding`
-  passed to `searchChatMessages` (falls back to filter-only on failure).
+- **Semantic search wired into `/search`**: keywords → `LLMService.generateEmbedding` (routed
+  through the service since the sessionId-domain wave — recovers `consumerId` stats attribution;
+  `doRateLimit=False`, the command pre-gates) → `queryEmbedding` passed to `searchChatMessages`
+  (falls back to filter-only on failure).
 - **No cache in DB layer**: Embedding cache was initially inside `ChatMessagesRepository` and was
   removed entirely. Caching is a handler-layer concern.
-
 ### Model & Config Decisions
 
 - **Embedding model history**: Switched from English-only `bge-small-en-v1.5` (384d) → multilingual
@@ -449,6 +463,7 @@ Five review findings addressed, then two further user decisions applied:
   files, be explicit about which files to NOT touch.
 - **`code-reviewer` subagent may return empty results** in some sessions. If it does twice, fall
   back to `general` agent for the review — use the same prompt structure, just route through
+  `general`.
 
 ## Post-Step-2 Enhancements — `search_messages` params (2026-07-15)
 
@@ -475,4 +490,3 @@ made the previously-stale "search_messages works regardless of EMBEDDINGS_ENABLE
 
 The 2026-06-28 decision to "drop client-side keyword matching" (above) is **not** reversed —
 `substring` is a DB-side `LIKE` filter, not a post-search client-side filter.
-  `general`.

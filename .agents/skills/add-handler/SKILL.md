@@ -31,9 +31,11 @@ description: >
 
 Load `read-project-docs` first; specifically:
 
-- [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) — handler system, command decorator pattern, registration.
+**Mechanism (conditional preference, never exclusive):** when the markdown-mcp MCP tools (`doc_outline`, `doc_read`) are available, prefer them for the `./docs` targets below, using docs-root-relative paths — `doc_outline("llm/handlers.md")` first to resolve section slugs, then targeted `doc_read(file_path="llm/handlers.md", section_slug=…)`. Resolve `section_slug` values at use time — never hard-code them. Without MCP, plain `read` on the linked relative paths is an exact substitute.
+
+- [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) — handler system, command decorator pattern, registration. With MCP: `doc_outline("llm/handlers.md")` + targeted `doc_read(section_slug=…)` rather than a whole-file read.
 - [`docs/llm/services.md`](../../../docs/llm/services.md) — for service access patterns if the handler uses DB/cache/LLM.
-- [`AGENTS.md`](../../../AGENTS.md) — naming rules, handler ordering invariant.
+- [`AGENTS.md`](../../../AGENTS.md) — naming rules, handler ordering invariant. Manual `read` only — it sits at the repo root, outside the markdown-mcp docs root, so no `doc_*` tool reaches it.
 
 ## Step 1 — Create the handler file
 
@@ -249,9 +251,11 @@ Key rules from [`docs/llm/testing.md`](../../../docs/llm/testing.md) and [`docs/
 
 ## Step 9 — Documentation
 
+Both targets sit inside the markdown-mcp docs root: when the MCP tools are available, update them via `doc_section_edit` — `doc_read` the target section first for the CAS token, resolve the slug from `doc_outline` at use time, and check `reindex.status` after the edit. Without MCP, plain `read` + `edit` is the exact substitute.
+
 Update [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) with your handler's entry: purpose, commands it owns (if any), parallelism, any conditional-registration predicate.
 
-Update [`docs/llm/index.md`](../../../docs/llm/index.md) §4.5 **only** if the aggregate summary there is now misleading (e.g. "21+ handlers" count needs bumping, or you've added a flagship handler worth naming explicitly).
+Update [`docs/llm/index.md`](../../../docs/llm/index.md) §4.5 **only** if the aggregate summary there is now misleading (e.g. "21+ handlers" count needs bumping, or you've added a flagship handler worth naming explicitly). An aggregate-table-row tweak like this is a textbook `doc_section_edit` op=replace: read the section, swap its flat body — heading and descendants untouched.
 
 If the handler uses a new config section, load the `update-project-docs` skill for the full matrix — you'll also touch `docs/llm/configuration.md` and `configs/00-defaults/*.toml`.
 

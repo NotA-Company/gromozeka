@@ -96,7 +96,7 @@ class CacheInterface(ABC, Generic[K, V]):
         Clear all cached data
 
         Removes all entries from the cache, resetting it to an empty state.
-        This operation is synchronous and should complete immediately
+        This operation is asynchronous and should complete immediately
 
         Example:
             >>> cache = DictCache[str, str](StringKeyGenerator())
@@ -128,5 +128,30 @@ class CacheInterface(ABC, Generic[K, V]):
             >>> print(f"Entries: {stats['entries']}")
             >>> print(f"Max size: {stats['maxSize']}")
             >>> print(f"Default TTL: {stats['defaultTtl']}s")
+        """
+        pass
+
+    @abstractmethod
+    async def clearOld(self, ttl: Optional[int]) -> bool:
+        """Delete this cache's entries older than the given TTL.
+
+        Scoped to the instance's own namespace (and data source, where the
+        implementation has one). Best-effort: implementation errors are logged
+        and reported through the return value, never raised.
+
+        For ttl > 0, entries strictly older than now - ttl are deleted;
+        ttl of 0 or None deletes every entry of the namespace outright.
+
+        Args:
+            ttl: Age threshold in seconds. For ttl > 0, entries strictly
+                older than ``now - ttl`` are deleted. ``ttl`` of ``0`` or
+                ``None`` deletes every entry of the namespace outright.
+                Negative values are not part of the contract (legacy SQL
+                happened to delete everything; implementations need not
+                honor them).
+
+        Returns:
+            bool: True if the sweep completed successfully — regardless of
+                whether any entries matched — False on backend error.
         """
         pass

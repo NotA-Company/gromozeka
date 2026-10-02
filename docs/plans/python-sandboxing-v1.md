@@ -1,9 +1,15 @@
+---
+category: plan
+---
+
 # Sandboxed Code Execution — Design v1
 
 Status: **implemented** — `lib/sandbox/` package is live; this doc is the retained design reference.
 Supersedes: [`python-sandboxing-v0.gpt.md`](../archive/plans/python-sandboxing-v0.gpt.md), [`python-sandboxing-v0.gemini.md`](../archive/plans/python-sandboxing-v0.gemini.md)
 Companion: [`python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md) (Gromozeka-specific wiring)
 Scope: retained design reference for the implemented lib/sandbox/ package.
+
+> **Superseded in part (2026-09-05):** the package install/update mechanics described here (§5.6, §8.3, and the `installCommand` design in §14.3) were replaced by the staged-install + atomic-swap design in [`sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md) — pip stages into a private delta and never writes into the live pool; `installCommand`/`updateCommand` no longer exist on the `Runtime` ABC (replaced by `reportCommand`/`stageInstallCommand`/`updateHelperHostPath`). Everything else in this document remains the design record for `lib/sandbox/` v1.
 
 This document covers the **standalone, language- and bot-agnostic sandbox library** living under [`lib/sandbox/`](../../lib/). Gromozeka integration (adapter service, handlers, config wiring) is split out into the companion doc.
 
@@ -268,6 +274,8 @@ async def removeRuntimeLibraries(
 ```
 
 These are the **only** APIs that mutate the library pool, protected by a process-wide install lock per runtime (§9). They run a **dedicated install container** (writable target, network enabled). Intended to be called from an admin/operator surface — never from `runCode` or LLM tools.
+
+> Superseded in part (2026-09-05): installs now go through the staged core (pip never writes the live pool; `upgrade=` is a documented no-op) and a dedicated `updateRuntimeLibraries` API also mutates the pool — see sandbox-update-v1.md §5.1 and §5.5.
 
 A `pip freeze` snapshot of the pool is refreshed inside the install container after every successful install/remove and persisted via the metadata store. This serves as the migration/audit format — callers who need a requirements.txt can build it from `listRuntimeLibraries()`.
 
@@ -628,6 +636,8 @@ Why files instead of `docker logs`:
 
 ### 8.3 Library install lifecycle
 
+> Superseded (2026-09-05): pip stages into a private delta and the pool is replaced by atomic rename swap — the install container no longer mounts or writes the live pool, and `--upgrade` is gone — see sandbox-update-v1.md §4.1 and §5.5.
+
 ```text
 installRuntimeLibraries(packages, runtime=PYTHON)
   1. acquire fcntl.flock on runtimes/python/pool.lock (non-blocking → LibraryPoolLocked)
@@ -794,7 +804,6 @@ class StorageConfig:
 @dataclass(slots=True)
 class DockerBackendConfig:
     baseUrl: str = "unix:///var/run/docker.sock"
-    imagePullPolicy: Literal["never", "if-not-present", "always"] = "if-not-present"
 
 @dataclass(slots=True)
 class BackendConfig:
@@ -988,6 +997,8 @@ class PythonRuntime:
         """Walk workspace excluding .run/, return files newer than sinceMtime."""
         ...
 ```
+
+> The `installCommand` method above is superseded — deleted in favor of `reportCommand`/`stageInstallCommand`/`updateHelperHostPath`; see sandbox-update-v1.md §5.3.
 
 ---
 

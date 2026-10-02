@@ -20,6 +20,7 @@ from typing import List, Optional
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import EYE_EMOJI
 from internal.bot.models import (
     BotProvider,
     ButtonConfigureAction,
@@ -95,7 +96,12 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         for modelName in llmManager.listModels():
             modelInfo = llmManager.getModelInfo(modelName)
-            if modelInfo and modelInfo.get("tier", None):
+            if modelInfo:
+                # Missing/invalid tiers resolve to bot-owner (owner-only, gated
+                # again at picker time); warns on invalid values so tier typos
+                # surface at startup instead of the model silently disappearing.
+                # Pass the raw value: None means "missing tier" (silent default).
+                ChatTier.resolveModelTier(modelName, modelInfo.get("tier", ""))
                 selectableModels.append(modelName)
         self.selectableModels = selectableModels
         logger.debug(f"Selectable models are: {selectableModels}")
@@ -244,7 +250,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         """Display configuration settings page for a specific chat.
 
         Shows all available settings for the selected chat, organized by page
-        (STANDART, ADVANCED, etc.). Each setting is displayed with its current
+        (STANDARD, EXTENDED, etc.). Each setting is displayed with its current
         status and whether it differs from the default value.
 
         Args:
@@ -288,7 +294,8 @@ class ConfigureCommandHandler(BaseBotHandler):
             chatTier = ChatTier.FREE  # By default treat user as free user
         defaultChatSettings = await self.getChatSettings(None, chatType=ChatType(chatInfo["type"]), chatTier=chatTier)
 
-        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
+        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDARD))
+        # Advance past pages whose minTier exceeds the chat's tier (e.g. FREE user opening a PAID page)
         while not chatTier.isBetterOrEqualThan(page.minTier()):
             page = page.next()
             if page is None:
@@ -541,12 +548,15 @@ class ConfigureCommandHandler(BaseBotHandler):
                     # For MODEL, skip models, which does not support text generation
                     continue
 
-                modelTier = ChatTier.fromStr(modelInfo.get("tier", ""))
-                if modelTier is None or chatTier is None or not chatTier.isBetterOrEqualThan(modelTier):
-                    # If some tier is not set or chat has 'worse' tier, skip it
+                modelTier = ChatTier.resolveModelTier(modelName, modelInfo.get("tier", ""))
+                if chatTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                    # Missing/invalid model tiers resolve to bot-owner; skip
+                    # chats with a 'worse' tier than the model requires
                     continue
 
                 buttonText = f"{modelTier.emoji()} {modelName}"
+                if modelInfo.get("support_image_input", False):
+                    buttonText += f" {EYE_EMOJI}"
                 if modelName == chatSettings[key].toStr():
                     buttonText += " (*)"
                 keyboard.append(
@@ -719,8 +729,10 @@ class ConfigureCommandHandler(BaseBotHandler):
                     else:
                         value = self.selectableModels[value]
                         modelInfo = self.llmService.getLLMManager().getModelInfo(value)
-                        modelTier = ChatTier.fromStr(modelInfo.get("tier", "") if modelInfo is not None else "")
-                        if modelTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                        modelTier = ChatTier.resolveModelTier(
+                            value, modelInfo.get("tier", "") if modelInfo is not None else ""
+                        )
+                        if not chatTier.isBetterOrEqualThan(modelTier):
                             value = currentValue
                 else:
                     value = currentValue

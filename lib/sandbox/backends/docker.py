@@ -46,7 +46,7 @@ class DockerBackend(SandboxBackend):
         """Initialise the Docker backend.
 
         Args:
-            config: Docker backend configuration (baseUrl, imagePullPolicy).
+            config: Docker backend configuration (baseUrl).
         """
         self._config = config
         self._client: aiodocker.Docker | None = None

@@ -8,9 +8,9 @@ inserts a row against it to confirm.
 ``up()`` is idempotent (``DROP TABLE IF EXISTS``).
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
-version.  Each test rolls back 3 steps (024, 023, 022) to reach the pre-022
-state (version 21): ``user_data`` exists, re-created empty by 022's
-``down()`` during the rollback.  The test then exercises ``up()`` /
+version.  Each test rolls back to the pre-022 state (version 21) via
+``rollbackTo(targetVersion=21)``: ``user_data`` exists, re-created empty by
+022's ``down()`` during the rollback.  The test then exercises ``up()`` /
 ``down()`` directly.
 """
 
@@ -18,7 +18,7 @@ import lib.utils as libUtils
 from internal.database import Database
 from internal.database.migrations import MigrationManager
 from internal.database.migrations.versions.migration_022_drop_user_data import Migration022DropUserData
-from internal.database.providers.base import BaseSQLProvider
+from lib.db.providers.base import BaseSQLProvider
 
 CHAT_ID = 1
 USER_ID = 100
@@ -42,13 +42,15 @@ async def _tableExists(provider: BaseSQLProvider, tableName: str) -> bool:
 
 
 async def _rollbackToPre022(provider: BaseSQLProvider) -> None:
-    """Roll back migrations 024, 023 and 022 to reach the pre-022 state (version 21).
+    """Roll back to version 21 to reach the pre-022 state.
 
-    Three steps: 024's ``down()`` (drops the bayes_tokens index -- no-op on
-    data), 023's ``down()`` (reverse key rename -- no-op on an empty DB) and
-    022's ``down()`` (re-creates an **empty** ``user_data`` table).
-    After this, ``user_data`` exists (empty) and is ready to be dropped by
-    ``up()``.
+    ``rollbackTo(targetVersion=21)`` runs ``down()`` for 022 and every
+    migration above it. The per-migration effects are: 025's ``down()``
+    (restores the pre-refactor embedding schema), 024's ``down()`` (drops
+    the bayes_tokens index -- no-op on data), 023's ``down()`` (reverse key
+    rename -- no-op on an empty DB) and 022's ``down()`` (re-creates an
+    **empty** ``user_data`` table). After this, ``user_data`` exists
+    (empty) and is ready to be dropped by ``up()``.
 
     Args:
         provider: Writable SQL provider for the default data source.
@@ -58,7 +60,7 @@ async def _rollbackToPre022(provider: BaseSQLProvider) -> None:
     """
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=3, sqlProvider=provider)
+    await rollbackManager.rollbackTo(targetVersion=21, sqlProvider=provider)
 
 
 async def _insertUserData(provider: BaseSQLProvider, chatId: int, userId: int, key: str, data: str) -> None:

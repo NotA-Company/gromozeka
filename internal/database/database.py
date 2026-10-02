@@ -21,7 +21,7 @@ Key Features:
 
 Example:
     >>> from internal.database.database import Database
-    >>> from internal.database.manager import DatabaseManagerConfig
+    >>> from lib.db.manager import DatabaseManagerConfig
     >>>
     >>> config = DatabaseManagerConfig(...)
     >>> async with Database(config) as db:
@@ -34,9 +34,10 @@ import logging
 import types
 from typing import Optional
 
-from .manager import DatabaseManager, DatabaseManagerConfig
+from lib.db.manager import DatabaseManager, DatabaseManagerConfig
+from lib.db.providers import BaseSQLProvider
+
 from .migrations import MigrationManager
-from .providers import BaseSQLProvider
 from .repositories import (
     CacheRepository,
     ChatEmbeddingsRepository,
@@ -49,10 +50,10 @@ from .repositories import (
     CommonFunctionsRepository,
     DelayedTasksRepository,
     DivinationsRepository,
+    EmbeddingModelsRepository,
     MediaAttachmentsRepository,
     SpamRepository,
     UserMemoriesRepository,
-    WebhookUpdatesRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,8 +76,11 @@ class Database:
         manager: Database manager handling connections and multi-source operations.
         common: Repository for common database functions and utilities.
         chatMessages: Repository for chat message storage and retrieval.
-        chatEmbeddings: Repository for message embeddings CRUD and the
-            backfill helper (``getMessagesWithoutEmbeddings``).
+        chatEmbeddings: Repository for chat-message embedding provenance
+            (writes ``chat_messages.model_id`` and dual-writes vec0) and
+            the backfill helper (``getMessagesWithoutEmbeddings``).
+            Receives ``embeddingModels.getOrCreateModelId`` as its
+            ``modelIdResolver`` per Decision D10.
         chatSearch: Unified chat-message search repository: filter-only
             SQL path and semantic (embedding-based cosine-similarity)
             path, including the public ``searchChatMessages`` dispatcher.
@@ -91,12 +95,16 @@ class Database:
         delayedTasks: Repository for delayed task scheduling and management.
         divinations: Repository for tarot/runes divination readings.
         cache: Repository for caching operations.
-        webhookUpdates: Repository for Max webhook payload storage and consumption.
+        embeddingModels: Repository for the ``models`` embedding-provenance lookup
+            table. Constructed first so its bound ``getOrCreateModelId``
+            method can be injected as ``modelIdResolver`` into the
+            embedding-touching repos (Decision D10 of the
+            embedding-model-lookup refactor).
         _migrationManager: Internal migration manager for schema versioning and updates.
 
     Example:
         >>> from internal.database.database import Database
-        >>> from internal.database.manager import DatabaseManagerConfig
+        >>> from lib.db.manager import DatabaseManagerConfig
         >>>
         >>> config = DatabaseManagerConfig(...)
         >>> async with Database(config) as db:
@@ -121,7 +129,7 @@ class Database:
         "delayedTasks",
         "divinations",
         "cache",
-        "webhookUpdates",
+        "embeddingModels",
         "_migrationManager",
     )
 
@@ -135,11 +143,14 @@ class Database:
     """Repository for chat message storage and retrieval."""
 
     chatEmbeddings: ChatEmbeddingsRepository
-    """Repository for message embeddings CRUD and the backfill helper (``getMessagesWithoutEmbeddings``)."""
+    """Repository for chat-message embedding provenance (writes ``chat_messages.model_id``
+    and dual-writes vec0) and the backfill helper (``getMessagesWithoutEmbeddings``).
+    Receives ``embeddingModels.getOrCreateModelId`` as its ``modelIdResolver`` per Decision D10."""
 
     chatSearch: ChatSearchRepository
-    """Unified chat-message search: filter-only SQL and semantic embedding paths,
-    with the public ``searchChatMessages`` dispatcher."""
+    """Unified chat-message search: filter-only SQL and semantic vec0 paths,
+    with the public ``searchChatMessages`` dispatcher. Receives
+    ``embeddingModels.getOrCreateModelId`` as its ``modelIdResolver`` per Decision D10."""
 
     chatUsers: ChatUsersRepository
     """Repository for chat user management and associations."""
@@ -155,7 +166,9 @@ class Database:
 
     userMemories: UserMemoriesRepository
     """Repository for the unified ``user_memories`` store (per-(chat, user, thread)
-    facts/preferences/events/relationships/bio; Phase 1a relational foundation)."""
+    facts/preferences/events/relationships/bio; vec0-backed semantic search and
+    embedding provenance via the ``models`` lookup). Receives
+    ``embeddingModels.getOrCreateModelId`` as its ``modelIdResolver`` per Decision D10."""
 
     mediaAttachments: MediaAttachmentsRepository
     """Repository for media attachment storage and management."""
@@ -172,8 +185,13 @@ class Database:
     cache: CacheRepository
     """Repository for caching operations."""
 
-    webhookUpdates: WebhookUpdatesRepository
-    """Repository for Max webhook payload storage and consumption."""
+    embeddingModels: EmbeddingModelsRepository
+    """Repository for the ``models`` embedding-provenance lookup table.
+    Constructed first in :meth:`__init__` so its bound
+    ``getOrCreateModelId`` method can be injected as the
+    ``modelIdResolver`` kwarg into all three embedding-touching repos —
+    ``chatEmbeddings``, ``chatSearch``, and ``userMemories`` (Decision
+    D10 of the embedding-model-lookup refactor)."""
 
     _migrationManager: MigrationManager
     """Internal migration manager for schema versioning and updates."""
@@ -200,22 +218,36 @@ class Database:
         logger.info("Initializing database")
         self.manager = DatabaseManager(config)
 
+        # Repositories with queries to DB.
+        #
+        # Construction order matters: ``self.embeddingModels`` MUST be built first
+        # because its bound ``getOrCreateModelId`` method is injected as
+        # the ``modelIdResolver`` kwarg into every embedding-touching
+        # repo (Decision D10 of the embedding-model-lookup refactor —
+        # ``docs/plans/embedding-model-lookup-refactor-v1.md`` §8.3).
+        # All three embedding-touching repos are wired here:
+        # ``self.chatEmbeddings``, ``self.chatSearch``, and
+        # ``self.userMemories``.
+        self.embeddingModels = EmbeddingModelsRepository(self.manager)
         # Repositories with queries to DB
         self.common = CommonFunctionsRepository(self.manager)
         self.chatMessages = ChatMessagesRepository(self.manager)
-        self.chatEmbeddings = ChatEmbeddingsRepository(self.manager)
-        self.chatSearch = ChatSearchRepository(self.manager)
+        self.chatEmbeddings = ChatEmbeddingsRepository(
+            self.manager, modelIdResolver=self.embeddingModels.getOrCreateModelId
+        )
+        self.chatSearch = ChatSearchRepository(self.manager, modelIdResolver=self.embeddingModels.getOrCreateModelId)
         self.chatUsers = ChatUsersRepository(self.manager)
         self.chatSettings = ChatSettingsRepository(self.manager)
         self.chatInfo = ChatInfoRepository(self.manager)
         self.chatSummarization = ChatSummarizationRepository(self.manager)
-        self.userMemories = UserMemoriesRepository(self.manager)
+        self.userMemories = UserMemoriesRepository(
+            self.manager, modelIdResolver=self.embeddingModels.getOrCreateModelId
+        )
         self.mediaAttachments = MediaAttachmentsRepository(self.manager)
         self.spam = SpamRepository(self.manager)
         self.delayedTasks = DelayedTasksRepository(self.manager)
         self.divinations = DivinationsRepository(self.manager)
         self.cache = CacheRepository(self.manager)
-        self.webhookUpdates = WebhookUpdatesRepository(self.manager)
 
         self._migrationManager = MigrationManager()
         try:

@@ -41,14 +41,27 @@ import json  # noqa: E402
 import logging  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
+
+import httpx2  # noqa: E402
+
+# Process-wide: make `import httpx` resolve to `httpx2` so third-party clients
+# used by project code (sqlink's transport via lib.db.providers, the openai SDK
+# via lib.ai providers) share the bot's httpx2 stack. MUST run before the
+# first project import below: internal.* / lib.* modules transitively perform
+# a real `import httpx`, after which scripts._lib.bootstrap's module-level
+# alias_httpx() would raise RuntimeError. The call is idempotent, so
+# bootstrap's later repeat invocation is a no-op. House pattern: main.py:16-37;
+# background: docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
 
 from internal.config.manager import ConfigManager  # noqa: E402
 from lib.ai.providers.custom_openai_provider import CustomOpenAIProvider  # noqa: E402
 from lib.ai.providers.openrouter_provider import OpenrouterProvider  # noqa: E402
 from lib.ai.providers.yc_openai_provider import YcOpenaiProvider  # noqa: E402
 from lib.ai.providers.yc_sdk_provider import YcAIProvider  # noqa: E402
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 _DEFAULT_CONFIG_DIRS: List[str] = ["configs/00-defaults", "configs/local"]
 
@@ -120,6 +133,13 @@ async def main() -> int:
         configDirs=configDirs,
         dotEnvFile=args.dotenv_file,
     )
+
+    # Initialise the global ProxyHelper singleton before instantiating any
+    # provider: each BasicOpenAIProvider._initClient() resolves proxy via
+    # ProxyConfig.getCombined() and raises TypeError if the singleton has
+    # not been initialised. Same applies to OpenrouterProvider.listRemoteModels().
+    # See scripts/_lib/bootstrap.py for the rationale.
+    bootstrapProxy(configManager)
 
     modelsConfig: Dict[str, Any] = configManager.getModelsConfig()
 

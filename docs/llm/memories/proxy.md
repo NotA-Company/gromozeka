@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Proxy Task Memory
 
 Durable task-specific memory for the completed proxy support work (2026-05-23).
@@ -14,18 +18,18 @@ How to use this file:
 - **Config hierarchy:** Global `[proxy]` section + per-service `use-proxy` (kebab-case) + optional `[service.proxy]` overrides. Master kill-switch `[proxy].enabled = false`.
 - **Proxied services:** Telegram bot, Max client, all OpenAI-compatible AI providers, Yandex Search API, web-fetch, OpenWeatherMap, Geocode Maps, sqlink database provider.
 - **Out of scope:** YC SDK (gRPC), sandbox (container networking), S3 storage (separate proxy story).
-- **SOCKS5:** `httpx-socks[asyncio]==0.11.0` pinned in `requirements.direct.txt` (frozen into `requirements.txt`). Conditional import at module level (empty `except` + `_HTTPX_SOCKS_AVAILABLE` flag — see AGENTS.md).
+- **SOCKS5:** uses httpx2's native `proxy="socks5://..."` support (the `httpx2[socks]` extra pulls `socksio`). There is **no** `httpx-socks` package, **no** `AsyncProxyTransport`, and **no** `_HTTPX_SOCKS_AVAILABLE` flag anymore — those were removed during the httpx→httpx2 migration (see [`../architecture.md`](../architecture.md) ADR-021, decision D2; and [`../libraries.md`](../libraries.md) §13 for the current `lib/proxy` description). `ProxyKwargs` is a single-key `{proxy: str}` used for both HTTP and SOCKS5; `toKwargs()` takes no `verify` argument (the caller applies `verify=<sslContext>` at the `httpx2.AsyncClient` level uniformly).
 - **Tests:** `tests/lib/test_proxy.py` — 54 tests (as of 2026-07-18).
 - **Security:** `ProxyConfig.getProxyURL(maskPassword=True)` for logging (password -> `REDACTED`). URL building uses `quote()` for credential encoding.
 
 ## Key Files
 
-`lib/proxy/__init__.py` (package), `lib/ai/abstract.py` (aclose), `lib/ai/providers/basic_openai_provider.py` (proxy + aclose), `internal/bot/telegram/application.py` (PTB proxy), `lib/max_bot/client.py`, `lib/openweathermap/client.py`, `lib/geocode_maps/client.py`, `lib/yandex_search/client.py`, `internal/bot/common/handlers/yandex_search.py`, `internal/bot/common/handlers/weather.py`, `internal/database/providers/sqlink.py`, `internal/database/providers/__init__.py` (sqlink proxy resolution), `main.py` (`ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` at line 78). Note: `main.py` no longer calls `ProxyHelper.setGlobalProxyConfig()` directly — that call now lives inside `ProxyService.initialize()` at `internal/services/proxy/service.py:103`. See `proxy-lifecycle.md` for the ProxyService layer.
+`lib/proxy/__init__.py` (package), `lib/ai/abstract.py` (aclose), `lib/ai/providers/basic_openai_provider.py` (proxy + aclose), `internal/bot/telegram/application.py` (PTB proxy), `lib/max_bot/client.py`, `lib/openweathermap/client.py`, `lib/geocode_maps/client.py`, `lib/yandex_search/client.py`, `internal/bot/common/handlers/yandex_search.py`, `internal/bot/common/handlers/weather.py`, `lib/db/providers/sqlink.py`, `lib/db/providers/__init__.py` (sqlink proxy resolution), `main.py` (`ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` at line 78). Note: `main.py` no longer calls `ProxyHelper.setGlobalProxyConfig()` directly — that call now lives inside `ProxyService.initialize()` at `internal/services/proxy/service.py:103`. See `proxy-lifecycle.md` for the ProxyService layer.
 
 ## Proxy-Specific Conventions
 
 - `lib/proxy` is a package (`lib/proxy/__init__.py`), not a single file. Internal modules can be added under `lib/proxy/` in the future.
-- `ProxyKwargs` TypedDict for proxy kwargs (instead of generic `Dict[str, Any]`): `class ProxyKwargs(TypedDict, total=False): proxy: str; transport: "AsyncProxyTransport"`. The `transport` field uses a **string forward reference** so the annotation is safe even when `httpx_socks` is not installed (pyright resolves from the `try` branch; runtime access is gated by the `_HTTPX_SOCKS_AVAILABLE` flag).
+- `ProxyKwargs` TypedDict for proxy kwargs (instead of generic `Dict[str, Any]`): `class ProxyKwargs(TypedDict, total=False): proxy: str`. Single key — the proxy URL (`"http://..."` or `"socks5://..."`) for both HTTP and SOCKS5. The old `transport: "AsyncProxyTransport"` field and its forward-reference trick are gone (httpx-socks was removed — see ADR-021 D2); httpx2's native `proxy=` handles SOCKS5, so there is never a `transport` key.
 - Global proxy storage: `setGlobalProxyConfig()` is called once at startup — historically from `main.py`, now invoked inside `ProxyService.initialize()` (`internal/services/proxy/service.py:103`), which `main.py:78` triggers via `ProxyService.getInstance().initialize(...)`. `getGlobalProxyConfig()` is used by all services. No threading through constructors.
 - Config key for per-service proxy overrides is `proxy` (not `proxy-override`). Example: `[bot.proxy]`, `[yandex-search.proxy]`.
 
@@ -110,7 +114,7 @@ use-proxy = true
 # address = "${DB_PROXY_ADDRESS}"
 ```
 
-The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` because `getSqlProvider()` in `internal/database/providers/__init__.py` extracts `config["parameters"]` and passes it as `**parameters` to the provider constructor (`SQLinkProvider(**parameters)`). Keys placed directly under the provider block (e.g. `[database.providers.archive]`) are not forwarded to the constructor.
+The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` because `getSqlProvider()` in `lib/db/providers/__init__.py` extracts `config["parameters"]` and passes it as `**parameters` to the provider constructor (`SQLinkProvider(**parameters)`). Keys placed directly under the provider block (e.g. `[database.providers.archive]`) are not forwarded to the constructor.
 
 ## Anti-Patterns Learned
 
@@ -120,7 +124,7 @@ The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` b
 
 ## Complete HTTP Client Inventory (from 2026-05-23 audit)
 
-> **Note:** line numbers below are from the 2026-05-23 audit and have drifted (e.g. `basic_openai_provider.py` proxy calls are now around lines 893 and 1090, not 826/969). The set of services in scope is still accurate. Re-grep `fromServiceConfig\|toKwargs\|getProxyURL` for current line numbers before relying on these.
+> **Note:** line numbers below are from the 2026-05-23 audit and have drifted (e.g. `basic_openai_provider.py` proxy calls are now around lines 893 and 1090, not 826/969). The set of services in scope is still accurate. The "Library" column reads `httpx.AsyncClient`, which is literally what the source still reads — but since the httpx→httpx2 migration (see [`../architecture.md`](../architecture.md) ADR-021) those are `httpx2.AsyncClient` at runtime via the process-wide `httpx2.alias_httpx()` alias. Re-grep `fromServiceConfig\|toKwargs\|getProxyURL` for current line numbers before relying on these.
 
 **In scope (all need proxy):**
 

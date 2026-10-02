@@ -82,8 +82,8 @@ def _exec(dbPath: Path, sql: str, params: tuple[object, ...] = ()) -> None:
 def _makeUserMemoriesTable(dbPath: Path) -> None:
     """Create a ``user_memories`` table matching the production schema subset.
 
-    Only the columns this script touches (``embedding_model``,
-    ``embedding_dimensions``) plus a minimal PK are included.
+    Only the column this script touches (``model_id``) plus a minimal PK
+    are included.
 
     Args:
         dbPath: Path of the SQLite file to create the table in.
@@ -94,8 +94,7 @@ def _makeUserMemoriesTable(dbPath: Path) -> None:
         "chat_id INTEGER NOT NULL, "
         "user_id INTEGER NOT NULL, "
         "memory_id TEXT NOT NULL, "
-        "embedding_model TEXT, "
-        "embedding_dimensions INTEGER, "
+        "model_id INTEGER, "
         "PRIMARY KEY (chat_id, user_id, memory_id)"
         ")",
     )
@@ -106,8 +105,7 @@ def _insertMemory(
     chatId: int,
     userId: int,
     memoryId: str,
-    embeddingModel: str | None,
-    embeddingDimensions: int | None,
+    modelId: int | None,
 ) -> None:
     """Insert one ``user_memories`` row with embedding provenance.
 
@@ -116,25 +114,23 @@ def _insertMemory(
         chatId: Chat id (PK column).
         userId: User id (PK column).
         memoryId: Memory id (PK column).
-        embeddingModel: Value for the ``embedding_model`` column.
-        embeddingDimensions: Value for the ``embedding_dimensions`` column.
+        modelId: Value for the ``model_id`` column (FK-like integer into
+            the ``models`` lookup table, or ``None`` when not yet embedded).
     """
     _exec(
         dbPath,
-        "INSERT INTO user_memories "
-        "(chat_id, user_id, memory_id, embedding_model, embedding_dimensions) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (chatId, userId, memoryId, embeddingModel, embeddingDimensions),
+        "INSERT INTO user_memories " "(chat_id, user_id, memory_id, model_id) " "VALUES (?, ?, ?, ?)",
+        (chatId, userId, memoryId, modelId),
     )
 
 
-def _fetchProvenance(
+def _fetchModelId(
     dbPath: Path,
     chatId: int,
     userId: int,
     memoryId: str,
-) -> tuple[str | None, int | None]:
-    """Read the ``(embedding_model, embedding_dimensions)`` tuple for one row.
+) -> int | None:
+    """Read the ``model_id`` value for one row.
 
     Args:
         dbPath: Path of the SQLite file.
@@ -143,20 +139,19 @@ def _fetchProvenance(
         memoryId: Memory id to select.
 
     Returns:
-        The ``(embedding_model, embedding_dimensions)`` values for the row.
+        The ``model_id`` value for the row (or ``None`` when NULL).
     """
     conn = sqlite3.connect(str(dbPath))
     try:
         cursor = conn.execute(
-            "SELECT embedding_model, embedding_dimensions "
-            "FROM user_memories WHERE chat_id = ? AND user_id = ? AND memory_id = ?",
+            "SELECT model_id " "FROM user_memories WHERE chat_id = ? AND user_id = ? AND memory_id = ?",
             (chatId, userId, memoryId),
         )
-        row: tuple[str | None, int | None] | None = cursor.fetchone()
+        row: tuple[int | None] | None = cursor.fetchone()
     finally:
         conn.close()
     assert row is not None, f"row not found chat_id={chatId} user_id={userId} memory_id={memoryId}"
-    return row
+    return row[0]
 
 
 def _listVecTables(dbPath: Path) -> list[str]:
@@ -177,17 +172,17 @@ def _listVecTables(dbPath: Path) -> list[str]:
 
 
 def _countMemoriesWithProvenance(dbPath: Path) -> int:
-    """Count rows in ``user_memories`` with non-null ``embedding_model``.
+    """Count rows in ``user_memories`` with non-null ``model_id``.
 
     Args:
         dbPath: Path of the SQLite file.
 
     Returns:
-        The number of rows where ``embedding_model IS NOT NULL``.
+        The number of rows where ``model_id IS NOT NULL``.
     """
     conn = sqlite3.connect(str(dbPath))
     try:
-        cursor = conn.execute("SELECT COUNT(*) FROM user_memories WHERE embedding_model IS NOT NULL")
+        cursor = conn.execute("SELECT COUNT(*) FROM user_memories WHERE model_id IS NOT NULL")
         row: tuple[int] | None = cursor.fetchone()
     finally:
         conn.close()
@@ -223,27 +218,27 @@ class TestProcessDatabase:
         dbPath = tmp_path / "bot.db"
         _exec(dbPath, "CREATE TABLE vec_user_memories_384 (id INTEGER, embedding BLOB)")
         _makeUserMemoriesTable(dbPath)
-        _insertMemory(dbPath, 1, 10, "mem-1", "BAAI/bge-small-en", 384)
-        _insertMemory(dbPath, 1, 10, "mem-2", "BAAI/bge-small-en", 384)
-        _insertMemory(dbPath, 1, 10, "mem-3", None, None)
+        _insertMemory(dbPath, 1, 10, "mem-1", 1)
+        _insertMemory(dbPath, 1, 10, "mem-2", 1)
+        _insertMemory(dbPath, 1, 10, "mem-3", None)
 
         rc = processDatabase(dbPath, dryRun=False)
 
         assert rc == 0
         # Vec0 virtual table is gone.
         assert _listVecTables(dbPath) == []
-        # All provenance nulled, including the already-null row.
+        # All model_id values nulled, including the already-null row.
         for memoryId in ("mem-1", "mem-2", "mem-3"):
-            model, dims = _fetchProvenance(dbPath, chatId=1, userId=10, memoryId=memoryId)
-            assert model is None, f"embedding_model not nulled for {memoryId}"
-            assert dims is None, f"embedding_dimensions not nulled for {memoryId}"
+            assert (
+                _fetchModelId(dbPath, chatId=1, userId=10, memoryId=memoryId) is None
+            ), f"model_id not nulled for {memoryId}"
 
     def testDryRunLeavesDbUnmodified(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """``dryRun=True`` reports what would happen but changes nothing."""
         dbPath = tmp_path / "bot.db"
         _exec(dbPath, "CREATE TABLE vec_user_memories_384 (id INTEGER, embedding BLOB)")
         _makeUserMemoriesTable(dbPath)
-        _insertMemory(dbPath, 1, 10, "mem-1", "BAAI/bge-small-en", 384)
+        _insertMemory(dbPath, 1, 10, "mem-1", 1)
 
         rc = processDatabase(dbPath, dryRun=True)
         out = capsys.readouterr().out
@@ -253,15 +248,13 @@ class TestProcessDatabase:
         assert _parseCounter(out, "Rows to clear:") == 1
         # DB must be untouched under dry-run.
         assert _listVecTables(dbPath) == ["vec_user_memories_384"]
-        model, dims = _fetchProvenance(dbPath, chatId=1, userId=10, memoryId="mem-1")
-        assert model == "BAAI/bge-small-en"
-        assert dims == 384
+        assert _fetchModelId(dbPath, chatId=1, userId=10, memoryId="mem-1") == 1
 
     def testNoVecTablesRunsClean(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A DB with only user_memories (no vec0 tables) runs without error."""
         dbPath = tmp_path / "bot.db"
         _makeUserMemoriesTable(dbPath)
-        _insertMemory(dbPath, 1, 10, "mem-1", "BAAI/bge-small-en", 384)
+        _insertMemory(dbPath, 1, 10, "mem-1", 1)
 
         rc = processDatabase(dbPath, dryRun=False)
         out = capsys.readouterr().out
@@ -293,8 +286,8 @@ class TestProcessDatabase:
         _exec(dbPath, "CREATE TABLE vec_user_memories_384 (id INTEGER, embedding BLOB)")
         _exec(dbPath, "CREATE TABLE vec_user_memories_768 (id INTEGER, embedding BLOB)")
         _makeUserMemoriesTable(dbPath)
-        _insertMemory(dbPath, 1, 10, "mem-384", "model-384", 384)
-        _insertMemory(dbPath, 1, 10, "mem-768", "model-768", 768)
+        _insertMemory(dbPath, 1, 10, "mem-384", 1)
+        _insertMemory(dbPath, 1, 10, "mem-768", 2)
 
         rc = processDatabase(dbPath, dryRun=False)
 
@@ -316,7 +309,7 @@ class TestProcessDatabase:
         _exec(dbPath, "CREATE TABLE vec_user_memories_384_rowids (rowid INTEGER, id INTEGER)")
         _exec(dbPath, "CREATE TABLE vec_user_memories_384_chunks (id INTEGER, embedding BLOB)")
         _makeUserMemoriesTable(dbPath)
-        _insertMemory(dbPath, 1, 10, "mem-1", "model-384", 384)
+        _insertMemory(dbPath, 1, 10, "mem-1", 1)
 
         rc = processDatabase(dbPath, dryRun=False)
 
@@ -332,7 +325,7 @@ class TestProcessDatabase:
         dbPath = tmp_path / "bot.db"
         _exec(dbPath, "CREATE TABLE vec_user_memories_384 (id INTEGER, embedding BLOB)")
         _makeUserMemoriesTable(dbPath)
-        _insertMemory(dbPath, 1, 10, "mem-1", "BAAI/bge-small-en", 384)
+        _insertMemory(dbPath, 1, 10, "mem-1", 1)
 
         firstRc = processDatabase(dbPath, dryRun=False)
         firstOut = capsys.readouterr().out

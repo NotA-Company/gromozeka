@@ -29,8 +29,8 @@ Example:
         name="gpt-model",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.7,
-        contextSize=8000
+        contextSize=8000,
+        customParams={"temperature": 0.7},
     )
 
     result = await model.generateText([
@@ -173,10 +173,10 @@ class YcAIModel(AbstractModel):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
         ycSDK: AsyncAIStudio,
     ):
         """Initialize YC SDK model.
@@ -185,7 +185,6 @@ class YcAIModel(AbstractModel):
             provider: The YcAIProvider instance that owns this model.
             modelId: The model identifier (e.g., "yandexgpt", "yandexart").
             modelVersion: The model version (e.g., "latest", "rc").
-            temperature: The sampling temperature for text generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             ycSDK: The Yandex Cloud AI Studio SDK instance.
             extraConfig: Additional configuration options. Supported keys:
@@ -194,6 +193,9 @@ class YcAIModel(AbstractModel):
                 - width_ratio (int): Width ratio for image generation.
                 - height_ratio (int): Height ratio for image generation.
                 - seed (int): Random seed for image generation.
+            customParams: Per-model custom parameters forwarded to the YC
+                SDK ``.configure()`` call (temperature, max_tokens, etc.).
+                See :attr:`AbstractModel._customParams`.
 
         Raises:
             ValueError: If both support_text and support_images are True or both are False.
@@ -203,10 +205,10 @@ class YcAIModel(AbstractModel):
             provider,
             modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
         )
         self.ycSDK = ycSDK
 
@@ -224,6 +226,13 @@ class YcAIModel(AbstractModel):
         Creates a new SDK model on every call, avoiding the .configure() mutation
         problem when concurrent callers need different configurations.
 
+        For the text path the base kwargs are seeded from ``self._customParams``
+        (so user-supplied ``temperature`` / ``max_tokens`` / etc. apply); for
+        the image path ``self._customParams`` is also forwarded, then the
+        YC-specific ``mime_type`` / ``width_ratio`` / ``height_ratio`` /
+        ``seed`` reads from ``self._config`` are layered on top. Per-call
+        ``configOverrides`` always win.
+
         Args:
             **configOverrides: Parameters passed to .configure().
                 For text: temperature, max_tokens, tools, tool_choice,
@@ -237,9 +246,7 @@ class YcAIModel(AbstractModel):
             ValueError: If the model supports neither text nor image generation.
         """
         if self.supportText:
-            kwargs: Dict[str, Any] = {
-                "temperature": self.temperature,
-            }
+            kwargs: Dict[str, Any] = dict(self._customParams)
             kwargs.update(configOverrides)
             return self.ycSDK.models.completions(
                 self.modelId,
@@ -247,9 +254,11 @@ class YcAIModel(AbstractModel):
             ).configure(**kwargs)
 
         if self.supportImages:
-            imageKwargs: Dict[str, Any] = {
-                "mime_type": IMAGE_MIME_TYPE,
-            }
+            # Start from customParams (send everything), then layer YC-SDK-specific
+            # image params from self._config on top so they take precedence over
+            # anything the user set for a different image-API dialect.
+            imageKwargs: Dict[str, Any] = dict(self._customParams)
+            imageKwargs["mime_type"] = IMAGE_MIME_TYPE
             for key in ("width_ratio", "height_ratio", "seed"):
                 if key in self._config:
                     imageKwargs[key] = self._config[key]
@@ -445,7 +454,7 @@ class YcAIModel(AbstractModel):
         if not self.supportText:
             raise NotImplementedError(f"Text generation isn't supported by {self.modelId}")
 
-        configKwargs: Dict[str, Any] = {}
+        configKwargs: Dict[str, Any] = self._customParams.copy()
 
         if tools:
             configKwargs["tools"] = self._convertTools(tools)
@@ -489,6 +498,7 @@ class YcAIModel(AbstractModel):
                 inputTokens=result.usage.input_text_tokens,
                 outputTokens=result.usage.completion_tokens,
                 totalTokens=result.usage.total_tokens,
+                reasoningTokens=result.usage.reasoning_tokens,
             )
 
         except Exception as e:
@@ -571,10 +581,9 @@ class YcAIModel(AbstractModel):
         if not self.supportText:
             raise NotImplementedError(f"Structured output isn't supported by {self.modelId}")
 
-        model = self._getModel(
-            response_format={"json_schema": schema, "name": schemaName, "strict": strict},
-            temperature=min(self.temperature, 0.3),
-        )
+        modelKwargs = self._customParams.copy()
+        modelKwargs["response_format"] = {"json_schema": schema, "name": schemaName, "strict": strict}
+        model = self._getModel(**modelKwargs)
         if not isinstance(model, AsyncGPTModel):
             raise TypeError(f"Expected AsyncGPTModel from _getModel(), got {type(model).__name__}")
 
@@ -599,6 +608,7 @@ class YcAIModel(AbstractModel):
                     inputTokens=result.usage.input_text_tokens,
                     outputTokens=result.usage.completion_tokens,
                     totalTokens=result.usage.total_tokens,
+                    reasoningTokens=result.usage.reasoning_tokens,
                 )
 
             return ModelStructuredResult(
@@ -609,6 +619,7 @@ class YcAIModel(AbstractModel):
                 inputTokens=result.usage.input_text_tokens,
                 outputTokens=result.usage.completion_tokens,
                 totalTokens=result.usage.total_tokens,
+                reasoningTokens=result.usage.reasoning_tokens,
             )
 
         except Exception as e:
@@ -683,8 +694,8 @@ class YcAIProvider(AbstractLLMProvider):
             name="gpt-model",
             modelId="yandexgpt",
             modelVersion="latest",
-            temperature=0.7,
-            contextSize=8000
+            contextSize=8000,
+            customParams={"temperature": 0.7},
         )
 
         # Add an image generation model
@@ -692,7 +703,6 @@ class YcAIProvider(AbstractLLMProvider):
             name="art-model",
             modelId="yandexart",
             modelVersion="latest",
-            temperature=0.0,
             contextSize=0,
             extraConfig={
                 "support_text": False,
@@ -813,10 +823,10 @@ class YcAIProvider(AbstractLLMProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a YC SDK model to the provider.
 
@@ -824,9 +834,11 @@ class YcAIProvider(AbstractLLMProvider):
             name: A unique name for this model instance within the provider.
             modelId: The Yandex Cloud model identifier (e.g., "yandexgpt", "yandexart").
             modelVersion: The model version (e.g., "latest", "rc").
-            temperature: The sampling temperature for text generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             extraConfig: Additional configuration options. See YcAIModel.__init__ for details.
+            customParams: Per-model custom parameters forwarded to the YC SDK
+                ``.configure()`` call (temperature, max_tokens, etc.). See
+                :attr:`AbstractModel._customParams`.
 
         Returns:
             The created YcAIModel instance. If a model with the same name already exists,
@@ -852,10 +864,10 @@ class YcAIProvider(AbstractLLMProvider):
                 provider=self,
                 modelId=modelId,
                 modelVersion=modelVersion,
-                temperature=temperature,
                 contextSize=contextSize,
                 statsStorage=statsStorage,
                 extraConfig=extraConfig,
+                customParams=customParams,
                 ycSDK=self._ycAISDK,
             )
 

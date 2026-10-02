@@ -48,6 +48,7 @@ import logging
 import sys
 import time
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -65,9 +66,21 @@ if _REPO_ROOT not in sys.path:
 # Silence noisy libraries before importing project code.
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 logging.getLogger("openai._base_client").setLevel(logging.ERROR)
+
+import httpx2  # noqa: E402
+
+# Process-wide: make `import httpx` resolve to `httpx2` so third-party clients
+# used by project code (sqlink's transport via lib.db.providers, the openai SDK
+# via lib.ai providers) share the bot's httpx2 stack. MUST run before the
+# first project import below: internal.* / lib.* modules transitively perform
+# a real `import httpx`, after which scripts._lib.bootstrap's module-level
+# alias_httpx() would raise RuntimeError. The call is idempotent, so
+# bootstrap's later repeat invocation is a no-op. House pattern: main.py:16-37;
+# background: docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
 
 from internal.bot.models import (  # noqa: E402
     BotProvider,
@@ -88,7 +101,8 @@ from internal.services.llm import LLMService  # noqa: E402
 from lib.ai import ModelMessage  # noqa: E402
 from lib.ai.abstract import AbstractModel  # noqa: E402
 from lib.ai.manager import LLMManager  # noqa: E402
-from lib.proxy import ProxyHelper  # noqa: E402
+from lib.ai.session import buildSessionId  # noqa: E402
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +117,9 @@ _KEEP_FIRST_N: int = 1
 _KEEP_LAST_N: int = 1
 
 _SEPARATOR = "=" * 70
+
+# Per-run session bucket for opencode-go prompt-cache affinity (see lib/ai/session.py).
+_SESSION_TS = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def buildParser() -> argparse.ArgumentParser:
@@ -425,7 +442,10 @@ async def main() -> int:
             dotEnvFile=args.envFile,
         )
 
-        ProxyHelper.getInstance().setGlobalProxyConfig(configManager.getProxyConfig())
+        # Initialise the global ProxyHelper singleton before any proxy-consuming
+        # service is built (Database with sqlink, LLMManager, httpx clients).
+        # See scripts/_lib/bootstrap.py for the rationale.
+        bootstrapProxy(configManager)
 
         db = Database(
             configManager.getDatabaseConfig(),  # pyright: ignore[reportArgumentType]
@@ -596,6 +616,7 @@ async def main() -> int:
             condensingPrompt=condensingPrompt,
             condensingSystemPrompt=condensingSystemPrompt,
             force=True,
+            sessionId=buildSessionId("script", "check-condensing", _SESSION_TS),
         )
     except Exception:
         print(f"\n{_SEPARATOR}")

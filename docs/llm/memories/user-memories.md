@@ -1,4 +1,8 @@
-# User Memories (v1) — Task Memory
+---
+category: reference
+---
+
+# User Memories — Task Memory
 
 Durable implementation notes for the **unified per-`(chat, user, thread)`
 structured memory system** that replaced the legacy rolling-bio summary.
@@ -55,8 +59,7 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
 | `tags` | TEXT NOT NULL DEFAULT `'[]'` | JSON-encoded list of freeform tag strings. |
 | `permanent` | INTEGER NOT NULL DEFAULT `0` | Boolean-as-int (`0`/`1`). |
 | `source` | TEXT NOT NULL DEFAULT `'refinement'` | Provenance: `refinement` \| `chat` \| `migration` \| `user`. |
-| `embedding_model` | TEXT | `NULL` = not yet embedded. |
-| `embedding_dimensions` | INTEGER | `NULL` = not yet embedded. |
+| `model_id` | INTEGER | `NULL` = not yet embedded. FK into the `models` lookup table (`migration_025_embedding_model_lookup`); replaces the former `embedding_model`/`embedding_dimensions` pair — the model name + dimensions are resolved once via the constructor-injected `modelIdResolver` and cached on the `model_id` side. |
 | `created_at` | TIMESTAMP NOT NULL | Set application-side (no `DEFAULT CURRENT_TIMESTAMP`). |
 | `updated_at` | TIMESTAMP NOT NULL | Set application-side; bumped on every write. |
 | `deleted_at` | TIMESTAMP NULL | Soft-delete timestamp (migration 021). Set application-side in `deleteMemory` via `dbUtils.getCurrentTimestamp()` (no DB default). `NULL` = live; non-`NULL` = soft-deleted (row survives for historical reads; every live read filters `AND deleted_at IS NULL`). |
@@ -70,10 +73,7 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
   `idx_user_memories_chat_user_permanent`
   `(chat_id, user_id, permanent, updated_at DESC)`,
   `idx_user_memories_type` `(chat_id, user_id, type)`.
-- **No BLOB embeddings table.** Unlike chat-history search, embeddings live
-  **only** in vec0; `embedding_model`/`embedding_dimensions` are tracked on
-  `user_memories` itself. Semantic search is vec0-only (no numpy fallback) —
-  when vec0 is unavailable, `searchMemories` returns `[]`.
+- **No BLOB embeddings table.** Since `migration_025_embedding_model_lookup`, both `user_memories` AND `chat_messages` share this property — the `message_embeddings` BLOB side table was dropped. Embeddings live **only** in vec0; the embedding model is tracked via `model_id` (FK into the `models` lookup table) on `user_memories` itself (the chat-search side stores `model_id` on `chat_messages`). Semantic search is vec0-only (no numpy fallback) — when vec0 is unavailable, `searchMemories` returns `[]`.
 
 ### vec0 virtual table `vec_user_memories_{dim}`
 
@@ -81,34 +81,36 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
   `UserMemoriesRepository._upsertVecMemoryEmbedding` on first write of a
   given dimension (mirror of `_upsertVecMessageEmbedding` in
   `chat_embeddings.py`). **NOT created by the migration.**
-- Carries denormalised metadata columns (`chat_id`, `user_id`, `model`
+- Carries denormalised metadata columns (`chat_id`, `user_id`, `model_id`
   partition keys, `permanent`) plus the `embedding`
-  vector column with cosine distance metric. The `model` partition key
-  scopes vectors per embedding model so a model swap does not pollute one
-  model's vector space with another's.
+  vector column with cosine distance metric. The `model_id` partition key
+  (INTEGER FK into the `models` lookup table added in `migration_025`; was
+  TEXT `model` pre-migration) scopes vectors per embedding model so a model
+  swap does not pollute one model's vector space with another's.
 - `thread_id` and `type` are deliberately NOT carried in vec0 (they
   were previously written as denormalised copies but never read back for
   filtering, search, or deletion). The JOIN step in
   `_semanticSearchMemories` applies both filters on the authoritative
   `user_memories` columns. `permanent` is immutable post-creation so it
-  is pushed into the vec0 filter directly; `model` is a partition key and
+  is pushed into the vec0 filter directly; `model_id` is a partition key and
   is always part of the vec0 filter clause.
 
 ## Repository — `UserMemoriesRepository`
 
-`internal/database/repositories/user_memories.py` (10 public methods in the
+`internal/database/repositories/user_memories.py` (12 public methods in the
 documented core set — the `/memory_config` wizard helpers `getMemory` /
 `getDistinctTags` are tracked separately; all SQL goes through
 `BaseSQLProvider` and rows decode via
 `dbUtils.sqlToTypedDict(row, UserMemoryDict)`). Method params are camelCase;
 dict keys are snake_case to match columns.
 
+### Write and read methods
+
 - **Writes:** `addMemory` (INSERT — requires `embedding: Optional[List[float]]`,
   `embeddingModel: Optional[str]`, and `source: UserMemorySource`; `threadId`
   is keyword-only; embeds during add when both `embedding` and `embeddingModel`
   are provided), `deleteMemory` (SOFT DELETE — sets `deleted_at` + bumps
-  `updated_at`, drops the vec0 row, nulls `embedding_model`/
-  `embedding_dimensions`; unrestricted — may target a permanent memory). There
+  `updated_at`, drops the vec0 row, nulls `model_id`; unrestricted — may target a permanent memory). There
   is no in-place PATCH: content changes go through `deleteMemory` + `addMemory`
   (the dedup state machine in `add_memory` already handles the "similar exists →
   delete-old + re-add-updated" path via the refinement LLM).
@@ -124,30 +126,37 @@ dict keys are snake_case to match columns.
   `getProvider(chatId=..., dataSource=..., readonly=True)`; default `None` →
   default DB). Every live read method adds `AND deleted_at IS NULL` so
   soft-deleted rows are skipped on the live injection/search path.
+
+### Search and embedding methods
+
 - **Search:** `searchMemories` — filter-only (`queryEmbedding is None`, plain
   SQL scan, `score = 0.0`) and semantic (`queryEmbedding` is a `List[float]`,
   vec0 native, `score = 1.0 - distance`). `embeddingModel: str` is required
   (keyword-only — pass `None` for filter-only mode); it replaces the old
-  `dimensions: int` arg. Always scoped to
+  `dimensions: int` arg. Internally the `(modelName, dimensions)` pair is
+  resolved to a `model_id` via the constructor-injected `modelIdResolver`
+  (D10 — handler-facing signatures are unchanged). Always scoped to
   `chat_id = :chatId AND user_id = :userId` — no cross-user leaks. The vec0
-  filter clause includes `model = :modelName` (per-model scoping) plus the
+  filter clause includes `model_id = :modelId` (per-model scoping) plus the
   immutable `permanent` flag. `tags` is applied as a portable SQL `LIKE`
   filter (`tags LIKE '%"tagN"%'`, ANY-match) — the `tags` column is stored as
   JSON TEXT via provider auto-serialization of the Python list. In semantic
   mode `threadId` / `type` are re-applied in a JOIN step on the authoritative
   `user_memories` columns (which also filters `deleted_at IS NULL`).
 - **Embedding persistence:** `saveMemoryEmbedding` (takes `embeddingModel: str`
-  + `List[float]`; lazy vec0 upsert + provenance UPDATE; vec0 write must
-  succeed before provenance is set — a failure leaves `embedding_model = NULL`
+  + `List[float]`; resolves the model name to `model_id` via the injected
+  `modelIdResolver`, lazy vec0 upsert + provenance UPDATE; vec0 write must
+  succeed before provenance is set — a failure leaves `model_id = NULL`
   so the regen cron retries), `deleteMemoryEmbedding` (best-effort, iterates
   every `vec_user_memories_{N}`, never raises).
 - **Model-drift regen helpers:** `getMemoriesWithoutEmbeddings` (single-table
   stale detection — also serves the initial backfill since a `NULL`
-  `embedding_model` surfaces here; takes keyword-only `dimensions:
+  `model_id` surfaces here; takes keyword-only `dimensions:
   Optional[int] = None` so rows embedded under a different dimensionality are
-  re-surfaced), `deleteObsoleteMemoryEmbeddings` (resets provenance to `NULL`
-  + drops stale vec0 rows for rows whose model/dimensions drifted; returns
-  `int` and swallows exceptions → a silent failure mode). The two are a
+  re-surfaced — the dimensions arg is resolved internally to the candidate
+  `model_id` set via `modelIdResolver`), `deleteObsoleteMemoryEmbeddings`
+  (resets `model_id` to `NULL` + drops stale vec0 rows for rows whose model
+  drifted; returns `int` and swallows exceptions → a silent failure mode). The two are a
   **complementary belt-and-suspenders pair**: `deleteObsoleteMemoryEmbeddings`
   is the destructive cleanup (regen step 5), and
   `getMemoriesWithoutEmbeddings(dimensions=currentDims)` (step 6) is the
@@ -159,12 +168,13 @@ dict keys are snake_case to match columns.
   regen crons forward the current dimensionality so cross-dimensional drift
   is detected on each path).
 
+### `deleteMemory` soft-delete semantics
+
 `deleteMemory` soft-delete semantics: instead of hard-`DELETE`-ing the row,
 `deleteMemory` runs `UPDATE user_memories SET deleted_at = :deletedAt,
 updated_at = :updatedAt WHERE ... AND deleted_at IS NULL` and then calls
 `deleteMemoryEmbedding(..., vecOnly=False)` — which drops the vec0 row AND
-nulls `embedding_model`/`embedding_dimensions` (so the regen cron never
-re-embeds a deleted memory and it is never a semantic-search hit). The content
+nulls `model_id` (so the regen cron never re-embeds a deleted memory and it is never a semantic-search hit). The content
 row survives with `deleted_at` set so `getMemoriesByIds` (no `deleted_at`
 filter) can still resolve it for historical reads. A re-delete of an
 already-soft-deleted `memory_id` returns `False` (the existence pre-check is
@@ -273,12 +283,12 @@ one-to-one, adapted for the single-store model:
 5. **Stale cleanup (model-drift detection)** — when the in-memory
    `_memoryEmbeddingModelTracker[chatId]` differs from the resolved
    `modelKey` (`"modelName"` or `"modelName:dimensions"`), call
-   `deleteObsoleteMemoryEmbeddings` (resets stale rows' provenance to
+   `deleteObsoleteMemoryEmbeddings` (resets stale rows' `model_id` to
    `NULL`); advance the tracker unconditionally so cleanup fires once per
    model switch.
  6. **Stale detection** — `getMemoriesWithoutEmbeddings` (forwards
     `modelName` and `dimensions` so rows embedded under a different model or
-    dimensionality are re-surfaced; `NULL` `embedding_model` rows surface
+    dimensionality are re-surfaced; `NULL` `model_id` rows surface
     here too, serving the initial backfill).
 7. **Re-embed loop** — each `UserMemoryDict` re-embedded via
    `LLMService.generateEmbedding` (returns `(modelName, List[float])` or
@@ -373,6 +383,8 @@ media-only messages DO produce a non-empty formatted string, get embedded, and
 trigger semantic memory retrieval (the description is the searchable content).
 Truly-empty messages (no text + no media) format to empty and skip embedding.
 
+#### Injection steps
+
 1. Bail when `MEMORY_ENABLED` is false.
 2. **Permanent** — read from the write-through permanent-memories cache via
    `cache.getChatUserPermanentMemories(chatId, userId, threadId)`
@@ -410,6 +422,8 @@ Truly-empty messages (no text + no media) format to empty and skip embedding.
    `setUserMemories` setter method was removed in the context-dedup change
    (ADR-018).
 
+#### Persistence and compaction context
+
 `injectMemories()` is called inside `newMessageHandler` AFTER `saveChatMessage`;
 the compact IDs are then re-persisted via a separate
 `db.chatMessages.updateChatMessageMetadata(...)` call so they ride per message in
@@ -424,7 +438,11 @@ memory renders once — see "Render-time resolution (lazy + dedup)".
 
 > **TypedDict note:** the compact ID shape is typed as
 > `CompactMemoryIdsDict` (`internal/bot/models/message_metadata.py`) —
-> `{permanentIds: list[str], shortTermIds: list[str]}`.
+> `{permanentIds: list[str], shortTermIds: list[str], shortTermScores?:
+> dict[str, float]}`. The optional `shortTermScores` (mapping `memory_id ->
+> score`) is populated ONLY in semantic-search mode and ONLY for the
+> short-term cohort — see "Semantic-relevance score for short-term memories"
+> below.
 > `MetadataDict.memories` is typed as `CompactMemoryIdsDict` (the legacy
 > `UserMemoriesDict` content-shape union member was removed once every live
 > write path had migrated to compact IDs), so `sqlToCustomType` no longer
@@ -453,6 +471,9 @@ resolves the compact IDs **on-demand** in its JSON branch:
   IDs — the invariant ADR-017 deviation #1 established). When all referenced IDs
   fail to resolve (or none survive the exclude filter), the `"userMemories"` key
   is omitted entirely.
+
+#### Dedup mechanics across render sites
+
 - **Per-context dedup** is applied **inline at each call site** (no shared
   helper). Each site walks its message sequence newest→oldest, accumulating an
   exclude-set: for each message it applies `excludeMemoryIds = ownIds ∩ seen`
@@ -474,6 +495,8 @@ resolves the compact IDs **on-demand** in its JSON branch:
   (once at the root, once at its latest tail occurrence). The common
   (non-condensed) thread case is unaffected — there the root participates in
   the newest→oldest walk and deduplicates normally.
+
+#### Compact-format support and render sites
 
 Only the **compact format** (`{"permanentIds": [...], "shortTermIds": [...]}`)
 is supported. Old-format messages (`{"permanent": [...], "shortTerm": [...]}`,
@@ -516,6 +539,48 @@ The memories seen by the model are therefore the snapshot known at the time
 the message arrived — every message in a thread carries its own context, and
 resolution happens lazily at render time (just a cache lookup of the persisted
 IDs), deduplicated so each memory renders once per context.
+
+### Semantic-relevance score for short-term memories
+
+Each short-term memory retrieved via **semantic search** carries its
+relevance score end-to-end into the rendered `userMemories` JSON block the
+LLM sees. The score originates in `UserMemoriesRepository.searchMemories`
+as `score = 1.0 - cosine_distance` (vec0 cosine metric) and is plumbed
+injection → metadata → render without any extra DB/vector calls at render
+time:
+
+- **Injection** — `MessagePreprocessorHandler.injectMemories`, in the
+  semantic branch (`queryEmbedding` is a vector), captures
+  `{memory_id -> score}` from the `searchMemories` result and writes it
+  into `ensuredMessage.metadata["memories"]["shortTermScores"]`. The key
+  is OMITTED in latest-mode (`getLatestMemories`) fallback and never
+  populated for permanent memories (permanent entries do not flow through
+  `searchMemories` on the injection path).
+- **Render** — `EnsuredMessage.formatForLLM` reads `shortTermScores` from
+  `rawMemories` and, for each resolved short-term entry whose `memory_id`
+  is in the map, merges `"score": <float>` into the entry via a shallow
+  copy (`{**entry, "score": shortTermScores[mid]}`). The shallow copy is
+  load-bearing: entries returned by `cache.getMemoriesByIds` are direct
+  references into the LRU cache, so mutating one in place would leak the
+  `score` into subsequent renders of other messages (the
+  `test_cacheMutation_bug_shortTermScoresLeakBetweenCalls` regression
+  locks this in). Permanent entries are NEVER scored (the loop only walks
+  `shortTermIds`).
+
+**Scoping rule (locked):** the score appears ONLY for
+semantically-searched ephemeral memories. Permanent memories and
+latest-mode (`getLatestMemories`) ephemeral memories OMIT the `score`
+field entirely. The score is model-visible (lands in the `userMemories`
+JSON block). Backward compatible: old persisted messages simply lack
+`shortTermScores` → render omits `score` on those entries. No DB
+migration was needed — the score is transient per-message metadata
+carried in the existing JSON `metadata` column, not a stored column.
+
+The `CompactMemoryIdsDict.shortTermScores: NotRequired[dict[str, float]]`
+field in `internal/bot/models/message_metadata.py` is the typed surface
+of this contract; the score is also a `NotRequired[float]` on
+`SingleMemoryDict` (`"score"`) so it survives the round trip through the
+by-id cache shape.
 
 ### Permanent-memories cache
 
@@ -812,3 +877,7 @@ consolidation landed, three deploy artifacts cleaned up the legacy surface:
 - [`../handlers.md`](../handlers.md) `UserMemoriesHandler` row;
   [`../configuration.md`](../configuration.md) §`[user-memory]`;
   [`../database.md`](../database.md) for migration patterns.
+
+## Semantic Relevance Score (2026-08-11)
+
+- **User-memories relevance score (2026-08-11, IMPLEMENTED):** Ephemeral ("short-term") memories now carry a semantic-relevance score through to the LLM context. Contract: score originates in `UserMemoriesRepository.searchMemories` as `score = 1.0 - cosine_distance` (vec0 COSINE); `MessagePreprocessorHandler.injectMemories` captures `{memory_id -> score}` into `metadata["memories"]["shortTermScores"]` in semantic-search mode ONLY; `EnsuredMessage.formatForLLM` merges it into resolved short-term `SingleMemoryDict` entries (by `mid`, via shallow copy — see gotcha above). Scoping: semantic ephemeral ONLY — permanent memories and latest-mode (`getLatestMemories`) ephemeral never carry a score; the field is simply absent. No DB migration (score is transient per-message JSON metadata). Tools (`search_memories`/`add_memory`) already returned score pre-feature. Docs: `docs/llm/memories/user-memories.md`, `memories-context-dedup.md`. Terminology: code says "ephemeral" (`permanent = 0`) = user-facing "short-term".

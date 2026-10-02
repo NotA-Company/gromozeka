@@ -8,7 +8,7 @@ import logging
 import os
 import re
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, TypeVar, cast
 
 if TYPE_CHECKING:
     from telegram import Message
@@ -16,6 +16,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PayloadDict = Dict[str | int, str | int | float | bool | None]
+
+
+def replaceMatchToEnv(match: re.Match[str]) -> str:
+    """Replace environment variable placeholders with actual values.
+
+    Args:
+        match: A regex match object containing the environment variable name.
+
+    Returns:
+        str: The value of the environment variable or the original placeholder
+             if the variable is not set.
+    """
+    key = match.group(1)
+    return os.getenv(key, match.group(0))
+
+
+T = TypeVar("T")
+
+
+def substituteEnvVars(value: T) -> T:
+    """Recursively substitute environment variable placeholders in configuration values.
+
+    This function processes strings, dictionaries, and lists to replace placeholders
+    in the format ${VAR_NAME} with their corresponding environment variable values.
+
+    Args:
+        value: The configuration value to process. Can be a string, dict, list, or other type.
+
+    Returns:
+        The processed value with environment variables substituted:
+        - For strings: returns the string with placeholders replaced
+        - For dictionaries: returns a new dict with substituted values
+        - For lists: returns a new list with substituted items
+        - For other types: returns the original value unchanged
+    """
+    if isinstance(value, str):
+        return cast(T, re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)\}", replaceMatchToEnv, value))
+    elif isinstance(value, dict):
+        return cast(T, {k: substituteEnvVars(v) for k, v in value.items()})
+    elif isinstance(value, list):
+        return cast(T, [substituteEnvVars(item) for item in value])
+    return value
 
 
 def getAgeInSecs(dt: datetime.datetime) -> float:
@@ -337,6 +379,26 @@ def checkIfProperCommandName(command: str) -> bool:
     """Check if given string is proper command name for suggestion"""
 
     return re.match(r"^[a-z][a-z_0-9]*$", command) is not None
+
+
+def kebabToCamelCase(value: str) -> str:
+    """
+    Convert a kebab-case string into camelCase.
+
+    Handles single and consecutive hyphens; non-alphanumeric separators other
+    than `-` are left untouched. An empty string returns an empty string, and a
+    string with no hyphens is returned unchanged.
+
+    Args:
+        value: Kebab-case string (e.g. `"foo-bar-baz"`, `"foo--bar"`).
+
+    Returns:
+        camelCase version of `value` (e.g. `"fooBarBaz"`, `"fooBar"`).
+    """
+    parts = [p for p in value.split("-") if p]
+    if not parts:
+        return ""
+    return parts[0] + "".join(word[:1].upper() + word[1:] for word in parts[1:])
 
 
 def now() -> datetime.datetime:

@@ -1,0 +1,46 @@
+# markdown-mcp configuration for the gromozeka docs tree.
+# Minimal on purpose (zero-config dogfood): everything not set here uses the
+# built-in defaults - e5-small embeddings, the measured min_score floor,
+# no exclude patterns, and the default index location ./.markdown-mcp/index.db
+# (resolved relative to this file and covered by .gitignore).
+# Discovered by walking upward from the working directory.
+# Git-portable but complete only under --use-global-config: the
+# [embeddings] block below is commented out because this repo inherits
+# the real one (including the machine-specific recovery_command) from
+# the user-global config (~/.config/markdown-mcp/config.toml); flag-off
+# CLI use falls back to the local FastEmbedder and would pay one
+# identity rebuild on the next index or serve run.
+
+[docs]
+root = "./docs"
+exclude = ["archive/", "other/"]
+writable = true
+rescan_interval = 30
+
+[index]
+#location = "./.markdown-mcp/index.db"
+#model = "e5-small"
+
+[read]
+# Deliberate owner-ratified caps (2026-09-06), not drift.
+section_read_cap = 8192
+disk_read_cap = 65536
+
+# Remote OpenAI-compatible embeddings via the local fastembed-server.
+# Commented out on purpose: under --use-global-config this repo inherits
+# the real block - including the machine-specific recovery_command - from
+# the user-global config. Under that merge the [embeddings] table follows
+# an ownership rule: a block here carrying a provider key replaces the
+# user-global table wholesale (and must be complete on its own), a
+# provider-less block merges per-key with it, and no block inherits it
+# whole; provider = "local" opts out portably.
+# [embeddings]
+#provider = "openai"
+#base_url = "http://127.0.0.1:8788/v1"
+#query_model = "e5-small:query"
+#passage_model = "e5-small"
+#dimensions = 384
+#prefixes = "none"
+#timeout_seconds = 60
+#recovery_command = ["systemctl", "restart", "fastembed-server"]
+#recovery_cooldown_seconds = 60

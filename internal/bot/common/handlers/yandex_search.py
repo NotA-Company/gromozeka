@@ -24,7 +24,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 import html_to_markdown
-import httpx
+import httpx2 as httpx
 
 import lib.utils as utils
 import lib.yandex_search as ys
@@ -43,7 +43,6 @@ from internal.bot.models import (
 from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
@@ -55,7 +54,14 @@ from lib.ai import (
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
-from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
+from lib.ai.session import buildSessionId, hashSessionIdComponent
+from lib.cache import (
+    GenericDatabaseCache,
+    JsonKeyGenerator,
+    JsonValueConverter,
+    StringKeyGenerator,
+    StringValueConverter,
+)
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -121,7 +127,7 @@ class YandexSearchHandler(BaseBotHandler):
             folderId=ysConfig["folder-id"],
             requestTimeout=int(ysConfig.get("request-timeout", 30)),
             cache=GenericDatabaseCache(
-                database,
+                database.manager,
                 namespace=CacheType.YANDEX_SEARCH,
                 keyGenerator=SearchRequestKeyGenerator(),
                 valueConverter=JsonValueConverter(),
@@ -239,13 +245,13 @@ class YandexSearchHandler(BaseBotHandler):
         )
 
         self.urlContentCache = GenericDatabaseCache(
-            database,
+            database.manager,
             namespace=CacheType.URL_CONTENT,
             keyGenerator=StringKeyGenerator(),
             valueConverter=JsonValueConverter[Dict[str, Any]](),
         )
         self.urlContentCondensedCache = GenericDatabaseCache(
-            database,
+            database.manager,
             namespace=CacheType.URL_CONTENT_CONDENSED,
             keyGenerator=JsonKeyGenerator[Dict[str, Any]](hash=True),
             valueConverter=StringValueConverter(),
@@ -527,6 +533,10 @@ class YandexSearchHandler(BaseBotHandler):
                     chatSettings=chatSettings,
                     modelKey=ChatSettingsKey.CHAT_MODEL,
                     fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                    # D2: content-keyed — the session identity mirrors the
+                    # per-URL condensed-cache identity, so two chats
+                    # condensing the same URL share the prompt-cache bucket.
+                    sessionId=buildSessionId("url", hashSessionIdComponent(url)),
                 )
                 logger.debug(f"Condensed len is {len(mlRet.resultText)}")
                 if mlRet.status == ModelResultStatus.FINAL and mlRet.resultText:
@@ -557,20 +567,17 @@ class YandexSearchHandler(BaseBotHandler):
                 - 'error' (str): Error message if download failed
 
         Note:
-            Uses HTTP/2 (unless SOCKS5 proxy is active, which requires HTTP/1.1)
-            with a 60-second timeout, follows up to 5 redirects, and sets a
-            user agent header to avoid blocking.
+            HTTP/2 is negotiated via TLS ALPN above the SOCKS5 tunnel; httpcore2
+            supports it natively — the old httpx-socks-era disable was removed.
+            Uses HTTP/2 with a 60-second timeout, follows up to 5 redirects,
+            and sets a user agent header to avoid blocking.
         """
         try:
-            # SOCKS5 transport does not support HTTP/2; disable it when proxy is SOCKS5
             proxyKwargs = self._proxyConfig.toKwargs()
-            useHttp2 = "transport" not in proxyKwargs
-            if not useHttp2:
-                logger.warning("HTTP/2 disabled for web-fetch: SOCKS5 transport does not support HTTP/2")
 
             async with httpx.AsyncClient(
                 **proxyKwargs,
-                http2=useHttp2,
+                http2=True,
                 timeout=httpx.Timeout(60),  # Set Timeout to 1 minute for everything
                 follow_redirects=True,
                 max_redirects=5,

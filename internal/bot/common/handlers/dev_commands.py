@@ -47,6 +47,7 @@ from internal.database.models import MessageCategory
 from internal.services.cache import CacheNamespace
 from internal.services.llm.models import ExtraDataDict
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.session import buildSessionId
 
 from .base import BaseBotHandler
 
@@ -167,7 +168,7 @@ class DevCommandsHandler(BaseBotHandler):
 
         Model Information Displayed:
             - Model ID and version
-            - Temperature setting
+            - Custom parameters
             - Context size
             - Provider name
             - Tool support capability
@@ -191,7 +192,7 @@ class DevCommandsHandler(BaseBotHandler):
             modelKeyI18n = {
                 "model_id": "ID Модели",
                 "model_version": "Версия",
-                "temperature": "Температура",
+                "customParams": "Кастомные параметры",
                 "context_size": "Размер контекста",
                 "provider": "Провайдер",
                 "support_tools": "Поддержка вызова инструментов",
@@ -200,7 +201,7 @@ class DevCommandsHandler(BaseBotHandler):
             }
             replyText += f"**Модель: {modelName}**\n```{modelName}\n"
             for k, v in modelData.items():
-                if k == "extra":
+                if k in ("extra", "customParams"):
                     v = utils.jsonDumps(v, indent=2)
                 replyText += f"{modelKeyI18n.get(k, k)}: {v}\n"
 
@@ -1024,6 +1025,10 @@ class DevCommandsHandler(BaseBotHandler):
                 fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
                 callback=processIntermediateMessages,
+                # Deliberately NOT the conversation session: a replayed frozen
+                # transcript must not share a prompt-cache bucket with a live
+                # evolving thread. Keyed by the command message instead.
+                sessionId=buildSessionId("dev", str(ensuredMessage.recipient.id), ensuredMessage.messageId.asStr()),
                 extraData={
                     "ensuredMessage": ensuredMessage,
                     "typingManager": typingManager,

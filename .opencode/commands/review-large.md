@@ -11,6 +11,11 @@ command is a thin wrapper that fixes the scope (the diff under review) and the
 stopping point (Section 6 Step 1). **Read that file first** before dispatching
 anything. Section numbers referenced below correspond to it exactly.
 
+When markdown-mcp tools are available, read it via `doc_outline` + `doc_read`
+(docs-root-relative path: `llm/reviewing-large-changes.md`; resolve section
+slugs from the outline at run time, never hard-code them). Otherwise `read`
+the file directly — this step must work either way.
+
 This is a long-running command whose results are surfaced live to the user
 (not silently committed). It does NOT pause for clarification mid-flight —
 make best-effort decisions and surface assumptions in the final summary.
@@ -99,6 +104,15 @@ After all per-batch reviews are clean (no unresolved [CRITICAL] or
 the **full diff** (`git diff <base>..HEAD`) to catch cross-batch issues per
 §5.2: cross-batch inconsistencies, orphaned references, stale documentation,
 conflicting styles, missed quality gates.
+
+When markdown-mcp is available, two more inputs can serve the stale-doc
+check: `doc_lint` output (structural drift — duplicate slugs, front-matter
+issues) and `doc_search` queries against `docs/llm/` for stale claims
+(results are fresh once the incremental index that follows each
+`doc_write` / `doc_section_edit` has run). The `code-reviewer` subagent
+inherits read-only markdown-mcp tools, so it can run these itself — mention
+them in its brief. These are optional inputs, never a gate: without MCP the
+integration pass works from the diff alone.
 
 ### §6 Step 1: Present Results
 

@@ -222,6 +222,7 @@ class LLMMessageHandler(BaseBotHandler):
             keepFirstN=keepFirstN,
             keepLastN=keepLastN,
             maxTokensCoeff=maxTokensCoeff,
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
         )
         return ret
 
@@ -409,6 +410,7 @@ class LLMMessageHandler(BaseBotHandler):
                 imagePrompt,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
+                sessionId=await self.getLLMRequestSessionId(ensuredMessage),
             )
             logger.debug(
                 f"Generated image Data: {imgMLRet} for mcID: "
@@ -943,6 +945,8 @@ class LLMMessageHandler(BaseBotHandler):
                         condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                         condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
                         force=True,
+                        sessionId=await self.getLLMRequestSessionId(ensuredMessage),
+                        consumerId=str(chatId),
                     )
                     if not condensedRet:
                         logger.error("Messages condensing failed")
@@ -1057,6 +1061,7 @@ class LLMMessageHandler(BaseBotHandler):
                 "ensuredMessage": ensuredMessage,
                 "typingManager": typingManager,
             },
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
         )
 
         logger.debug(f"Request: {mReq}")

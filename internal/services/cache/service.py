@@ -32,10 +32,10 @@ from collections import OrderedDict
 from threading import RLock
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Type
 
-import internal.database.utils as dbUtils
+import lib.db.utils as dbUtils
 from internal.bot.models.message_metadata import SingleMemoryDict, convertDBMemoryToSingleMemoryDict
 from internal.bot.models.user_metadata import UserMetadataDict
-from internal.database.models import ChatInfoDict, ChatTopicInfoDict, ChatUserDict
+from internal.database.models import ChatBotStatus, ChatInfoDict, ChatTopicInfoDict, ChatUserDict
 from internal.models import MessageId
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
@@ -717,10 +717,76 @@ class CacheService:
                 title=info["title"],
                 username=info["username"],
                 isForum=info["is_forum"],
+                botStatus=info["bot_status"],
             )
         else:
             logger.error(f"No dbWrapper found, can't save chat info for {chatId}")
         logger.debug(f"Updated chat info for {chatId}")
+
+    async def isChatInaccessible(self, chatId: int) -> bool:
+        """Check if a chat is marked as inaccessible (cache-aside lookup).
+
+        Performs a cache-aside check of the chat_info.bot_status field via
+        getChatInfo (in-memory cache hit is cheap; DB read only on cache miss).
+        Returns True if the chat is unknown (fail-closed) or marked INACCESSIBLE.
+        Used by getChatAdmins to short-circuit platform API work for chats
+        already marked as dead.
+
+        Args:
+            chatId: The chat identifier to check
+
+        Returns:
+            True if the chat is unknown or marked INACCESSIBLE, False otherwise
+        """
+        chatInfo = await self.getChatInfo(chatId)
+        if chatInfo is None:
+            return True
+        return chatInfo["bot_status"] == ChatBotStatus.INACCESSIBLE
+
+    async def markChatInaccessible(self, chatId: int) -> bool:
+        """Record that the bot is inaccessible in ``chatId`` (cache + DB).
+
+        Reads the chatInfo via getChatInfo; if not found, logs an error and returns
+        False. Otherwise sets bot_status to INACCESSIBLE and persists via setChatInfo
+        (which updates the in-memory cache and writes to the DB). Called from
+        ``TheBot.getChatAdmins`` failure catch sites.
+
+        Args:
+            chatId: The chat identifier to mark as inaccessible
+
+        Returns:
+            True if the chat was found and marked INACCESSIBLE, False otherwise
+        """
+        chatInfo = await self.getChatInfo(chatId)
+        if chatInfo is None:
+            logger.error(f"No chat info found for chatId {chatId}")
+            return False
+        chatInfo["bot_status"] = ChatBotStatus.INACCESSIBLE
+        await self.setChatInfo(chatId, chatInfo)
+        return True
+
+    async def markChatActive(self, chatId: int) -> bool:
+        """Recover ``chatId`` to ACTIVE: update bot_status in cache + DB.
+
+        Reads the chatInfo via getChatInfo; if not found, logs an error and returns
+        False. Otherwise sets bot_status to ACTIVE and persists via setChatInfo
+        (which updates the in-memory cache and writes to the DB).
+
+        Args:
+            chatId: The chat identifier to mark as active
+
+        Returns:
+            True if the chat was found and marked ACTIVE, False otherwise.
+            Callers must treat this signal as best-effort and keep operability
+            logic idempotent.
+        """
+        chatInfo = await self.getChatInfo(chatId)
+        if chatInfo is None:
+            logger.error(f"No chat info found for chatId {chatId}")
+            return False
+        chatInfo["bot_status"] = ChatBotStatus.ACTIVE
+        await self.setChatInfo(chatId, chatInfo)
+        return True
 
     # # Chat Topics Info
 

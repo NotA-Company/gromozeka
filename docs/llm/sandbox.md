@@ -1,8 +1,12 @@
+---
+category: guide
+---
+
 # Gromozeka — Sandbox Code Execution Patterns
 
 > **Audience:** LLM agents
 > **Purpose:** Coding patterns, constraints, and anti-patterns for lib/sandbox/
-> **Design docs:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md)
+> **Design docs:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md), [`docs/plans/sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md)
 
 ---
 
@@ -12,14 +16,16 @@
 |--------|---------|
 | `manager.py` | `SandboxManager` singleton — sessions, runs, files, libraries, GC, health, recovery |
 | `types.py` | Public dataclasses (`RunResult`, `SessionInfo`, `ResourceLimits`, etc.) |
-| `enums.py` | `RuntimeName`, `BackendName` |
+| `enums.py` | `RuntimeName`, `BackendName`, `RunStatus`, `StagingPurpose` |
 | `config.py` | Configuration dataclasses (`SandboxConfig`, `StorageConfig`, etc.) |
 | `errors.py` | Exception hierarchy (`SandboxError` → `ConfigError`, `BackendError`, `SessionError`, `SandboxRuntimeError`, `RunError`, `LibraryError`, `FileError`, `SandboxBusy`, `SessionBusy`, `SessionDropped`) |
 | `locks.py` | Per-session mutex registry with bounded waiters and force-cancel, global run semaphore, pool flock |
 | `storage.py` | Workspace path resolution, atomic JSON writes, directory layout |
-| `gc.py` | Garbage collector for expired sessions, orphan workspaces, run records |
+| `gc.py` | Garbage collector for expired sessions, orphan workspaces, run records, stale staging artifacts under `<root>/tmp` |
 | `backends/docker.py` | Docker backend via `aiodocker==0.27.0` |
-| `runtimes/python/runtime.py` | Python runtime with `timeout` wrapper and artifact detection |
+| `runtimes/python/runtime.py` | Python runtime with `timeout` wrapper and artifact detection; `reportRun` / `stageRun` (return `StagingRun` command+mounts plans) / `updateHelperHostPath` builders for staged pool installs |
+| `runtimes/python/pool_pip_runner.py` | In-container pip runner for staged pool installs/updates (mutually exclusive `--report <file>` / `--install-into <dir>` modes, `--` before specs; mounted read-only into containers, never baked into the image) |
+| `runtimes/python/pool_staging.py` | Host-side staging module — dist-info/METADATA enumeration, RECORD parsing with jail checks, staged-delta merge, atomic pool swap, dry-run report parsing |
 | `metadata/filesystem.py` | Filesystem-backed metadata store (JSON) |
 
 ### Bot Integration
@@ -32,7 +38,8 @@ SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash comman
 - `/sandbox read <path>` — Read a file from sandbox workspace
 - `/sandbox status` — Show sandbox session status
 - `/sandbox packages` — List installed Python packages
-- `/sandbox install <packages...>` — Install Python packages (admin only)
+- `/sandbox install <packages...>` — Install Python packages into the sandbox pool (bot owner only)
+- `/sandbox update [packages...]` — Update every package in the pool (no args) or the named ones (same PEP 508 spec grammar as install; bot owner only). Reply: per-package old→new version diff (`name old → new`; `→ new (no prior version recorded)` when the old version is unknown), an `Already up to date, skipped (N): ...` line for packages the pre-filter skipped with zero download, and a note that sandbox runs started before the update keep seeing their previous pool. All-current pools reply `All sandbox packages are up to date (...).`; an empty pool replies with a pointer to `/sandbox install`; failures state that the pool is untouched and keep the stage container id for `docker logs`; a concurrent install/update replies "try again later"
 
 **LLM tools:**
 - `run_python(code)` — Execute Python code in sandbox. If needed libraries are missing, ask the admin to install them via `/sandbox install`. Returns `{"done": bool, "stdout": str | None, "stderr": str | None, "exitCode": int | None, "elapsedMs": int | None, "error": str | None}` (plus optional `"oomKilled": bool`, `"timedOut": bool`, `"signal": str` on success, `"files": [...]` if workDir has created files)
@@ -44,7 +51,7 @@ SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash comman
 **Lifecycle hooks:**
 - `CRON_JOB` — Periodic garbage collection (every 30 minutes)
 - `DO_EXIT` — Graceful shutdown: calls `SandboxManager.shutdown()` to cancel active runs and close the backend connection
-- One-time startup recovery: on first cron tick, calls `SandboxManager.recover()` to reconcile stale containers, orphaned workspaces, and stale `RUNNING` run records (marks them `FAILED`) after an unclean restart
+- One-time startup recovery: on first cron tick, calls `SandboxManager.recover()` to reconcile stale containers, orphaned workspaces, and stale `RUNNING` run records (marks them `FAILED`) after an unclean restart, and to adopt or roll back pool swaps interrupted by a crash (see [Library Pool Mutations](#library-pool-mutations-staged-install--atomic-swap))
 
 **Chat setting:**
 - `allow-sandbox` — Per-chat gate for sandbox functionality (default: false)
@@ -256,18 +263,20 @@ The container's `timeout` command sends SIGTERM at `timeoutSeconds`, then waits 
 
 `installRuntimeLibraries()` calls `_refreshPackageList()` after a successful install to ensure `listRuntimeLibraries()` reflects the newly installed packages. The refresh is wrapped in a try/except guard — a refresh failure does not cause the install to be reported as failed.
 
-### 13. Bootstrap script config lookup uses nested dict access
+Install-container lifecycle: on success the install container is removed (best-effort — a removal failure is logged but does not fail the install); on failure the container is deliberately **kept** so the operator can inspect pip output with `docker logs <containerId>` (the container id is logged in the warning). GC eventually reaps kept containers per `sandbox.gc.orphan-container-retention-minutes`.
 
-`sandbox_bootstrap.py` accesses the `sandbox` config section via `configManager.get("sandbox", {})` and then navigates nested dicts with `.get()`. **NEVER** use dotted-key access like `configManager.get("sandbox.bootstrap.starter-packages")` — ConfigManager returns nested dicts, not flat dotted-key namespaces.
+### 13. Config lookups use nested dict access
+
+Config sections are accessed via `configManager.get("sandbox", {})` and then navigated with nested `.get()` calls. **NEVER** use dotted-key access like `configManager.get("sandbox.gc.orphan-workspace-retention-minutes")` — ConfigManager returns nested dicts, not flat dotted-key namespaces.
 
 ```python
 # CORRECT — nested dict access
 sandboxConfig = configManager.get("sandbox", {})
-bootstrapConfig = sandboxConfig.get("bootstrap", {})
-packages = bootstrapConfig.get("starter-packages", [])
+gcConfig = sandboxConfig.get("gc", {})
+retentionMinutes = gcConfig.get("orphan-workspace-retention-minutes", 60)
 
 # WRONG — dotted key (ConfigManager does not support this)
-packages = configManager.get("sandbox.bootstrap.starter-packages", [])
+retentionMinutes = configManager.get("sandbox.gc.orphan-workspace-retention-minutes", 60)
 ```
 
 ### 14. Startup recovery reconciles stale state
@@ -288,17 +297,42 @@ If an exception (including `CancelledError`) occurs during container creation, s
 
 ---
 
+## Library Pool Mutations: Staged Install + Atomic Swap
+
+**pip NEVER writes into the live pool.** `/sandbox install` and `/sandbox update` share one staged core (`SandboxManager._runStagedInstall`) that mutates the Python library pool (`<storage.root-dir>/runtimes/python/libs`) as follows:
+
+1. **Dry-run pre-filter** (update only; read-only, runs BEFORE the pool lock): one container runs `pip install --dry-run --report` for the spec set; the manager parses the report host-side and compares resolved versions against pool dist-infos → outdated subset + already-current set (skipped with zero download — pip has no satisfaction check under `--target`, so the skip is ours). Report-parse failure is fail-safe: every spec is treated as outdated.
+2. **Lock**: `locks.poolLock` is held for the whole mutation phase; a concurrent install/update raises `LibraryPoolLocked` → "try again later" reply.
+3. **Copy**: host-side `shutil.copytree(pool, <root>/tmp/<runId>/newpool, symlinks=True)` — a private copy on the same filesystem as the pool (rename(2) constraint; a pre-swap `st_dev` guard raises `ConfigError` if violated). Requires ~2× pool disk headroom briefly.
+4. **Stage**: one container runs the mounted helper `pool_pip_runner.py` with `--install-into <staging>/delta`. Only the run dir's `io/` subtree (`<root>/tmp/<runId>/io`) is mounted rw at `/sandbox/staging`; **the live pool is not mounted into the container at all** — pip (the networked attack surface) only ever sees a scratch delta.
+5. **Merge** (host-side, on the private copy): for each staged dist-info, delete the copy's old dist-info files per the old RECORD **in full** (jail-checked: never deletes outside the pool root; symlinked entries are unlinked, never their targets; an unreadable old RECORD skips that package's deletion entirely), remove the old dist-info dir, then overlay the staged files. Installing an already-present package is thereby a clean re-install — the pre-fix behavior (pip `--target` without `--upgrade` skips code replacement but still writes the new dist-info → lying metadata + duplicates + stale code) is gone, and pre-existing duplicate dist-infos are healed for free.
+6. **Swap**: two renames — `pool → <tmp>/<runId>/oldpool`, then `newpool → pool` — with inline rollback. Any failure in steps 3-5 leaves the live pool 100% untouched; only staging garbage under `<root>/tmp/<runId>` remains.
+7. **Post-swap**: `_refreshPackageList` (best-effort; `LibraryUpdateResult.metadataRefreshed` flags a stale `packages.json`) and the old→new diff, computed from before/after host-side pool enumerations (`packages.json` is derived metadata, not the diff source).
+
+Invariants and operational facts:
+
+- **Pool-lock placement (load-bearing, pinned by regression tests):** the flock file lives at `<root>/runtimes/python/pool.lock` — a **sibling** of the swapped `libs/` directory, never inside it. A waiter holding the old inode's lock must not be silently excluded by a swap that replaces the directory containing the lock — therefore `recover()` and any future refactor must never swap the whole `runtimes/python` directory.
+- **Crash window between the two renames:** a hard crash there leaves no pool at the `libs` path; `recover()` (run once on the first cron tick, plus opportunistically before updates) adopts a surviving `<root>/tmp/*/newpool` — renames start only after the merge completed, so it is a complete pool — or restores the sibling `oldpool`. Containers carry a `sandbox.stagingRunId=<runId>` label so GC can tell in-flight staging containers from orphans.
+- **Staging GC:** a `collectAll` pass reaps `<root>/tmp/*` entries older than `sandbox.gc.orphan-workspace-retention-minutes` (default 60 min — in-flight runs take minutes at most, and millisecond-lived `.tmp-*` metadata temp files are never caught).
+- **In-flight runs:** run containers bind-mount the pool read-only, and Linux bind mounts pin the inode — containers that mounted the pool keep a consistent OLD view after the swap; runs started later get the new pool. Hence the reply note "sandbox runs started before this update keep seeing their previous pool".
+- **Repo checkout required on the host** for the helper mount — the host path is derived as the `install-dockerfile` parent's `pool_pip_runner.py`; a missing helper file raises `ConfigError` before any container starts.
+
+Design and rationale: [`docs/plans/sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md).
+
+---
+
 ## Security Considerations
 
-### Package installation is admin-only
+### Package installation and updates are admin-only
 
-Package installation in the sandbox is an admin-only operation. End users cannot inject arbitrary package specs (URL-based, editable installs, etc.) — only the bot administrator can install packages via the bootstrap script or admin commands.
+Package installation and updates in the sandbox are admin-only operations. End users cannot inject arbitrary package specs (URL-based, editable installs, etc.) — only the bot administrator can install or update packages via admin commands. `/sandbox install` and `/sandbox update` are additionally bot-owner-only at the handler layer; there is deliberately **no LLM tool** for either (destructive, owner-only — see the non-goals in the update design doc).
 
-The `installRuntimeLibraries` method in `SandboxManager` enforces this security boundary through:
+The `installRuntimeLibraries` and `updateRuntimeLibraries` methods in `SandboxManager` enforce this security boundary through:
 
-- **Input validation**: The `_validatePackageSpec` method rejects specs containing shell metacharacters (`&`, `|`, `;`, backticks, command substitution) or flag-like specs starting with `-`
-- **Controlled execution**: The `pip install` command is constructed from pre-validated package names; spec-level injection is not possible
-- **Admin-only access**: The method is only called from admin contexts (bootstrap scripts, admin commands) and never exposed to end-user code execution
+- **Input validation**: The `_validatePackageSpec` method rejects specs containing shell metacharacters (`&`, `|`, `;`, backticks, command substitution) or flag-like specs starting with `-`; pool-derived update-all names are additionally grammar-validated (`isValidCanonicalName`) before entering any argv
+- **Controlled execution**: The pip command is constructed as a single argv list (no shell) from pre-validated specs, with a `--` separator blocking pip option injection; spec-level injection is not possible
+- **Pool isolation**: The live pool is never mounted into a networked container — pip only ever writes to a scratch staging delta (see [Library Pool Mutations](#library-pool-mutations-staged-install--atomic-swap))
+- **Admin-only access**: The methods are only called from admin contexts (admin commands) and never exposed to end-user code execution
 
 This design ensures that package installation remains a privileged operation, protecting against supply chain attacks that would otherwise allow end users to introduce arbitrary Python code via malicious package specs.
 
@@ -321,8 +355,16 @@ DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
 - 10 Docker integration tests in `tests/lib/sandbox/backends/test_docker.py` (class `TestDockerBackendIntegration`)
 - Gated at the class level with `@skipUnlessDocker` (= `pytest.mark.skipif(not DOCKER_AVAILABLE, ...)`) plus `@pytest.mark.slow`
 - Other classes in the same file (`TestGetClientClientSessionLeak`, `TestRunOneshotContainerCleanup`) are mocked unit tests — they run without Docker
-- `~/.gromozeka-tests/` is used by `tests/scripts/test_sandbox_bootstrap.py` (bootstrap integration tests), not by the Docker backend tests
 - After tests, verify NO "Unclosed connector" warnings in output
+
+### Real-Docker end-to-end install test
+`tests/lib/sandbox/test_install_integration.py` drives `SandboxManager.prepareRuntime()` + `installRuntimeLibraries()` against a real daemon — image build from the repo runtime Dockerfiles, staged-install container, host-side merge + atomic pool swap, and `packages.json` refresh. Run it with the same gate:
+```bash
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
+./venv/bin/pytest tests/lib/sandbox/test_install_integration.py -v -m slow
+```
+
+Two desktop-daemon deviations (kept for portability): the workspace lives under `~/.gromozeka-tests/` (unique per run — the Docker VM only shares `/Users` with the host, not `/tmp`), and containers run `0:0` (Colima presents host binds root-owned, so a non-root container cannot write the staging delta). Image tags and the workspace directory are derived from a per-run UUID; cleanup removes exactly that run's image/container/workspace set and re-verifies the removal against the daemon.
 
 ### Singleton state in tests
 Reset singleton state between tests:

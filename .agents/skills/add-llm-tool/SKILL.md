@@ -70,11 +70,23 @@ destructive tool; a safe read-only tool needs only the first three.
 
 Load `read-project-docs` first; specifically:
 
+**Mechanism (conditional preference, never exclusive):** when the markdown-mcp
+MCP tools (`doc_outline`, `doc_read`) are available, prefer them for the
+`./docs` targets below, using docs-root-relative paths — `doc_outline("llm/index.md")`
+first to resolve section slugs, then targeted
+`doc_read(file_path="llm/index.md", section_slug=…)`. Resolve `section_slug`
+values at use time — never hard-code them. Without MCP, plain `read` on the
+linked relative paths is an exact substitute.
+
 - [`docs/llm/index.md`](../../../docs/llm/index.md) §5 — LLM Tool Registration.
+  With MCP: `doc_outline("llm/index.md")` + targeted `doc_read(section_slug=…)`
+  of §5 rather than a whole-file read.
 - [`docs/llm/services.md`](../../../docs/llm/services.md) — `registerTool`
   signature and the `useTools` per-tool filtering contract.
 - [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) §1.5 — the decision tree.
 - [`AGENTS.md`](../../../AGENTS.md) — naming rules, no-`Any` rule, regression-test rule.
+  Manual `read` only — it sits at the repo root, outside the markdown-mcp docs
+  root, so no `doc_*` tool reaches it.
 
 ## Site 1 — Add the `ToolName` StrEnum member
 
@@ -396,7 +408,11 @@ setting is on (so you don't over-disable).
 ## Step 6 — Documentation
 
 Load [`update-project-docs`](../update-project-docs/SKILL.md) for the full matrix.
-The surfaces to touch:
+All surfaces below sit inside the markdown-mcp docs root: when the MCP tools are
+available, update them via `doc_section_edit` — `doc_read` the target section
+first for the CAS token, resolve the slug from `doc_outline` at use time, and
+check `reindex.status` after the edit. Without MCP, plain `read` + `edit` is the
+exact substitute. The surfaces to touch:
 
 - [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) — the handler's row in
   the handler table: list the new tool (`ToolName.XXX`), its parameters, and the

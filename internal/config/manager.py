@@ -24,10 +24,9 @@ Example:
 
 import logging
 import os
-import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar, cast
+from typing import Any, Dict, List, Optional
 
 import tomli
 
@@ -36,48 +35,6 @@ from lib.proxy import ProxyConfigDict
 from lib.rate_limiter import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
-
-
-def replaceMatchToEnv(match: re.Match[str]) -> str:
-    """Replace environment variable placeholders with actual values.
-
-    Args:
-        match: A regex match object containing the environment variable name.
-
-    Returns:
-        str: The value of the environment variable or the original placeholder
-             if the variable is not set.
-    """
-    key = match.group(1)
-    return os.getenv(key, match.group(0))
-
-
-T = TypeVar("T")
-
-
-def substituteEnvVars(value: T) -> T:
-    """Recursively substitute environment variable placeholders in configuration values.
-
-    This function processes strings, dictionaries, and lists to replace placeholders
-    in the format ${VAR_NAME} with their corresponding environment variable values.
-
-    Args:
-        value: The configuration value to process. Can be a string, dict, list, or other type.
-
-    Returns:
-        The processed value with environment variables substituted:
-        - For strings: returns the string with placeholders replaced
-        - For dictionaries: returns a new dict with substituted values
-        - For lists: returns a new list with substituted items
-        - For other types: returns the original value unchanged
-    """
-    if isinstance(value, str):
-        return cast(T, re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)\}", replaceMatchToEnv, value))
-    elif isinstance(value, dict):
-        return cast(T, {k: substituteEnvVars(v) for k, v in value.items()})
-    elif isinstance(value, list):
-        return cast(T, [substituteEnvVars(item) for item in value])
-    return value
 
 
 class ConfigManager:
@@ -127,7 +84,7 @@ class ConfigManager:
         self.configPath: str = configPath
         self.configDirs: List[str] = configDirs or []
         utils.load_dotenv(path=dotEnvFile)
-        self.config: Dict[str, Any] = substituteEnvVars(self._loadConfig())
+        self.config: Dict[str, Any] = utils.substituteEnvVars(self._loadConfig())
 
         rootDir: Optional[str] = self.config.get("application", {}).get("root-dir", None)
         if rootDir is not None:
@@ -278,8 +235,11 @@ class ConfigManager:
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key.
 
+        The key is treated as a literal TOML key - no dot navigation or
+        splitting is performed.
+
         Args:
-            key: The configuration key to retrieve. Supports dot notation for nested keys.
+            key: The configuration key to retrieve (literal match only).
             default: The default value to return if the key is not found. Defaults to None.
 
         Returns:
@@ -287,8 +247,8 @@ class ConfigManager:
 
         Example:
             >>> config_manager = ConfigManager()
-            >>> bot_token = config_manager.get("bot.token")
-            >>> db_type = config_manager.get("database.type", "sqlite")
+            >>> bot_config = config_manager.get("bot")
+            >>> db_config = config_manager.get("database", {})
         """
         return self.config.get(key, default)
 
@@ -505,6 +465,25 @@ class ConfigManager:
         """
         return self.get("stats", {})
 
+    def getStatsPagesConfig(self) -> Dict[str, Any]:
+        """Get stats-pages-specific configuration.
+
+        Returns:
+            A dictionary containing stats-pages configuration settings including
+            enabled flag, ttl-hours, ratelimiter-queue, and command templates.
+            Returns an empty dict if not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> stats_pages_config = config_manager.getStatsPagesConfig()
+            >>> print(stats_pages_config.get("enabled"))
+            False
+        """
+        statsSection = self.get("stats", {})
+        if isinstance(statsSection, dict):
+            return statsSection.get("pages", {})
+        return {}
+
     def getProxyConfig(self) -> ProxyConfigDict:
         """Get global proxy configuration.
 
@@ -537,3 +516,20 @@ class ConfigManager:
             ``defaults`` keys.
         """
         return self.config.get("search-history", {})
+
+    def getSttConfig(self) -> Dict[str, Any]:
+        """Get Speech-to-Text (STT) service configuration.
+
+        Returns:
+            A dictionary containing STT service configuration including
+            enabled flag, provider settings, API credentials, and
+            operational parameters (timeouts, caps, concurrency).
+            Returns an empty dict if not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> stt_config = config_manager.getSttConfig()
+            >>> print(stt_config.get("enabled"))
+            False
+        """
+        return self.get("stt", {})

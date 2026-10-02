@@ -3,10 +3,11 @@
 Covers the cleanup path refactored to delegate to
 ``ChatEmbeddingsRepository.deleteObsoleteModelEmbeddings``: when a chat's
 embedding model changes, the CRON job calls the repository method (which
-removes stale rows from both ``message_embeddings`` and the
-``vec_message_embeddings_{N}`` virtual tables). Cleanup is gated by an
-in-memory tracker (``_embeddingModelTracker``) so it only fires once per
-model switch — subsequent ticks with the same model are no-ops.
+nulls obsolete ``chat_messages.model_id`` values and removes the matching
+rows from the ``vec_message_embeddings_{N}`` virtual tables). Cleanup is
+gated by an in-memory tracker (``_embeddingModelTracker``) so it only
+fires once per model switch — subsequent ticks with the same model are
+no-ops.
 
 Repo-level concerns (vector search availability, ``listTables`` support,
 provider-fetch failures) are exercised at the repository level and are

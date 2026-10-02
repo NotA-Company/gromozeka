@@ -1,3 +1,9 @@
+---
+description: "Decision trees for common coding tasks, plus the anti-patterns, subtle gotchas, and lessons-learned that bite agents in this repo"
+tags: [agent]
+category: guide
+---
+
 # Gromozeka — Common Tasks & Anti-Patterns
 
 > **Audience:** LLM agents  
@@ -122,6 +128,9 @@ START
 │           - docs/database-schema.md (human-oriented)
 │           - docs/database-schema-llm.md (LLM-oriented)
 │           - docs/llm/database.md (migration pattern + version list)
+│         All three live inside the markdown-mcp docs root: when markdown-mcp
+│           is available, update them via doc_section_edit (doc_read first for
+│           the CAS token). The three-in-sync rule is unchanged.
 │         Add migration entry with description.
 │         Update affected table schemas.
 │
@@ -304,7 +313,7 @@ Two complementary tools exist for replaying LLM interactions outside the normal 
 
 ## 2. Anti-Patterns — NEVER Do These
 
-### ❌ Direct singleton construction
+### Direct singleton construction
 ```python
 # WRONG — creates second instance with empty state
 cache = CacheService()
@@ -313,7 +322,7 @@ cache = CacheService()
 cache = CacheService.getInstance()
 ```
 
-### ❌ Calling platform APIs directly from handlers
+### Calling platform APIs directly from handlers
 ```python
 # WRONG — tightly couples handler to Telegram
 await self.tgBot.send_message(...)
@@ -322,7 +331,7 @@ await self.tgBot.send_message(...)
 await self.sendMessage(ensuredMessage, messageText="...", messageCategory=MessageCategory.BOT)
 ```
 
-### ❌ Adding `LLMMessageHandler` before the last position
+### Adding `LLMMessageHandler` before the last position
 ```python
 # WRONG — LLMMessageHandler MUST be last
 self.handlers = [
@@ -337,7 +346,7 @@ self.handlers = [
 ]
 ```
 
-### ❌ Using `cd` to change into subdirectory
+### Using `cd` to change into subdirectory
 ```bash
 # WRONG
 cd internal && python test.py
@@ -346,7 +355,7 @@ cd internal && python test.py
 ./venv/bin/python3 internal/test.py
 ```
 
-### ❌ Missing docstrings
+### Missing docstrings
 ```python
 # WRONG — no docstring
 def getChatSettings(self, chatId: int) -> ChatSettingsDict:
@@ -365,7 +374,7 @@ def getChatSettings(self, chatId: int) -> ChatSettingsDict:
     return self.cache.get(chatId)
 ```
 
-### ❌ Using snake_case for variables/functions
+### Using snake_case for variables/functions
 ```python
 # WRONG — snake_case is not allowed for variables/functions
 chat_settings = getChatSettings()
@@ -378,7 +387,7 @@ def getChatSettings():
     ...
 ```
 
-### ❌ Using camelCase for constants
+### Using camelCase for constants
 ```python
 # WRONG
 defaultThreadId = 0
@@ -387,7 +396,7 @@ defaultThreadId = 0
 DEFAULT_THREAD_ID: int = 0
 ```
 
-### ❌ Skipping `make format lint` before committing
+### Skipping `make format lint` before committing
 ```bash
 # WRONG workflow
 # Edit file → git commit
@@ -396,7 +405,7 @@ DEFAULT_THREAD_ID: int = 0
 # Edit file → make format lint → make test → git commit
 ```
 
-### ❌ Not resetting singletons in tests
+### Not resetting singletons in tests
 ```python
 # WRONG — may carry state from previous test
 def testSomething():
@@ -412,7 +421,7 @@ def resetSingleton():
     LLMService._instance = None
 ```
 
-### ❌ Returning wrong `HandlerResultStatus`
+### Returning wrong `HandlerResultStatus`
 ```python
 # WRONG — FINAL stops the chain; if other handlers should run
 return HandlerResultStatus.FINAL  # Stops all subsequent handlers
@@ -422,7 +431,7 @@ return HandlerResultStatus.SKIPPED  # Let others handle it
 return HandlerResultStatus.NEXT     # I processed it, but continue
 ```
 
-### ❌ Forgetting to check if feature is enabled in config
+### Forgetting to check if feature is enabled in config
 ```python
 # WRONG — handler always active even when disabled
 class WeatherHandler(BaseBotHandler):
@@ -435,7 +444,7 @@ if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
     )
 ```
 
-### ❌ Not using `Optional` type for nullable values
+### Not using `Optional` type for nullable values
 ```python
 # WRONG
 def getChatInfo(self, chatId: int) -> ChatInfoDict:
@@ -446,7 +455,7 @@ def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
     ...
 ```
 
-### ❌ Creating migration with wrong version number
+### Creating migration with wrong version number
 ```bash
 # WRONG — assuming version without checking
 # Just created migration_005.py without checking existing migrations
@@ -459,6 +468,8 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 ---
 
 ## 3. Subtle Gotchas
+
+### 3.1 Data shapes, settings keys, and platform quirks
 
 | Gotcha | Description | Solution |
 |---|---|---|
@@ -482,15 +493,48 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.2 for complete rules and example |
 | `sqlToCustomType()` handles `Optional[T]` | Returns `(True, None)` for `Optional[...]` when data is `None` | Properly unwraps Union types and handles `None` values for nullable columns |
 | `TTLDict.set(key, value, ttl=None)` clears expiration | Passing `ttl=None` explicitly removes any previous expiration, making the entry never expire | If you want to keep the existing TTL when rewriting a value, use `d.set(key, value)` (no `ttl` arg) to apply `defaultTTL`, or pass the desired TTL explicitly |
-| `ConfigManager.get()` returns nested dicts | `configManager.get("sandbox")` returns a nested dict, not a flat namespace | Use `.get("key", {})` to navigate nested sections; **never** use dotted keys like `configManager.get("sandbox.bootstrap.starter-packages")` |
+
+#### MessageId platform IDs
+
+`MessageId` (`internal/models/types.py`) wraps `int | str`: Telegram message IDs are `int`, Max
+message IDs are `str` — never assume a plain `int`. Wrap values with `MessageId(...)`, and pick the
+accessor per destination: `.asInt()` for Telegram API calls, `.asStr()` for Max/SQL, `.asMessageId()`
+for JSON serialization.
+
+#### Chat-settings return shapes by layer
+
+Handler-facing `getChatSettings()` (and `CacheService`) returns `ChatSettingsDict` —
+`Dict[ChatSettingsKey, ChatSettingsValue]`. Values are `ChatSettingsValue` objects read via
+`.toBool()` / `.toStr()` / `.toInt()` / `.toFloat()` / `.toList()` / `.toModel()`, never tuple indexing
+(`ChatSettingsValue` is not subscriptable). The `(value, updatedBy)` tuple shape exists ONLY at the
+DB-repo layer (`self.db.chatSettings.getChatSettings()` returns `Dict[str, tuple[str, int]]`).
+Handler writes are keyword-only: `setChatSetting(..., *, user: MessageSender)`; `updatedBy=` is the
+repo-layer keyword.
+
+### 3.2 Config access, LLM replies, search, and subprocess handling
+
+| Gotcha | Description | Solution |
+|---|---|---|
+| `ConfigManager.get()` returns nested dicts | `configManager.get("sandbox")` returns a nested dict, not a flat namespace | Use `.get("key", {})` to navigate nested sections; **never** use dotted keys like `configManager.get("sandbox.gc.orphan-container-retention-minutes")` |
 | `_sendLLMChatMessage` returns `LLMReplyOutcome`, not `bool` | The LLM reply helper now returns the `LLMReplyOutcome` StrEnum (`SENT` / `SKIPPED_BY_MODEL` / `ERROR`) so `handleRandomMessage` can distinguish a model abstention from a send failure. All three members are truthy strings, so `if not await self._sendLLMChatMessage(...):` (old bool-truthiness idiom) is always-False and silently breaks error handling. | Compare explicitly: `if await self._sendLLMChatMessage(...) != LLMReplyOutcome.SENT:`. The same applies to any new caller. See [`handlers.md`](handlers.md) "Random-answer context & model abstention". |
 | Embedding model resolution is single-tier | Both `ChatSearchHandler._dtCronJob` (backfill) and `MessagePreprocessorHandler`'s embedding dispatch resolve the model from the chat's `EMBEDDING_MODEL` setting only (default `"local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` from `bot-defaults.toml` `[bot.defaults].embedding-model`). Empty / unresolvable / unsupported model is a silent no-op for that chat on that tick. | The previous two-tier chain (chat setting → hard-coded fallback) and the `BackfillWorker._resolveEmbeddingModelName` helper are gone — the model comes from the chat settings, and a missing model is a no-op rather than a fallback. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the dispatch is now unconditional whenever `[search-history].enabled` (cached in `_searchEnabled` at construction time) and `EMBEDDINGS_ENABLED` are both on. |
 | `/search` argument parser DSL | `_parseSearchArgs` in `chat_search.py` parses a `key: value` DSL: known keys (`keywords`, `user`, `days`, `category`, `thread`) are matched by `startswith(key + ":")`, a value spans multiple tokens until the next known key, bare words merge into `keywords`, first occurrence wins for non-`keywords` keys, multiple `keywords:` occurrences concatenate | Use the documented `key: value` (with space) form; remember the `keywords` key is special — its values merge rather than first-wins |
 | Fire-and-forget subprocesses must use `DEVNULL` | Subprocesses launched via `asyncio.create_subprocess_exec` that are intentionally not awaited (fire-and-forget) must redirect stdout/stderr to `subprocess.DEVNULL`. Using `PIPE` causes pipe-buffer deadlock when the buffer fills and no coroutine drains it. | Always pass `stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL` for fire-and-forget subprocesses |
 | Timed-out subprocesses must be explicitly killed | When a subprocess launched with `asyncio.wait_for()` times out, the `TimeoutError` does not kill the child process. Without explicit `process.kill()`, the process becomes a zombie. | In the `except asyncio.TimeoutError` block, call `process.kill()` then `await process.wait()` |
 | `loop.run_until_complete()` for sync-context startup | `GromozekBot.__init__` runs synchronously, but proxy start commands are async. Use `loop.run_until_complete(coro)` on the shared loop passed from `main()`, NOT `asyncio.run()` (which creates a new event loop and breaks subprocess child-watcher integration). | Use `loop.run_until_complete(coro)` on the shared event loop for one-shot async calls from sync init. |
-| Vector-search provider capability is checked at connect time | `SQLite3Provider.isVectorSearchSupported()` reflects whether `sqlite-vec` loaded successfully during `connect()`; `vectorSearch()` auto-connects when called on a lazily-connected provider. Callers must not assume the extension is available just because the package is importable — a provider opened `readonly=True` cannot create vec0 tables, and a missing vec0 table raises and triggers the numpy fallback rather than being created on the fly. | Treat `isVectorSearchSupported()` as the single source of truth; never call `vectorSearch()` / `createVectorTable()` without first checking it, and never attempt vec0 DDL from a `readonly=True` provider. |
+
+### 3.3 Vector search and metadata writes
+
+| Gotcha | Description | Solution |
+|---|---|---|
+| Vector-search provider capability is checked at connect time | `SQLite3Provider.isVectorSearchSupported()` reflects whether `sqlite-vec` loaded successfully during `connect()`; `vectorSearch()` auto-connects when called on a lazily-connected provider. Callers must not assume the extension is available just because the package is importable — a provider opened `readonly=True` cannot create vec0 tables, and a missing vec0 table raises and is caught by the caller (which returns `[]` — the numpy fallback paths in both `chat_search.py` and `user_memories.py` were retired in `migration_025`) rather than being created on the fly. | Treat `isVectorSearchSupported()` as the single source of truth; never call `vectorSearch()` / `createVectorTable()` without first checking it, and never attempt vec0 DDL from a `readonly=True` provider. |
 | `setUserMetadata(isUpdate=True)` shallow-merges at the top level | `setUserMetadata(chatId, userId, metadata, isUpdate=True)` does a one-level merge (`{**oldMetadata, **newMetadata}`, `BaseBotHandler`). Passing a partial nested sub-dict like `{"memoryRefinement": {"0": {...}}}` **replaces the entire `memoryRefinement` sub-dict**, silently wiping every other thread's summary. | To write a nested sub-dict into `chat_users.metadata`, bypass `setUserMetadata` and read-modify-write via `CacheService`: `metadata = await self.cache.getUserMetadata(...)`; mutate only the target nested key; `await self.cache.updateUserMetadata(chatId, userId, metadata)` (full-dict replace, NO merge). This is the write path the memory-refinement feature uses (`user_memories.py` `_runSingleRefinement`'s inlined cursor-persist block; formerly a standalone `_persistMemoryEntry` method). **The full RMW must be wrapped in `async with self.cache.chatUserMetadataLock():`** to serialize against concurrent metadata writers (lost-update race otherwise) — both `setUserMetadata(isUpdate=True)` and `_runSingleRefinement`'s cursor-persist block already do this. Never call `self.db.chatUsers.updateUserMetadata(...)` directly from handlers — it bypasses the cache and desyncs it (see ADR-015). |
+
+### 3.4 Thread lifetime and cache staleness
+
+| Gotcha | Description | Solution |
+|---|---|---|
+| Non-daemon threads from dependencies can hang process exit | httpx2's default `verify=True` builds a `truststore.SSLContext` (an `ssl.SSLContext` **subclass**), so anyio's `TLSStream.wrap()` runs every TLS `wrap_bio` in a single NON-daemon "AnyIO worker thread". anyio stops that worker only after its current function returns; one blocked forever (e.g. on a `threading` lock) survives the whole graceful shutdown, and `threading._shutdown()`'s join then hangs the process after "Bot stopped by user" — Ctrl+C appears to do nothing. Public `atexit` handlers fire only AFTER the hanging join, so they cannot help; only `threading._register_atexit` callbacks run before it. | `main.py` installs a stranded-thread exit guard (`installExitGuard`, called first thing in `main()`): via `threading._register_atexit` it runs after executor cleanup but before the joins, waits a grace period, dumps straggler stacks, and force-exits (`os._exit(0)`). When debugging an exit hang: `sample <pid>` (works without root on macOS) shows C-level thread stacks; a `-m cProfile` run's profile file is dumped before finalization and remains readable. Any new code offloading blocking work must prefer `asyncio.to_thread` (executor threads are cleaned up by `concurrent.futures`) over `anyio.to_thread` (non-daemon worker). |
 | Cached `chat_users` rows have a stale `messages_count` | `messages_count` is incremented by a raw SQL `UPDATE` inside `ChatMessagesRepository.saveChatMessage` (`internal/database/repositories/chat_messages.py`), bypassing `CacheService.getChatUser`/`updateChatUser`. A cached row's count therefore drifts by however many messages the user has sent since cache load. | Callers needing an accurate count SHOULD use the conditional-refresh helper `SpamHandler._getUserInfoFreshIfMessagesLessThan(chatId, userId, threshold)` rather than an unconditional `refresh=True`. Because `messages_count` is monotonic non-decreasing, the helper re-fetches ONLY when the cached count is strictly below the threshold (an at-or-above value stays valid); so established users don't pay a per-message DB hit. The two correctness-critical readers (`SpamHandler.checkSpam` and `markAsSpam`, gating on `AUTO_SPAM_MAX_MESSAGES`) use it: `checkSpam` (a `>=` gate) passes the threshold unchanged; `markAsSpam` (a STRICT `>` gate) passes `threshold + 1` so the boundary case (`cached == maxSpamMessages`) still refreshes, closing the false-ban window. A direct `getChatUser(..., refresh=True)` remains available when genuinely needed. Additionally, `updateChatUser`'s skip-when-unchanged optimization means `updated_at` no longer refreshes on a no-op call (only the raw `messages_count` increment still bumps `updated_at` on every message), and `updateChatUser` leaves the cache cold on a miss (no warming re-read). See ADR-015. |
 
 ---

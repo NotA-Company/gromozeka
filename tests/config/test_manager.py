@@ -875,6 +875,135 @@ ttl = 3600
         weatherConfig = manager.getOpenWeatherMapConfig()
         assert weatherConfig == {}
 
+    def testGetStatsPagesConfig(self, tempDir: Path) -> None:
+        """Test getting stats-pages configuration (via inline lookup).
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
+        config = """
+        [bot]
+        token = "test_token"
+
+        [stats.pages]
+        enabled = true
+        ttl-hours = 24
+        ratelimiter-queue = "stats-pages"
+        """
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+
+        statsPagesConfig = manager.getStatsPagesConfig()
+
+        assert "enabled" in statsPagesConfig
+        assert statsPagesConfig["enabled"] is True
+        assert statsPagesConfig["ttl-hours"] == 24
+
+    def testGetStatsPagesConfigEmpty(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting stats-pages config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
+        configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
+        manager = ConfigManager(str(configPath))
+
+        statsPagesConfig = manager.getStatsPagesConfig()
+        assert statsPagesConfig == {}
+
+    def testGetDotNavigation(self, tempDir: Path) -> None:
+        """Test ConfigManager.get() with literal-key semantics (dot notation removed).
+
+        Tests:
+        - Dotted string does literal key lookup (no navigation)
+        - Dotted string returns default when no literal key exists
+        - getStatsPagesConfig() still returns the merged [stats.pages] table via inline lookup
+        - Edge cases: [stats] present but no pages → {}, stats absent → {}
+        """
+        config = """
+        [bot]
+        token = "test_token"
+
+        [stats.pages]
+        enabled = true
+        ttl-hours = 24
+
+        [database]
+        path = ":memory:"
+
+        [models]
+        default_model = "gpt-4"
+        temperature = 0.7
+        """
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+
+        # Test dotted string does LITERAL key lookup (no navigation)
+        # There is no literal "stats.pages" key, so it should return None/default
+        assert manager.get("stats.pages") is None
+        assert manager.get("stats.pages", "default") == "default"
+
+        # Test dotted string returns default for nonexistent keys
+        assert manager.get("nonexistent.nested.key") is None
+        assert manager.get("nonexistent.nested.key", "default") == "default"
+
+        # Test non-dotted key lookup still works
+        assert manager.get("bot") is not None
+        assert manager.get("bot")["token"] == "test_token"
+        assert manager.get("nonexistent") is None
+        assert manager.get("nonexistent", "default") == "default"
+
+        # Test getStatsPagesConfig() still returns merged [stats.pages] table via inline lookup
+        statsPagesConfig = manager.getStatsPagesConfig()
+        assert statsPagesConfig is not None
+        assert statsPagesConfig["enabled"] is True
+        assert statsPagesConfig["ttl-hours"] == 24
+
+    def testGetStatsPagesConfigEdgeCases(self, tempDir: Path) -> None:
+        """Test getStatsPagesConfig() edge cases after dot-notation removal.
+
+        Tests:
+        - [stats] present but no pages → {}
+        - stats absent → {}
+        - [stats.pages] present → returns the table
+        """
+        # Test stats present but no pages
+        config1 = """
+        [bot]
+        token = "test_token"
+
+        [stats]
+        enabled = false
+        """
+        configPath1 = createConfigFile(tempDir, "config1.toml", config1)
+        manager1 = ConfigManager(str(configPath1))
+        assert manager1.getStatsPagesConfig() == {}
+
+        # Test stats absent
+        config2 = """
+        [bot]
+        token = "test_token"
+        """
+        configPath2 = createConfigFile(tempDir, "config2.toml", config2)
+        manager2 = ConfigManager(str(configPath2))
+        assert manager2.getStatsPagesConfig() == {}
+
+        # Test stats.pages present
+        config3 = """
+        [bot]
+        token = "test_token"
+
+        [stats.pages]
+        enabled = true
+        ttl-hours = 48
+        """
+        configPath3 = createConfigFile(tempDir, "config3.toml", config3)
+        manager3 = ConfigManager(str(configPath3))
+        statsPagesConfig3 = manager3.getStatsPagesConfig()
+        assert statsPagesConfig3["enabled"] is True
+        assert statsPagesConfig3["ttl-hours"] == 48
+
 
 # ============================================================================
 # Error Handling Tests

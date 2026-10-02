@@ -28,11 +28,10 @@ Key Components:
     SpamRepository: Handles spam detection and filtering data.
     UserMemoriesRepository: Manages the unified ``user_memories`` store
         (per-(chat, user, thread) facts/preferences/events/relationships/bio).
-    WebhookUpdatesRepository: Stores and consumes incoming Max webhook payloads.
 
 Usage Example:
     >>> from internal.database.repositories import ChatInfoRepository
-    >>> from internal.database.manager import DatabaseManager
+    >>> from lib.db.manager import DatabaseManager
     >>>
     >>> db_manager = DatabaseManager()
     >>> chat_repo = ChatInfoRepository(db_manager)
@@ -62,10 +61,10 @@ from .chat_users import ChatUsersRepository
 from .common import CommonFunctionsRepository
 from .delayed_tasks import DelayedTasksRepository
 from .divinations import DivinationsRepository
+from .embedding_models import EmbeddingModelsRepository
 from .media_attachments import MediaAttachmentsRepository
 from .spam import SpamRepository
 from .user_memories import UserMemoriesRepository
-from .webhook_updates import WebhookUpdatesRepository
 
 __all__ = [
     "BaseRepository",
@@ -80,8 +79,8 @@ __all__ = [
     "CommonFunctionsRepository",
     "DelayedTasksRepository",
     "DivinationsRepository",
+    "EmbeddingModelsRepository",
     "MediaAttachmentsRepository",
     "SpamRepository",
     "UserMemoriesRepository",
-    "WebhookUpdatesRepository",
 ]

@@ -11,7 +11,7 @@ Usage Example:
     .. code-block:: python
 
         from internal.database.migrations.base import BaseMigration
-        from internal.database.providers import BaseSQLProvider
+        from lib.db.providers import BaseSQLProvider
 
         class CreateUsersTable(BaseMigration):
             version = 1
@@ -35,7 +35,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..providers import BaseSQLProvider
+    from lib.db.providers import BaseSQLProvider
 
 
 class BaseMigration(ABC):

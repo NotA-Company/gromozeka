@@ -5,27 +5,47 @@ Covers:
 - Orphan workspace directories are removed only when older than retention;
   recent orphans are kept.
 - Expired run records and directories are removed; recent ones are kept.
+- Stale staging artifacts under tmp/ are reaped by age; fresh ones survive
+  (docs/plans/sandbox-update-v1.md §4.6); collectAll accounts them under
+  removedOrphans; collectAll can skip the staging pass (includeStaging=False)
+  so failed-recovery crash leftovers stay retryable.
+- Orphan containers: update containers carrying a live ``sandbox.stagingRunId``
+  run dir survive (in-flight update protection); with the run dir gone (or no
+  label at all) aged containers are reaped.
 - GC disabled returns a disabled message and removes nothing.
+- Backend failure ≠ empty list: a ``listManagedContainers`` connection
+  failure is swallowed by ``collectOrphanContainers`` (early return, no
+  error recorded) and is pinned by a dedicated manager-level test, separate
+  from the empty-list path the other integration tests exercise.
 - Library pool directories are untouched by GC.
 - Full cycle: mixed sessions, runs, orphans; GcResult counts are accurate.
 - Empty GC: running on empty storage returns all zeros.
+- SandboxManager.collectGarbage integration: the manager is built through
+  ``getInstance()`` and ``swapBackend()`` (shared helper, defined in
+  ``tests/lib/sandbox/conftest.py``) then installs a mock backend into BOTH
+  constructor-time captures, so these tests never perform real Docker I/O
+  regardless of ``DOCKER_HOST`` (a live daemon used to expose them to real
+  container list/kill/remove calls behind the GC's swallowed errors).
 """
 
 import os
+import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from lib.sandbox.config import ConcurrencyConfig, GcConfig, SandboxConfig, StorageConfig
 from lib.sandbox.enums import RuntimeName
 from lib.sandbox.gc import GarbageCollector
-from lib.sandbox.manager import SandboxManager
+from lib.sandbox.manager import STAGING_IO_DIRNAME, SandboxManager
 from lib.sandbox.metadata.base import SessionInfo
 from lib.sandbox.metadata.filesystem import FilesystemMetadataStore
 from lib.sandbox.storage import sessionHash
-from lib.sandbox.types import GcResult, RunInfo
+from lib.sandbox.types import GcResult, ManagedContainerInfo, RunInfo
+from tests.lib.sandbox.conftest import swapBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -146,6 +166,27 @@ def _ageDir(directory: Path, ageMinutes: float) -> None:
     """
     oldTime = time.time() - (ageMinutes * 60)
     os.utime(directory, (oldTime, oldTime))
+
+
+def _makeGcMockBackend() -> MagicMock:
+    """Build a mock backend standing in for the manager's real DockerBackend.
+
+    ``listManagedContainers`` resolves to ``[]`` — the same "no managed
+    containers" outcome ``collectOrphanContainers()`` produced on CI, where
+    the daemon was unreachable and its connection failure was swallowed —
+    so the ``SandboxManager.collectGarbage`` integration tests keep the
+    exact semantics they effectively ran under while making every backend
+    interaction observable (await counts) and inert (no daemon contact).
+
+    Returns:
+        A MagicMock backend with async list/kill/remove/close methods.
+    """
+    backend = MagicMock()
+    backend.listManagedContainers = AsyncMock(return_value=[])
+    backend.killContainer = AsyncMock(return_value=None)
+    backend.removeContainer = AsyncMock(return_value=None)
+    backend.close = AsyncMock(return_value=None)
+    return backend
 
 
 # ---------------------------------------------------------------------------
@@ -403,8 +444,6 @@ class TestCollectOrphanWorkspaces:
         gc: GarbageCollector,
     ) -> None:
         """If the sessions/ directory doesn't exist, return 0."""
-        import shutil
-
         sessionsDir = rootDir / "sessions"
         if sessionsDir.exists():
             shutil.rmtree(sessionsDir)
@@ -529,6 +568,238 @@ class TestCollectOrphanContainers:
         assert result == 0
 
 
+class TestCollectOrphanContainersStagingLiveness:
+    """Update containers are GC-protected by their live staging run dir.
+
+    Update containers (pre-filter/stage) carry ``sandbox.stagingRunId``
+    instead of a metadata run id, so they never appear in the active-run
+    metadata set — and default container retention (10 minutes) is shorter
+    than a legitimate update container can run. GC must therefore treat a
+    labeled container whose staging run dir still exists under ``tmp/`` as
+    active; when the run dir is gone (container finished or failed and was
+    kept for post-mortem), the container is reapable again.
+    """
+
+    def _makeGc(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+        backend: MagicMock,
+    ) -> GarbageCollector:
+        """Build a GarbageCollector wired to a mock backend.
+
+        Args:
+            rootDir: Sandbox storage root.
+            metadataStore: The metadata store.
+            backend: Mock backend exposing listManagedContainers/kill/remove.
+
+        Returns:
+            A GarbageCollector with a 10-minute container retention.
+        """
+        config = GcConfig(enabled=True, runRetentionMinutes=1440, orphanContainerRetentionMinutes=10)
+        return GarbageCollector(config=config, metadataStore=metadataStore, rootDir=rootDir, backend=backend)
+
+    def _makeBackend(self, containers: list[ManagedContainerInfo]) -> MagicMock:
+        """Build a mock backend serving the given managed containers.
+
+        Args:
+            containers: Containers returned by listManagedContainers.
+
+        Returns:
+            A MagicMock backend with recording async kill/remove.
+        """
+        backend = MagicMock()
+        backend.listManagedContainers = AsyncMock(return_value=containers)
+        backend.killContainer = AsyncMock(return_value=None)
+        backend.removeContainer = AsyncMock(return_value=None)
+        return backend
+
+    def _makeContainer(
+        self,
+        containerId: str,
+        labels: dict[str, str],
+        *,
+        ageMinutes: float = 60,
+    ) -> ManagedContainerInfo:
+        """Create a managed-container record older than the retention window.
+
+        Args:
+            containerId: Container id.
+            labels: Container labels.
+            ageMinutes: Container age in minutes (default beyond retention).
+
+        Returns:
+            A ManagedContainerInfo 60 minutes old.
+        """
+        createdAt = (datetime.now(timezone.utc) - timedelta(minutes=ageMinutes)).isoformat()
+        return ManagedContainerInfo(
+            containerId=containerId,
+            name=f"sandbox-{containerId}",
+            labels=labels,
+            status="running",
+            createdAt=createdAt,
+        )
+
+    async def testLabeledContainerWithLiveRunDirSurvives(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+    ) -> None:
+        """A staging-labeled container whose run dir still exists is not reaped."""
+        (rootDir / "tmp" / "run-live").mkdir(parents=True)
+        container = self._makeContainer(
+            "cid-live",
+            {"sandbox.managed": "true", "sandbox.purpose": "update", "sandbox.stagingRunId": "run-live"},
+        )
+        backend = self._makeBackend([container])
+        gc = self._makeGc(rootDir, metadataStore, backend)
+
+        removed = await gc.collectOrphanContainers()
+
+        assert removed == 0
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
+    async def testLabeledContainerWithMissingRunDirIsReaped(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+    ) -> None:
+        """A staging-labeled container whose run dir is gone is reaped again."""
+        container = self._makeContainer(
+            "cid-gone",
+            {"sandbox.managed": "true", "sandbox.purpose": "update", "sandbox.stagingRunId": "run-gone"},
+        )
+        backend = self._makeBackend([container])
+        gc = self._makeGc(rootDir, metadataStore, backend)
+
+        removed = await gc.collectOrphanContainers()
+
+        assert removed == 1
+        backend.killContainer.assert_awaited_once_with("cid-gone")
+        backend.removeContainer.assert_awaited_once_with("cid-gone", force=True)
+
+    async def testUnlabeledOldContainerIsStillReaped(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+    ) -> None:
+        """Containers without run/staging labels keep the age-based reaping."""
+        container = self._makeContainer("cid-plain", {"sandbox.managed": "true"})
+        backend = self._makeBackend([container])
+        gc = self._makeGc(rootDir, metadataStore, backend)
+
+        removed = await gc.collectOrphanContainers()
+
+        assert removed == 1
+        backend.killContainer.assert_awaited_once_with("cid-plain")
+
+
+# ---------------------------------------------------------------------------
+# collectStagingArtifacts
+# ---------------------------------------------------------------------------
+
+
+class TestCollectStagingArtifacts:
+    """Tests for GarbageCollector.collectStagingArtifacts (plan §4.6)."""
+
+    def _makeRunDir(self, rootDir: Path, name: str) -> Path:
+        """Create a staging run directory shaped like the manager's layout.
+
+        Mirrors ``_runStagedInstall``: the pool copies (``newpool``) sit at
+        the run-dir root and the container I/O subtree (``delta/``,
+        ``report.json``) lives under ``<runId>/io/`` — the only part a
+        container is allowed to see.
+
+        Args:
+            rootDir: Sandbox storage root.
+            name: Run-directory name under tmp/.
+
+        Returns:
+            The created run directory path.
+        """
+        runDir = rootDir / "tmp" / name
+        (runDir / "newpool").mkdir(parents=True)
+        ioDir = runDir / STAGING_IO_DIRNAME
+        (ioDir / "delta").mkdir(parents=True)
+        (ioDir / "report.json").write_text("{}", encoding="utf-8")
+        return runDir
+
+    async def testStaleStagingRunDirIsReaped(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+        gc: GarbageCollector,
+    ) -> None:
+        """A staging run dir older than retention is removed."""
+        runDir = self._makeRunDir(rootDir, "run-old")
+        _ageDir(runDir, ageMinutes=120)
+
+        removed = await gc.collectStagingArtifacts()
+        assert removed == 1
+        assert not runDir.exists()
+
+    async def testFreshStagingRunDirSurvives(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+        gc: GarbageCollector,
+    ) -> None:
+        """An in-flight (recent) staging run dir is never caught."""
+        runDir = self._makeRunDir(rootDir, "run-fresh")
+
+        removed = await gc.collectStagingArtifacts()
+        assert removed == 0
+        assert runDir.exists()
+
+    async def testStaleFileLitterIsReaped(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+        gc: GarbageCollector,
+    ) -> None:
+        """Stale list-command stdout/stderr litter under tmp/ is removed too."""
+        litter = rootDir / "tmp" / "abc.stdout"
+        litter.write_text("[]", encoding="utf-8")
+        _ageDir(litter, ageMinutes=120)
+
+        removed = await gc.collectStagingArtifacts()
+        assert removed == 1
+        assert not litter.exists()
+
+    async def testNoTmpDirReturnsZero(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+        gc: GarbageCollector,
+    ) -> None:
+        """A missing tmp/ directory is handled as nothing to reap."""
+        shutil.rmtree(rootDir / "tmp")
+
+        removed = await gc.collectStagingArtifacts()
+        assert removed == 0
+
+    async def testCollectAllAccountsStagingUnderOrphans(
+        self,
+        rootDir: Path,
+        metadataStore: FilesystemMetadataStore,
+    ) -> None:
+        """collectAll folds reaped staging artifacts into the orphan count."""
+        config = GcConfig(enabled=True, runRetentionMinutes=1440, orphanWorkspaceRetentionMinutes=1)
+        gc = GarbageCollector(config=config, metadataStore=metadataStore, rootDir=rootDir)
+
+        runDir = self._makeRunDir(rootDir, "run-stale")
+        _ageDir(runDir, ageMinutes=5)
+
+        containers, sessions, runs, orphans, errors = await gc.collectAll()
+        assert containers == 0
+        assert sessions == 0
+        assert runs == 0
+        assert orphans == 1  # the stale staging run dir
+        assert errors == []
+        assert not runDir.exists()
+
+
 # ---------------------------------------------------------------------------
 # collectAll
 # ---------------------------------------------------------------------------
@@ -612,7 +883,30 @@ class TestCollectAll:
 
 
 class TestSandboxManagerCollectGarbage:
-    """Integration tests for SandboxManager.collectGarbage."""
+    """Integration tests for SandboxManager.collectGarbage.
+
+    The manager is built through ``getInstance()`` (so the real
+    constructor-time backend captures exist) and ``swapBackend()`` then
+    installs a mock backend into BOTH captures — ``manager._backend`` and
+    ``manager._gc._backend``. Without the swap, ``collectGarbage()`` →
+    ``_gc.collectAll()`` → ``collectOrphanContainers()`` performed REAL
+    Docker I/O whenever ``DOCKER_HOST`` resolved to a live daemon: listing
+    managed containers and kill/removing any ``sandbox.managed`` container
+    older than the 10-minute default retention. On daemon-less CI the same
+    tests passed only because the GC swallows backend connection failures —
+    which is exactly why the hazard stayed latent. The mock's empty
+    ``listManagedContainers`` result reproduces the CI semantics exactly
+    (no containers, no kill/remove, no errors). The await-count assertions
+    are load-bearing only on the enabled-path tests: the swapped mock is
+    the only backend reference left on the manager and the GC, so an
+    asserted count can only be met by calls reaching the mock — any
+    real-backend consultation leaves the asserted counts unmet. On the
+    disabled path ``assert_not_awaited`` proves the short-circuit, not the
+    swap — the ``is backend`` identity assertions there pin the swap
+    wiring itself. A dedicated test additionally pins the
+    swallowed-exception branch: backend failure means an early return with
+    no error recorded, distinct from the empty-list path's metadata scan.
+    """
 
     async def test_gcDisabledReturnsDisabledMessage(self, tmp_path: Path) -> None:
         """When gc.enabled=False, collectGarbage returns a disabled message and removes nothing."""
@@ -620,6 +914,11 @@ class TestSandboxManagerCollectGarbage:
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
+        # These identities pin the swap wiring; the not-awaited assertion below proves the disabled short-circuit.
+        assert manager._backend is backend
+        assert manager._gc._backend is backend
 
         # Create a session that would normally be expired
         now = datetime.now(timezone.utc)
@@ -642,12 +941,18 @@ class TestSandboxManagerCollectGarbage:
         loaded = await manager._metadata.loadSession("should-survive")
         assert loaded is not None
 
+        # No-daemon proof: the disabled short-circuit must return before ANY
+        # backend call.
+        backend.listManagedContainers.assert_not_awaited()
+
     async def test_gcEnabledRemovesExpiredSessions(self, tmp_path: Path) -> None:
         """When gc.enabled=True, collectGarbage removes expired sessions."""
         config = _makeConfig(tmp_path, gcEnabled=True)
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
 
         now = datetime.now(timezone.utc)
         sHash = sessionHash("expired-sess")
@@ -661,12 +966,22 @@ class TestSandboxManagerCollectGarbage:
         assert result.removedSessions >= 1
         assert await manager._metadata.loadSession("expired-sess") is None
 
+        # No-daemon proof: the swapped mock is the ONLY backend the manager
+        # and the GC hold, so the single list pass below is the entire Docker
+        # interaction of the run — and it never leaves the mock. Session GC
+        # must not reap any container.
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
     async def test_libraryPoolUntouched(self, tmp_path: Path) -> None:
         """GC does not remove the library pool directory (runtimes/python/libs)."""
         config = _makeConfig(tmp_path, gcEnabled=True, orphanWorkspaceRetentionMinutes=1)
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
 
         # Create a library pool directory structure
         rootDir = Path(config.storage.rootDir)
@@ -690,12 +1005,19 @@ class TestSandboxManagerCollectGarbage:
         # Orphan should be gone
         assert not orphanDir.exists()
 
+        # No-daemon proof (same contract as test_gcEnabledRemovesExpiredSessions)
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
     async def test_gcOnEmptyStorage(self, tmp_path: Path) -> None:
         """Running GC on empty storage returns all zeros."""
         config = _makeConfig(tmp_path, gcEnabled=True)
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
 
         result = await manager.collectGarbage()
         assert result.removedContainers == 0
@@ -703,3 +1025,48 @@ class TestSandboxManagerCollectGarbage:
         assert result.removedRuns == 0
         assert result.removedOrphans == 0
         assert result.errors == []
+
+        # No-daemon proof (same contract as test_gcEnabledRemovesExpiredSessions)
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
+    async def test_gcSwallowsBackendFailureAndReturnsCleanResult(self, tmp_path: Path) -> None:
+        """A failing listManagedContainers is swallowed: clean GcResult, no error recorded.
+
+        Backend failure ≠ empty list: the shared mock's ``[]`` return keeps
+        GC on the normal path (active-run metadata scan), while a
+        daemon-unreachable ``ConnectionError`` hits the swallow branch at
+        gc.py:170-174 — logged warning, early ``return 0``, no entry in
+        ``GcResult.errors``. Pinned at the manager seam: ``collectGarbage()``
+        must not raise, must keep the all-zero result shape untouched, and
+        the single failed list must be the entire backend interaction (the
+        early return skips the metadata scan, so no container can be
+        reaped).
+        """
+        config = _makeConfig(tmp_path, gcEnabled=True)
+        SandboxManager.injectConfig(config)
+
+        manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        backend.listManagedContainers = AsyncMock(side_effect=ConnectionError("Docker daemon unavailable"))
+        swapBackend(manager, backend)
+
+        # The swallowed failure must not propagate out of the manager call.
+        result = await manager.collectGarbage()
+
+        # Swallow branch (early return BEFORE the metadata scan): the clean
+        # all-zeros shape with NO error recorded — exactly what daemon-less
+        # CI observed with the real unreachable daemon.
+        assert isinstance(result, GcResult)
+        assert result.removedContainers == 0
+        assert result.removedSessions == 0
+        assert result.removedRuns == 0
+        assert result.removedOrphans == 0
+        assert result.errors == []
+
+        # The failed list call is the whole backend interaction: no
+        # kill/remove can follow an early return.
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()

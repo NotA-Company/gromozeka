@@ -56,11 +56,11 @@ from internal.bot.models.enums import LLMMessageFormat
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, ChatUserDict, MessageCategory
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.llm.models import ExtraDataDict
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
+from lib.db.utils import DEFAULT_THREAD_ID
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -529,9 +529,11 @@ class ChatSearchHandler(BaseBotHandler):
         surfaced as ``False`` so a single bad row never aborts the batch
         (the caller relies on this never-crash contract).
 
-        Passes ``chatId=None`` to :meth:`LLMService.generateEmbedding` so the
-        background backfill does NOT consume the per-chat hot-path rate budget
-        (``generateEmbedding`` skips rate-limiting when ``chatId is None``).
+        Passes ``doRateLimit=False`` to :meth:`LLMService.generateEmbedding`
+        so the background backfill does NOT consume the per-chat hot-path
+        rate budget, while still passing the real ``chatId`` so the
+        ``llm_request`` stats row is attributed to the chat instead of
+        landing under ``__global__``.
 
         Args:
             ensuredMessage: The message to embed + persist.
@@ -551,8 +553,9 @@ class ChatSearchHandler(BaseBotHandler):
             if messageText.strip():
                 embeddings = await self.llmService.generateEmbedding(
                     messageText,
-                    chatId=None,
+                    chatId=ensuredMessage.recipient.id,
                     chatSettings=await self.getChatSettings(ensuredMessage.recipient.id),
+                    doRateLimit=False,
                 )
             if embeddings is not None:
                 return await self.db.chatEmbeddings.saveMessageEmbedding(
@@ -1294,9 +1297,7 @@ class ChatSearchHandler(BaseBotHandler):
         # path used when no keywords are present) so a flaky embedding
         # API never breaks `/search`. `modelName` is also passed to
         # `searchChatMessages` so it knows which model's embeddings to
-        # load for cosine-similarity comparison. The embedding model
-        # is resolved against the *target* chat's settings — a search
-        # in chat A should use A's embedding model.
+        # load for cosine-similarity comparison.
         queryEmbedding: Optional[List[float]] = None
         embeddingModelName: Optional[str] = None
         maxMessages: Optional[int] = None
@@ -1319,15 +1320,28 @@ class ChatSearchHandler(BaseBotHandler):
                 # A value of 0 means "disabled/unlimited" per the config default.
                 maxMessages = targetChatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None
 
-            embeddingModelName = targetChatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-            if embeddingModelName:
-                model = self.llmService.getLLMManager().getModel(embeddingModelName)
-                if model is not None and model.supportsEmbedding:
-                    try:
-                        queryEmbedding = await model.generateEmbeddings(keywords)
-                    except Exception:
-                        logger.exception("Failed to generate query embedding, falling back to filter-only")
-                        queryEmbedding = None
+            # Route the query-embedding call through LLMService (never
+            # raises; returns None on internal failure) instead of
+            # resolving the model directly: this keeps model resolution,
+            # validation, and consumerId stats attribution unified in one
+            # place. doRateLimit=False because the command already
+            # rate-limited above — the service must not double-charge the
+            # per-chat budget. The embedding model is resolved against
+            # the *target* chat's settings — a search in chat A should
+            # use A's embedding model.
+            try:
+                embeddingResult: Optional[Tuple[str, List[float]]] = await self.llmService.generateEmbedding(
+                    keywords,
+                    chatId=targetChatId,
+                    chatSettings=targetChatSettings,
+                    doRateLimit=False,
+                )
+                if embeddingResult is not None:
+                    embeddingModelName, queryEmbedding = embeddingResult
+            except Exception:
+                logger.exception("Failed to generate query embedding, falling back to filter-only")
+                embeddingModelName = None
+                queryEmbedding = None
 
         try:
             # `maxMessages` caps the number of recent embeddings loaded

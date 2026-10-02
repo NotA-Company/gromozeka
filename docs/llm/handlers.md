@@ -1,3 +1,9 @@
+---
+description: "Handler system guide — file reference, creation checklist, skeleton template, command decorator, registration, and chain-order rules"
+tags: [agent]
+category: guide
+---
+
 # Gromozeka — Handler System
 
 > **Audience:** LLM agents  
@@ -15,6 +21,7 @@
 5. [Registering Handlers in HandlersManager](#5-registering-handlers-in-handlersmanager)
 6. [Handler Chain Order](#6-handler-chain-order)
 7. [HandlerResultStatus Reference](#7-handlerresultstatus-reference)
+8. [Chat Accessibility Tracking](#8-chat-accessibility-tracking)
 
 ---
 
@@ -26,27 +33,92 @@
 |---|---|---|
 | [`base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` | Abstract base for all handlers |
 | [`manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` | Orchestrates all handlers |
-| [`message_preprocessor.py`](../../internal/bot/common/handlers/message_preprocessor.py) | `MessagePreprocessorHandler` | First in chain; saves message + processes media. Also owns **memory injection** — `injectMemories()` runs inside `newMessageHandler` **after** `saveChatMessage(...)` to load permanent memories (via `cache.getChatUserPermanentMemories`) + ephemeral memories (`getLatestMemories`, or `searchMemories` driven by `LLMService.generateEmbedding` when memory embeddings are on — i.e. `MEMORY_ENABLED && EMBEDDINGS_ENABLED`). Since the context-dedup change (ADR-018) it writes **compact memory IDs** directly into `metadata["memories"]` (`{"permanentIds": [...], "shortTermIds": [...]}`) — no `setUserMemories` setter and no per-message `userMemories` content field (both removed). It performs **no cache warming**: the by-id cache populates lazily (cache-aside) on the first `formatForLLM` read via `cache.getMemoriesByIds`. Because `injectMemories()` mutates `metadata` after the row was already saved, the compact IDs are re-persisted to `chat_messages.metadata` via a separate `db.chatMessages.updateChatMessageMetadata(...)` call. Resolution is lazy: each render site calls `toModelMessage(..., cache=self.cache, excludeMemoryIds=...)` and `formatForLLM` resolves IDs → content on-demand via `cache.getMemoriesByIds`; in `getThreadByMessageForLLM` and `handleRandomMessage` dedup is applied inline newest→oldest (an accumulating exclude-set per call site; no shared helper). Enforcement is split: `cache=` is a **required keyword-only** param on every render method (no default — pyright errors on any caller that omits it), while `excludeMemoryIds: Optional[Set[str]] = None` carries an `= None` default and is coerced to `set()` in the method body, so pyright does **not** enforce its presence (intentional — every dedup call site passes it explicitly, but incidental render paths may omit it). There is no AST value-checking guard — value-correctness (i.e. `cache=self.cache` on chat paths vs `cache=None` on non-chat/TEXT paths) is upheld by the call-site audit and the test suite. Gated by `MEMORY_ENABLED`; see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Render-time resolution (lazy + dedup)" |
+
+### Handler file: message_preprocessor.py
+
+| File | Handler Class | Purpose |
+|---|---|---|
+| [`message_preprocessor.py`](../../internal/bot/common/handlers/message_preprocessor.py) | `MessagePreprocessorHandler` | First in chain; saves message + processes media. **Media transcription (STT)** is folded directly into the inherited `BaseBotHandler._processMediaV2` (the per-attachment media method this handler delegates to via `processTelegramMedia`/`processMaxMedia`) — it is **not** a separate `STTHandler`. For `VIDEO`/`VIDEO_NOTE`/`VOICE`/`AUDIO` attachments, transcription fires only when **four** gates are all on: config `[stt].enabled` (cached in `BaseBotHandler.__init__` as `_sttEnabled`, mirrors `_searchEnabled`), an eligible media type, and the per-chat `PARSE_ATTACHMENTS` **and** `TRANSCRIBE_MEDIA` settings (the latter is `FRIEND`-page; both default `false`). `PARSE_ATTACHMENTS` is the general attachment-processing gate (it gates any attachment processing, not just images); `TRANSCRIBE_MEDIA` is the additional opt-in for the expensive STT sub-feature, so transcription requires *both*. When the gate is on, `_processMediaV2` persists the row as `PENDING`, downloads the bytes once (shared download block — when `SAVE_ATTACHMENTS` + STT are both on, the SAVE block downloads first and STT reuses the bytes via an `if mediaData is None` guard), and schedules a fire-and-forget background task (`_transcribeMedia(mediaId, chatId, data)` via `queueService.addBackgroundTask`) that calls `STTService.transcribeMedia(data, chatId=...)` and terminalizes the row via plain `updateMediaAttachment` (`PENDING`→`DONE`+transcript on success | `PENDING`→`FAILED` on failure/exception; `asyncio.CancelledError` propagates and leaves the row `PENDING` for orphan-reclaim). The transcript lands in `media_attachments.description` and reaches the model as a structured JSON `mediaDescription` field through the existing render path. STT **mirrors the image-parsing pattern**: `ret.task = sttTask` (the live STT background task), so `EnsuredMessage.updateMediaContent()` awaits the task and then confirms via the DB poll in `_awaitMedia` (~300 s cap). See [`services.md`](services.md) §7, [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall), and [`docs/design/media-transcription-stt-v1.md`](../design/media-transcription-stt-v1.md) §12. Also owns **memory injection** — `injectMemories()` runs inside `newMessageHandler` **after** `saveChatMessage(...)` to load permanent memories (via `cache.getChatUserPermanentMemories`) + ephemeral memories (`getLatestMemories`, or `searchMemories` driven by `LLMService.generateEmbedding` when memory embeddings are on — i.e. `MEMORY_ENABLED && EMBEDDINGS_ENABLED`). Since the context-dedup change (ADR-018) it writes **compact memory IDs** directly into `metadata["memories"]` (`{"permanentIds": [...], "shortTermIds": [...]}`) — no `setUserMemories` setter and no per-message `userMemories` content field (both removed). It performs **no cache warming**: the by-id cache populates lazily (cache-aside) on the first `formatForLLM` read via `cache.getMemoriesByIds`. Because `injectMemories()` mutates `metadata` after the row was already saved, the compact IDs are re-persisted to `chat_messages.metadata` via a separate `db.chatMessages.updateChatMessageMetadata(...)` call. Resolution is lazy: each render site calls `toModelMessage(..., cache=self.cache, excludeMemoryIds=...)` and `formatForLLM` resolves IDs → content on-demand via `cache.getMemoriesByIds`; in `getThreadByMessageForLLM` and `handleRandomMessage` dedup is applied inline newest→oldest (an accumulating exclude-set per call site; no shared helper). Enforcement is split: `cache=` is a **required keyword-only** param on every render method (no default — pyright errors on any caller that omits it), while `excludeMemoryIds: Optional[Set[str]] = None` carries an `= None` default and is coerced to `set()` in the method body, so pyright does **not** enforce its presence (intentional — every dedup call site passes it explicitly, but incidental render paths may omit it). There is no AST value-checking guard — value-correctness (i.e. `cache=self.cache` on chat paths vs `cache=None` on non-chat/TEXT paths) is upheld by the call-site audit and the test suite. Gated by `MEMORY_ENABLED`; see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Render-time resolution (lazy + dedup)" |
+
+### Handler files: message pipeline (spam, configure, summarization)
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`spam.py`](../../internal/bot/common/handlers/spam.py) | `SpamHandler` | Spam detection (runs after preprocessor) |
 | [`configure.py`](../../internal/bot/common/handlers/configure.py) | `ConfigureCommandHandler` | Chat settings configuration |
 | [`summarization.py`](../../internal/bot/common/handlers/summarization.py) | `SummarizationHandler` | Chat summarization |
-| [`user_memories.py`](../../internal/bot/common/handlers/user_memories.py) | `UserMemoriesHandler` | Unified per-`(chat, user, thread)` structured memory system (the `user_memories` store — supersedes the old `user_data` key-value tools and the rolling-bio `userSummary` blob; see [`architecture.md`](architecture.md) ADR-016). Registers three LLM tools — `add_memory` / `delete_memory` / `search_memories` (`ToolName.ADD_MEMORY` / `DELETE_MEMORY` / `SEARCH_MEMORIES`) — gated on the global `[user-memory].enabled` kill switch (no registration when off → nothing exposed via the chat-time `useTools` wildcard); all three resolve chat context from `extraData["ensuredMessage"].recipient.id` / `.sender.id` / `.threadId`. `delete_memory` is **refinement-only at chat time** — `_sendLLMChatMessage` forces `useTools[DELETE_MEMORY] = False` on every chat-time turn (D3 gating), so it is only ever callable from the refinement pass. `newMessageHandler` increments an in-memory per-`(chatId, userId, threadId)` counter (gated by the `MEMORY_REFINEMENT_ENABLED` chat setting; refinement dispatch also requires `MEMORY_ENABLED=true && EMBEDDINGS_ENABLED=true` — the scan gate re-checks all three because memory embeddings are on only then and the `search_memories` tool is semantic and returns nothing without them; intentional asymmetry: `_runSingleRefinement`'s runtime re-check stays `MEMORY_REFINEMENT_ENABLED`-only) at the very top — before any gates — and returns `NEXT`. Registers a `CRON_JOB` (`_dtCronJob`, every 60s) that, under a single global `asyncio.Lock` (`_refineLock`), scans the counter and runs up to `max-refines-per-tick` refinements sequentially (a slow LLM call makes subsequent ticks early-return rather than flood the provider). `_runSingleRefinement` (Phase 4a rewrite) no longer emits a summary — it pre-loads permanent + latest memories, renders them into the `{existingMemories}` prompt placeholder, and lets the refinement LLM curate the store **live** via the three tools (`extraData["isRefinement"] = True` so `add_memory` surfaces the dedup grey-zone signal); only the message cursor is persisted to `chat_users.metadata.memoryRefinement` via direct `updateUserMetadata` read-modify-write (NOT `setUserMetadata` — shallow-merge gotcha). A second cron body `_runMemoryEmbeddingRegen` runs every tick **outside** `_refineLock` (mirrors `ChatSearchHandler._dtCronJob` one-to-one): discovers chats by round-robin over the in-memory `_trackedChats` set (populated by `newMessageHandler` when `MEMORY_ENABLED` + `EMBEDDINGS_ENABLED` are both true — i.e. memory embeddings on; no DB scan; cold-start: empty on restart, grows only from live messages; eviction is one-way), detects model drift, and re-embeds stale rows in batches of `memory-reindex-batch-size` — never raises (a regen failure never breaks the refinement body sharing the same tick). Memory injection into chat context is **centralised** in `MessagePreprocessorHandler.injectMemories()` (called at message-arrival time, before the message is saved; compact memory IDs are persisted into `chat_messages.metadata.memories` and ride per-message — resolution is lazy in `formatForLLM`, JSON key `userMemories`). The previous `BaseBotHandler._buildMemoriesBlock` / `_injectMemoriesBlock` helpers and the four handler-level injection sites were deleted in the refactoring — there is no `<user-memories>` system-message block any more. Embeddings (regen cron + the `add_memory`/`search_memories`/`delete_memory` tools) are produced via `LLMService.generateEmbedding(text, chatId, chatSettings) -> Optional[Tuple[modelName, List[float]]]`; the old `internal/bot/common/memory_embedding_utils.py` module (`embedAndSaveMemory`) and the `UserMemoriesHandler._resolveEmbeddingModel` / `_floatsToBytes` helpers were removed (the old `EnsuredMessage.userSummary` / `applyUserMetadata` path was removed entirely in Phase 4b). The memory chat settings (`MEMORY_ENABLED` (master gate for all memory features) / `MEMORY_REFINEMENT_ENABLED` / `MEMORY_REFINE_MODEL` / `MEMORY_REFINE_FALLBACK_MODEL` / `MEMORY_REFINE_SYSTEM_PROMPT` / `MEMORY_REFINE_USER_PROMPT_TEMPLATE`) are user-configurable via `/settings` (page `FRIEND`). Memory embeddings are a derived condition (`MEMORY_ENABLED && EMBEDDINGS_ENABLED`), not a separate flag — three former memory-embedding settings (a separate embeddings-on flag, a regen trigger, and a latest/relevant retrieval-mode selector) were dropped in the chatSettings consolidation. Owns `/memory_config` — an interactive wizard over the `user_memories` store (shipped in Phase 5): add memories, view/list them, delete by id, and filter by tag. Optional `[user-memory.json-logging]` writes one JSONL line per successful refinement run with per-tool counts (`addCount` / `deleteCount` / `searchCount` — the primary observability for the grey-zone dedup review); see [`configuration.md`](configuration.md) §`[user-memory.json-logging]`. See [`architecture.md`](architecture.md) ADR-016 (unified-store decision) and ADR-014 (refinement machinery), and [`memories/user-memories.md`](memories/user-memories.md) (canonical durable summary). |
+
+### Handler file: user_memories.py
+
+**File:** `user_memories.py` — **Handler:** `UserMemoriesHandler`
+
+#### Memory tools, gating, and the refinement cron
+
+Unified per-`(chat, user, thread)` structured memory system (the `user_memories` store — supersedes the old `user_data` key-value tools and the rolling-bio `userSummary` blob; see [`architecture.md`](architecture.md) ADR-016). Registers three LLM tools — `add_memory` / `delete_memory` / `search_memories` (`ToolName.ADD_MEMORY` / `DELETE_MEMORY` / `SEARCH_MEMORIES`) — gated on the global `[user-memory].enabled` kill switch (no registration when off → nothing exposed via the chat-time `useTools` wildcard); all three resolve chat context from `extraData["ensuredMessage"].recipient.id` / `.sender.id` / `.threadId`. `delete_memory` is **refinement-only at chat time** — `_sendLLMChatMessage` forces `useTools[DELETE_MEMORY] = False` on every chat-time turn (D3 gating), so it is only ever callable from the refinement pass. `newMessageHandler` increments an in-memory per-`(chatId, userId, threadId)` counter (gated by the `MEMORY_REFINEMENT_ENABLED` chat setting; refinement dispatch also requires `MEMORY_ENABLED=true && EMBEDDINGS_ENABLED=true` — the scan gate re-checks all three because memory embeddings are on only then and the `search_memories` tool is semantic and returns nothing without them; intentional asymmetry: `_runSingleRefinement`'s runtime re-check stays `MEMORY_REFINEMENT_ENABLED`-only) at the very top — before any gates — and returns `NEXT`. Registers a `CRON_JOB` (`_dtCronJob`, every 60s) that, under a single global `asyncio.Lock` (`_refineLock`), scans the counter and runs up to `max-refines-per-tick` refinements sequentially (a slow LLM call makes subsequent ticks early-return rather than flood the provider). `_runSingleRefinement` (Phase 4a rewrite) no longer emits a summary — it pre-loads permanent + latest memories, renders them into the `{existingMemories}` prompt placeholder, and lets the refinement LLM curate the store **live** via the three tools (`extraData["isRefinement"] = True` so `add_memory` surfaces the dedup grey-zone signal); only the message cursor is persisted to `chat_users.metadata.memoryRefinement` via direct `updateUserMetadata` read-modify-write (NOT `setUserMetadata` — shallow-merge gotcha). A second cron body `_runMemoryEmbeddingRegen` runs every tick **outside** `_refineLock` (mirrors `ChatSearchHandler._dtCronJob` one-to-one): discovers chats by round-robin over the in-memory `_trackedChats` set (populated by `newMessageHandler` when `MEMORY_ENABLED` + `EMBEDDINGS_ENABLED` are both true — i.e. memory embeddings on; no DB scan; cold-start: empty on restart, grows only from live messages; eviction is one-way), detects model drift, and re-embeds stale rows in batches of `memory-reindex-batch-size` — never raises (a regen failure never breaks the refinement body sharing the same tick).
+
+#### Injection centralisation, embeddings, and settings
+
+Memory injection into chat context is **centralised** in `MessagePreprocessorHandler.injectMemories()` (called at message-arrival time, before the message is saved; compact memory IDs are persisted into `chat_messages.metadata.memories` and ride per-message — resolution is lazy in `formatForLLM`, JSON key `userMemories`). The previous `BaseBotHandler._buildMemoriesBlock` / `_injectMemoriesBlock` helpers and the four handler-level injection sites were deleted in the refactoring — there is no `<user-memories>` system-message block any more. Embeddings (regen cron + the `add_memory`/`search_memories`/`delete_memory` tools) are produced via `LLMService.generateEmbedding(text, chatId, chatSettings) -> Optional[Tuple[modelName, List[float]]]`; the old `internal/bot/common/memory_embedding_utils.py` module (`embedAndSaveMemory`) and the `UserMemoriesHandler._resolveEmbeddingModel` / `_floatsToBytes` helpers were removed (the old `EnsuredMessage.userSummary` / `applyUserMetadata` path was removed entirely in Phase 4b). The memory chat settings (`MEMORY_ENABLED` (master gate for all memory features) / `MEMORY_REFINEMENT_ENABLED` / `MEMORY_REFINE_MODEL` / `MEMORY_REFINE_FALLBACK_MODEL` / `MEMORY_REFINE_SYSTEM_PROMPT` / `MEMORY_REFINE_USER_PROMPT_TEMPLATE`) are user-configurable via `/settings` (page `FRIEND`). Memory embeddings are a derived condition (`MEMORY_ENABLED && EMBEDDINGS_ENABLED`), not a separate flag — three former memory-embedding settings (a separate embeddings-on flag, a regen trigger, and a latest/relevant retrieval-mode selector) were dropped in the chatSettings consolidation. Owns `/memory_config` — an interactive wizard over the `user_memories` store (shipped in Phase 5): add memories, view/list them, delete by id, and filter by tag. Optional `[user-memory.json-logging]` writes one JSONL line per successful refinement run with per-tool counts (`addCount` / `deleteCount` / `searchCount` — the primary observability for the grey-zone dedup review); see [`configuration.md`](configuration.md) §`[user-memory.json-logging]`. See [`architecture.md`](architecture.md) ADR-016 (unified-store decision) and ADR-014 (refinement machinery), and [`memories/user-memories.md`](memories/user-memories.md) (canonical durable summary).
+
+### Handler files: commands and utilities
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`dev_commands.py`](../../internal/bot/common/handlers/dev_commands.py) | `DevCommandsHandler` | Developer/debug commands |
 | [`media.py`](../../internal/bot/common/handlers/media.py) | `MediaHandler` | Media message processing |
 | [`common.py`](../../internal/bot/common/handlers/common.py) | `CommonHandler` | Common bot commands |
 | [`help_command.py`](../../internal/bot/common/handlers/help_command.py) | `HelpHandler` | `/help` command |
+
+### Handler files: Telegram-only reactions and topics
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`delete_from_user.py`](../../internal/bot/common/handlers/delete_from_user.py) | `DeleteFromUserMessageHandler` | Telegram-only auto-delete of messages from configured authors (via `DELETE_AUTHOR_LIST` chat setting, a JSON array of user IDs and usernames). Commands: `/set_delete_author`, `/unset_delete_author`, `/dump_delete_authors`. `newMessageHandler` returns `FINAL` on successful deletion so downstream handlers (e.g. `ReactOnUserMessageHandler`, `LLMMessageHandler`) skip the deleted message; `SKIPPED` otherwise. Modeled on `ReactOnUserMessageHandler`. |
 | [`react_on_user.py`](../../internal/bot/common/handlers/react_on_user.py) | `ReactOnUserMessageHandler` | Telegram-only reactions |
 | [`topic_manager.py`](../../internal/bot/common/handlers/topic_manager.py) | `TopicManagerHandler` | Telegram forum topics |
+
+### Handler files: optional features
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled). Proxy: resolves proxy separately for `OpenWeatherMapClient` and `GeocodeMapsClient` in `__init__()`, using the `[openweathermap]` and `[geocode-maps]` config sections respectively. |
-| [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled). Proxy: resolves proxy in `__init__()` for both the Yandex Search client and the `_downloadUrl()` web-fetch method. The former `TODO: add proxy support via config` comment was removed from `_downloadUrl()`. When SOCKS5 is active, HTTP/2 is automatically disabled for web-fetch. |
+| [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled). Proxy: resolves proxy in `__init__()` for both the Yandex Search client and the `_downloadUrl()` web-fetch method. HTTP/2 is always enabled for web-fetch (negotiated via TLS ALPN above the proxy tunnel; degrades gracefully to HTTP/1.1). |
 | [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled). Architecturally distinct: a **cron-only** handler — does **not** override `newMessageHandler`, has no slash commands, no LLM tools. Operates entirely from `_dtCronJob` (≈60s tick via `QueueService`), passively scanning for new messages with `getChatMessagesSince()`. Registers `DO_EXIT` (`_dtOnExit`) to flip `isExiting = True` on shutdown. |
 | [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
-| [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
+| [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|packages|install|update` (`install` and `update` are additionally bot-owner-only; `update [packages...]` updates all or selected pool packages with an old→new diff reply). LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers and adopt or roll back interrupted pool swaps after restarts. |
+
+### Handler file: chat_search.py
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py) | `ChatSearchHandler` | Chat-history search (if `[search-history].enabled`). Commands: `/search [args]` (DSL of `keywords` / `user` / `days` / `category` / `thread` filters) — returns the matching messages as a raw, human-readable list (no LLM summary); `/users [limit=N] [min_messages=N] [last_active=N]` — lists chat participants with activity statistics. LLM tools: `search_messages(query, limit, max_age_days, user_name, thread_message_id, current_thread_only, substring)` — semantic search over chat history; when `query` is empty the search degrades to a substring/filter-only lookup that runs WITHOUT `EMBEDDINGS_ENABLED` (no embedding generated); `current_thread_only` (default `true`) scopes results to the current thread/topic and is overridden by an explicit `thread_message_id`; `substring` is a case-insensitive exact-text filter; `list_users(limit, min_messages)` — list participants with stats; `get_thread(message_id)` — retrieve full conversation thread; `get_messages_by_ids(message_ids)` — batch-fetch full content of messages by ID (`ToolName.GET_MESSAGES_BY_IDS`, returns `{messages:[...], notFound:[...], count:N}`; reuses `_formatMessageDict`; never-raise). Used by the model to read the originals underlying a condensed summary (summaries render their `coveredMessageIds` — see [`architecture.md`](architecture.md) ADR-019). **Two-layer gating**: (1) `[search-history].enabled` via the handler's conditional registration (the tool is a normal `registerTool(...)` in `__init__` — *no manager.py change*); (2) at chat time, all four LLM tools (`search_messages`, `list_users`, `get_thread`, `get_messages_by_ids`) are gated solely by `USE_TOOLS` — the model is never sent the tools when `USE_TOOLS=false`. They are NOT gated by `ALLOW_TOOLS_COMMANDS` (which gates only slash commands of `CommandCategory.TOOLS`). `get_messages_by_ids` is additionally **NOT** gated on `EMBEDDINGS_ENABLED` — it is a pure DB lookup (available whenever chat-search is on, even with semantic search disabled). Accepts a list of ID strings (`extra={"items": {"type": "string"}}`); input clamped to `MAX_GET_MESSAGES_BATCH` (32). `newMessageHandler` is pass-through (`SKIPPED`); work runs via the command. Lifecycle: registers `CRON_JOB` (`_dtCronJob` — embedding backfill for chats with `EMBEDDINGS_ENABLED=true`, round-robin across enabled chats, default batch `BACKFILL_DEFAULT_BATCH_SIZE` messages) delayed-task handlers. There is no separate `BackfillWorker` class — backfill duty lives in this handler. |
+
+### Handler file: stats.py
+
+**File:** `stats.py` — **Handler:** `StatsHandler`
+
+#### Commands, gating, grammar, and scoping
+
+Usage-statistics display (if `[stats].enabled`; `__init__` raises `RuntimeError` when stats are disabled — belt-and-suspenders, since registration in `manager.py` is itself conditional). Commands: `/stats` and `/stats_web` — ONE `@commandHandlerV2` registration with `commands=("stats", "stats_web")`; invoking `stats_web` forces web mode. Category `UTILITIES` (the manager's category gate is always-allow for `UTILITIES` — `allow-tools-commands` is NOT consulted; the `ALLOW_SHOW_STATS` chat setting is the sole gate, so `/stats` also works in channels for non-owners unless an operator sets `allow-show-stats = false` under `[bot.channel-defaults]` — the global default is `true`). Visibility `PRIVATE` (help-listing only — groups still execute when called directly). Grammar: at most one positional `help` | `chatId` (negative numbers are positionals — group IDs), options `--period=<N>h|<N>d|<N>m|all` (h≤24→hourly, d≤31→daily, m→monthly calendar, all→total; default `7d`; invalid → usage reply), `--section=messages|commands|tools|llm|all` (default `messages`; no exclusion logic; llm annotated under --user), `--user=<id>|@username` (case-insensitive target-chat lookup), `--top=<N>` (top-list length per section — top users/commands/tools/models; integer 1-50, default 3; applies to the chat reply AND the web-mode brief, not the `--web` HTML page which keeps its own per-section limits), valueless `--web`; space-form options (`--period 7d`) are accepted — a value-taking space-form option with no value (`--period`/`--section`/`--user`/`--top` followed by end-of-args or another `-` token) raises the usage error `Опция --X требует значения`; a leading run of `—`/`–` (em/en dash) in a token normalizes to `--` (autocorrect fix — a single `-` is untouched, so negative chatIds stay positional). Scoping: group → current chat only; private → the user's private-chat stats plus a top-10 chat list (via `getUserChats`, sorted by `messages_count`); positional `chatId` (private only, membership-checked, selects TARGET chat only) → full four-section drill-down; `--user=<id>` → per-user breakdown over messages/commands/tools (the `llm` section is annotated chat-level — `llm_request` rows carry no `user_id` label). Chat-setting gate: `ALLOW_SHOW_STATS` (`allow-show-stats`, default `true`) — group/channel ONLY; when disabled the handler sends an informative reply with zero stats queries; not consulted in private chats. Deny respects `DELETE_DENIED_COMMANDS` (true → deleteMessage, no reply; false → informative reply). Reads via `StatsAggregationService.getQueryStorage(eventType)` + `StatsAnalyzer` (pure-Python filtering; the `consumer` label filter excludes `__global__` rows; direction stays binary at query time — bot = `sent` "True", users = "False" or absent — and the chat reply renders no users/bot split; the split survives only in the `--web` HTML generator).
+
+#### Reply formatting and the web tier
+
+Reply format (2026-08-22 redesign): header `📊 Stats — {period} (UTC) — {prettyChat}` (prettyChat = `getChatTitle(useMarkdown=True, addChatId=True, addChatType=False)` → chat-type emoji + bold title + backticked `#id`; plain `#id` fallback), bold `**Messages:**`/`**Commands:**`/`**Tools:**`/`**LLM:**` headers with avg folded in when >0, Top lists rendered as a fenced code block with the caption (`Top:`/`Top models:`) as the fence's info-string (` ```Top:` / ` ```Top\xa0models:` — multi-word captions use U+00A0 non-breaking space so Telegram renders them as one block caption), column-aligned `•` bullets inside, bare `@name` usernames (the fence prevents accidental mentions; column widths computed on the FORMATTED counts), `⚠`-prefixed top-level error lines when >0 (the STT errors sub-line is numbered without `⚠`). Pretty numbers (2026-08-22): `_formatCount` renders counts ≥1000 as k/m/g with 3 significant digits, ROUND-first (999999→`1m`, 9999→`10k`, 1484→`1,48k`; comma decimal separator, trailing zeros stripped) — applied everywhere (section totals, tokens in/out, error counts, Top-block counts, chat-list `messages_count`, `и ещё N чатов` overflow); `_formatDuration` keeps per-site decimals under 60s (STT audio 1, avgs 2) and compounds ≥60s (`1m 15.4s`, `1h 02m 25.0s`) — used for the folded `· avg` in **Tools:**/**LLM:** headers and the STT `audio:`/`avg time:` sub-lines; the STT sub-header is bold `**STT:** N`. Full output sent in ~3000-char whole-line chunks (fence-atomic — a fenced Top block is never split; MarkdownV2 per chunk), paced `_CHUNK_SEND_DELAY_SECONDS = 0.5` s between consecutive chunk sends. STT stats folded into the `llm` section. Web tier (`--web`/`/stats_web`, gated by `[stats.pages]`): config is read at construction via `getStatsPagesConfig()` — when `enabled = true` validation is applied at construction: `generate-command` and `delete-command` must be non-empty `list[str]` of non-empty strings; `ttl-hours` must be a positive int (all raise `RuntimeError` naming the offending key). Payload is raw-rows JSON in a single query pass (the brief is derived from the same payload — no second query); stdout {"pageId","url"} verbatim; applyLimit-only rate limit with a bounded wait (3/600s per issuing chat; `applyLimit(timeout=60)` — refuses with a "лимит исчерпан" reply when no slot frees within 60 s, CLI not invoked); one-shot `STATS_PAGES_CLEANUP` deletion task (delay = `ttl-hours × 3600`).
+
+### Handler file: llm_messages.py
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `TOOLS_DEFAULT_DICT_KEY` fallback (see [`services.md`](services.md)). When constructing the dict form, use members of the `ToolName` StrEnum from [`internal.bot.constants`](../../internal/bot/constants.py) as keys (raw strings also work since `ToolName` is a `StrEnum`). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). **`newMessageHandler` gating order** (each gate can short-circuit with `SKIPPED`/`FINAL`): (1) **bot-sender probability gate** — if the sender's username ends with `bot`, the message is skipped unless a `random.random()` roll passes the `BOT_ANSWER_PROBABILITY` chat setting (default `0.05`); `0.0` = never answer bots. This gate runs **before** reply/mention, so even explicit replies or mentions from bot accounts are throttled — intentional, to prevent bot-to-bot reply loops; (2) `handleReply` (reply to a bot message); (3) `handleMention` (bot mentioned); (4) `handleRandomMessage` (`RANDOM_ANSWER_PROBABILITY`). `_sendLLMChatMessage` returns `LLMReplyOutcome` (`SENT` / `SKIPPED_BY_MODEL` / `ERROR`), not `bool` — callers compare `== LLMReplyOutcome.SENT`, never truthiness. `handleRandomMessage` additionally appends `RANDOM_ANSWER_PROMPT` to the system message (both thread and non-thread paths) and abstains on `SKIPPED_BY_MODEL` (see "Random-answer context & model abstention" below). |
+
+### Handler files: examples
+
+| File | Handler Class | Purpose |
+|---|---|---|
 | [`example.py`](../../internal/bot/common/handlers/example.py) | `ExampleHandler` | Standalone reference example (not registered in handler chain) |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
+
+### DivinationHandler reply behavior by invocation path
 
 **`DivinationHandler` — reply behavior by invocation path:**
 
@@ -97,7 +169,7 @@ Developer/debug commands available only to `BOT_OWNER` users.
 
 `handleRandomMessage` (the `RANDOM_ANSWER_PROBABILITY` gate) is structurally different from `handleReply` / `handleMention`: the bot is joining an ongoing chat, not being directly addressed. Two pieces let the model behave accordingly:
 
-1. **`RANDOM_ANSWER_PROMPT` suffix.** In **both** system-message assembly paths inside `handleRandomMessage` the `RANDOM_ANSWER_PROMPT` chat setting (TOML key `random-answer-prompt`, page `LLM_BASE`; default in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) is appended to the existing `CHAT_PROMPT` + `CHAT_PROMPT_SUFFIX` system message:
+1. **`RANDOM_ANSWER_PROMPT` suffix.** In **both** system-message assembly paths inside `handleRandomMessage` the `RANDOM_ANSWER_PROMPT` chat setting (TOML key `random-answer-prompt`, page `LLM_PROMPTS`; default in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) is appended to the existing `CHAT_PROMPT` + `CHAT_PROMPT_SUFFIX` system message:
    - **Thread path** — after `getThreadByMessageForLLM(...)` returns, the leading system `ModelMessage` is rebuilt with the fragment appended (the returned list is fresh and not shared, so it is rebuilt rather than mutated).
    - **Non-thread path** — the inline `ModelMessage(role="system", ...)` is constructed with `CHAT_PROMPT + CHAT_PROMPT_SUFFIX + RANDOM_ANSWER_PROMPT` in one content string.
 
@@ -131,7 +203,7 @@ Call sites:
 
 ## 2. Handler Creation Checklist
 
-Step-by-step for adding a new bot command handler
+Step-by-step for adding a new bot command handler. This is the end-to-end recipe for adding a new handler (a new bot command, message interceptor, or reactive handler) to the chain.
 
 ### Step 1: Create handler file
 
@@ -198,6 +270,24 @@ make format lint
 make test
 ```
 
+### `sessionId` conventions for LLM calls
+Handlers never assemble session ids from raw strings. Conversation-shaped flows call
+`await self.getLLMRequestSessionId(ensuredMessage)` (the `gromozeka-<chatId>-<rootMessageId>`
+thread identity); content- or feature-scoped flows build ids through
+`buildSessionId(...)` / `hashSessionIdComponent(...)` from
+[`lib/ai/session.py`](../../lib/ai/session.py), using persistent identifiers only — never
+uuids/runIds (they would defeat prompt-cache affinity). Handler-facing domains:
+
+| Domain | Shape (`gromozeka-` namespace) | Used by |
+|---|---|---|
+| D1 conversation/thread | `gromozeka-<chatId>-<rootMessageId>` | condensing, chat image gen, random-message condense, media tool |
+| D2 one-shot content | `gromozeka-media-<fileUniqueId>` / `gromozeka-url-<hash(url)>` / `gromozeka-layout-<hash(canonicalLayoutId)>`; `/analyze` with no stored media id falls back to `gromozeka-analyze-<chatId>-<commandMessageId>` | `/analyze`, URL condensing, layout extraction |
+| D3 feature flow | `gromozeka-<feature>-<chatId>-<messageId>` (`divination-`, `draw-`, `summary-`, `dev-`) | divination reading, `/draw`, per-run summaries, `/llm_replay` |
+| D4 user memory | `gromozeka-memory-<chatId>-<userId>-<threadId>` | background memory refinement |
+
+`LLMService` still resolves a defense-in-depth fallback (`gromozeka-auto-<chatId>`) when
+`sessionId` is omitted — see [`services.md`](services.md) §3 and the full design record in
+[`architecture.md`](architecture.md) ADR-026.
 ### Checklist after creating/modifying a handler
 
 - [ ] Docstring on class and all methods
@@ -378,6 +468,7 @@ async def myCommandMethod(
 | `PRIVATE` | Commands for private chats only |
 | `ADMIN` | Admin/configuration commands |
 | `TOOLS` | Utility/tool commands (Web search, draw, weather, etc.) |
+| `UTILITIES` | Utility commands always allowed at the manager category gate (gated only by their own chat settings, e.g. `ALLOW_SHOW_STATS` for `/stats`) |
 | `SPAM` | SPAM-related commands |
 | `SPAM_ADMIN` | SPAM-related commands for admins |
 | `TECHNICAL` | Technical/debug commands |
@@ -395,6 +486,17 @@ async def myCommandMethod(
 ## 5. Registering Handlers in HandlersManager
 
 **File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) — `HandlersManager.__init__` builds the `self.handlers: List[HandlerTuple] = [...]` literal (the `LLMMessageHandler` tuple is appended **after** any conditional/custom handlers to preserve the must-stay-last invariant).
+
+The `HandlersManager` constructor accepts:
+- `configManager` — `ConfigManager` instance
+- `database` — `Database` instance
+- `botProvider` — `BotProvider` enum (Telegram or Max)
+- `messageStatsStorage` — Optional `StatsStorage` instance for `message` events (both directions; default `NullStatsStorage`)
+- `commandStatsStorage` — Optional `StatsStorage` instance for `command` events (default `NullStatsStorage`)
+
+After the handler list is built, `HandlersManager.__init__` loops over it and calls `BaseBotHandler.injectStatsStorage(self.messageStatsStorage)` on every handler (post-construction injection — `injectStatsStorage` sets `self.messageStatsStorage = statsStorage or NullStatsStorage()`, so handlers record message events without taking a storage in their own constructor).
+
+**Command statistics:** When `commandStatsStorage` is provided (not `NullStatsStorage`), `handleCommand()` records a `command` event for every executed command with `command_count=1`, `is_error=0` on success or `is_error=1` on exception. Labels are `user_id` and `commandName` (lowercased, matching handler lookup — `/Help` and `/help` share one bucket). The `consumerId` is the chat ID. Commands denied by permission or category gates (early returns) are **not** recorded. Recording is gated on `[stats] enabled` (default `false`).
 
 ```python
 # At top of file, add import:
@@ -458,8 +560,9 @@ Full chain:
 16. (if enabled) `DivinationHandler` — PARALLEL — gated by `[divination].enabled`
 17. (if enabled) `SandboxHandler` — PARALLEL — gated by `[sandbox].enabled`
 18. (if enabled) `ChatSearchHandler` — PARALLEL — gated by `[search-history].enabled`
-19. (custom handlers) — PARALLEL by default (configurable per-handler)
-20. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+19. (if enabled) `StatsHandler` — PARALLEL — gated by `[stats].enabled`
+20. (custom handlers) — PARALLEL by default (configurable per-handler)
+21. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 ---
 
@@ -483,6 +586,36 @@ Full chain:
 - Return `FATAL` only for critical unrecoverable errors
 
 ---
+
+## 8. Chat Accessibility Tracking
+
+The bot records per-chat presence in `chat_info.bot_status` (`ChatBotStatus.ACTIVE` / `ChatBotStatus.INACCESSIBLE`) so it can stop iterating chats it has been kicked from. Three handler-layer touch points implement it; the authoritative design (binding decisions, recovery semantics, restart edge cases) lives in [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md#implementation-divergence-2026-08-12).
+
+### 8.1 `MessagePreprocessorHandler` — recovery hook
+
+[`MessagePreprocessorHandler.newMessageHandler`](../../internal/bot/common/handlers/message_preprocessor.py) is the **sole** recovery hook. Near the top of every inbound message it runs:
+
+```python
+if await self.cache.isChatInaccessible(chatId):
+    await self.cache.markChatActive(chatId)
+```
+
+An `INACCESSIBLE` chat recovers to `ACTIVE` within **one** inbound message. `isChatInaccessible` is an **async** cache-aside lookup (in-memory chat-info cache first, DB on miss), so an active chat that is already cached pays only the cheap cached `getChatInfo` read — no platform API call and, on the steady-state hot path, no DB write. `markChatActive` writes only when the chat was actually `INACCESSIBLE` (it routes through `getChatInfo` → `setChatInfo` → `updateChatInfo(botStatus=...)`).
+
+### 8.2 `TheBot.getChatAdmins` — async short-circuit + mark-on-failure
+
+[`TheBot.getChatAdmins`](../../internal/bot/common/bot.py) is the **primary detection hook**. It layers accessibility writes on top of its existing graceful-degradation `{}` return:
+
+- **Async short-circuit (top of method):** `if await self.cache.isChatInaccessible(chat.id): return {}`. The check is cache-aside — cheap (a cached `getChatInfo` hit) when the chat is already in the in-memory chat-info cache, with a DB read only on a miss. A chat already marked dead this process therefore provokes **zero** platform API calls — `isAdmin` returns `False` and chat-list callers silently skip the chat. Recovery (§8.1) flips the cached `bot_status` back to `ACTIVE`, so the short-circuit is self-healing.
+- **Mark-on-failure (the existing three catch arms):** Telegram `telegram.error.Forbidden`, Telegram `telegram.error.BadRequest` **only** when the message contains `"chat not found"` (other `BadRequest`s re-raise — real API-usage errors still surface), and Max `lib.max_bot.exceptions.NotFoundError` → `await self.cache.markChatInaccessible(chat.id)` (reads `getChatInfo`, sets `bot_status = INACCESSIBLE`, persists via `setChatInfo`), log a warning, and `return {}` **without poisoning the admin cache** (the existing no-cache-on-failure behaviour is preserved). `isAdmin` returning `False` for the chat is identical to the prior graceful-degradation shape, so existing callers degrade unchanged.
+
+There is intentionally **no mark-on-success hook** and **no** in-memory `_inaccessibleChats` set — see the design doc divergence section linked above for why the dedicated set was dropped in favour of the cache-aside `getChatInfo` path. Note that `TheBot.getChatInfo` hardcodes `bot_status = ChatBotStatus.ACTIVE` in both platform return dicts, and `CacheService.setChatInfo` forwards `info["bot_status"]` (direct subscript) into `updateChatInfo`, whose `botStatus` default is also `ACTIVE`. The every-message refresh path (`BaseBotHandler.updateChatInfo` → `TheBot.getChatInfo` → `CacheService.setChatInfo` → repo `updateChatInfo`) therefore ALWAYS writes `ACTIVE` to both the cache and the DB, so a transient `INACCESSIBLE` set by `markChatInaccessible` self-heals to `ACTIVE` on the next inbound message — which is the intended behaviour, since receiving a message proves the chat is accessible. The `INACCESSIBLE` state only persists between the failed `getChatAdmins` probe and the next inbound message from that chat; `bot_status` is a short-lived "getChatAdmins probe failed" flag, not a permanent state.
+
+### 8.3 `/list_chats` — the `botStatus=None` owner escape hatch
+
+Every chat-listing consumer excludes inaccessible chats by default: the repository methods `ChatUsersRepository.getUserChats` / `getAllGroupChats` default to `botStatus=ChatBotStatus.ACTIVE`. So `/configure`, the topic-manager / summarization / user-memories chat pickers, the non-owner `/list_chats` branch, and the spam-stats scan all silently hide chats the bot was kicked from — this is what stops `/configure` from iterating (and crashing on) dead chats. (Consumers call the repository directly; the old `BaseBotHandler.getUserChats` wrapper was removed when the accessibility feature was simplified.)
+
+The **one** exception is the bot-owner `/list_chats all` branch in [`CommonHandler`](../../internal/bot/common/handlers/common.py), which passes `botStatus=None` (no SQL predicate) so the owner sees inaccessible chats for diagnostics. That branch is already gated `isBotOwner(...)`, so it is the single user-facing signal that means "show me everything, including chats I was kicked from". See design doc §7.4 (owner-visibility note) for the rationale.
 
 ## See Also
 

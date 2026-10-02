@@ -15,8 +15,9 @@ Example:
     >>> provider = YcAIProvider(apiKey="your-api-key")
 """
 
+from .opencode_go_provider import OpencodeGoProvider
 from .openrouter_provider import OpenrouterProvider
 from .yc_openai_provider import YcOpenaiProvider
 from .yc_sdk_provider import YcAIProvider
 
-__all__ = ["YcAIProvider", "YcOpenaiProvider", "OpenrouterProvider"]
+__all__ = ["YcAIProvider", "YcOpenaiProvider", "OpenrouterProvider", "OpencodeGoProvider"]

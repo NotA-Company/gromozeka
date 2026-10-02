@@ -10,7 +10,7 @@ Classes:
     OpenrouterProvider: OpenRouter provider implementation extending BasicOpenAIProvider.
 
 The module supports:
-- Text generation with configurable temperature and context size
+- Text generation with configurable custom parameters (including temperature) and context size
 - Tool/function calling capabilities for compatible models
 - Custom headers for OpenRouter rankings and analytics
 - Seamless integration with the existing OpenAI-compatible infrastructure
@@ -21,8 +21,8 @@ OpenRouter-specific features:
 - Usage analytics and rankings
 - Custom headers for application identification
 
-Example:
-    To use the OpenRouter provider:
+    Example:
+        To use the OpenRouter provider:
 
     ```python
     from lib.ai.providers.openrouter_provider import OpenrouterProvider
@@ -36,8 +36,8 @@ Example:
         name="gpt-4",
         modelId="openai/gpt-4",
         modelVersion="latest",
-        temperature=0.7,
         contextSize=8192,
+        customParams={"temperature": 0.7},
     )
 
     result = await model.generateText(messages)
@@ -47,7 +47,7 @@ Example:
 import logging
 from typing import Any, Dict, Optional
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 
 from lib.proxy import ProxyConfig
@@ -79,21 +79,25 @@ class OpenrouterModel(BasicOpenAIModel):
         - provider: The OpenrouterProvider instance that created this model.
         - modelId: The identifier of the model to use in API calls.
         - modelVersion: The version string of the model.
-        - temperature: The sampling temperature for generation.
+        - _customParams: Per-model custom parameters passed through to the
+            underlying API call (temperature, top_p, max_tokens, etc.).
         - contextSize: The maximum context window size in tokens.
 
     Args:
         provider: The OpenrouterProvider instance that created this model.
         modelId: The identifier of the model to use in API calls (e.g., "openai/gpt-4").
         modelVersion: The version string of the model (e.g., "latest", "v1").
-        temperature: The sampling temperature for generation (0.0 to 2.0).
-            Lower values make the output more deterministic, higher values more random.
         contextSize: The maximum context window size in tokens.
         openAiClient: The OpenAI async client instance for API communication.
         extraConfig: Additional configuration options for the model, such as:
             - support_tools: Boolean indicating tool support (default: False)
             - support_images: Boolean indicating image generation support (default: False)
             - Other provider-specific options
+        customParams: Per-model custom parameters passed through to the
+            underlying OpenRouter API call (temperature, top_p, max_tokens,
+            etc.). OpenRouter's default ``extra_headers`` are merged in by
+            :meth:`_getExtraParams`; any user-supplied keys here take
+            precedence. See :attr:`AbstractModel._customParams`.
 
     Example:
         ```python
@@ -101,10 +105,10 @@ class OpenrouterModel(BasicOpenAIModel):
             provider=provider,
             modelId="openai/gpt-4",
             modelVersion="latest",
-            temperature=0.7,
             contextSize=8192,
             openAiClient=client,
-            extraConfig={"support_tools": True}
+            extraConfig={"support_tools": True},
+            customParams={"temperature": 0.7},
         )
 
         result = await model.generateText(messages)
@@ -117,10 +121,10 @@ class OpenrouterModel(BasicOpenAIModel):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
         openAiClient: AsyncOpenAI,
     ) -> None:
         """Initialize an OpenRouter model instance.
@@ -129,10 +133,12 @@ class OpenrouterModel(BasicOpenAIModel):
             provider: The OpenrouterProvider instance that created this model.
             modelId: The identifier of the model to use in API calls.
             modelVersion: The version string of the model.
-            temperature: The sampling temperature for generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             openAiClient: The OpenAI async client instance.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenRouter API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Raises:
             ValueError: If required configuration is missing or invalid.
@@ -141,40 +147,37 @@ class OpenrouterModel(BasicOpenAIModel):
             provider,
             modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
             openAiClient=openAiClient,
         )
 
     def _getExtraParams(self) -> Dict[str, Any]:
-        """Get OpenRouter-specific extra parameters for API calls.
+        """Get OpenRouter-specific extra parameters merged with customParams.
 
-        This method returns custom headers and parameters that are sent with each
-        API request to OpenRouter. These headers are used for:
-        - Application identification in OpenRouter's analytics
-        - Rankings on openrouter.ai
-        - Usage tracking and attribution
-
-        The headers include:
-        - HTTP-Referer: The URL of the application using OpenRouter
-        - X-Title: The title/name of the application
+        Merges OpenRouter's default ``extra_headers`` (used for application
+        identification / rankings on openrouter.ai) with the user-supplied
+        ``customParams`` from :meth:`BasicOpenAIModel._getExtraParams`.
+        ``customParams`` keys take precedence over the provider defaults
+        via ``{**providerDefaults, **super()._getExtraParams()}`` ordering
+        (last-wins), so a user who sets ``customParams={"extra_headers":
+        {...}}`` in TOML overrides the Gromozeka defaults entirely.
 
         Returns:
-            A dictionary containing extra parameters to include in API calls:
-            - extra_headers: Dictionary of custom HTTP headers
-            - Additional provider-specific parameters (currently commented out)
+            A dict carrying ``extra_headers`` (for OpenRouter analytics)
+            plus every key the user put in ``customParams``.
         """
-        return {
+        providerDefaults: Dict[str, Any] = {
             "extra_headers": {
                 # Optional. Site URL for rankings on openrouter.ai.
                 "HTTP-Referer": "https://notacompany.org/products/gromozeka",
                 # Optional. Site title for rankings on openrouter.ai.
                 "X-Title": "Gromozeka AI Bot",
             },
-            # "max_tokens": min(4096, self.context_size)  # Reasonable default
         }
+        return {**providerDefaults, **super()._getExtraParams()}
 
 
 class OpenrouterProvider(BasicOpenAIProvider):
@@ -213,8 +216,8 @@ class OpenrouterProvider(BasicOpenAIProvider):
             name="gpt-4",
             modelId="openai/gpt-4",
             modelVersion="latest",
-            temperature=0.7,
             contextSize=8192,
+            customParams={"temperature": 0.7},
         )
 
         result = await model.generateText(messages)
@@ -302,10 +305,10 @@ class OpenrouterProvider(BasicOpenAIProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create an OpenRouter model instance.
 
@@ -319,12 +322,14 @@ class OpenrouterProvider(BasicOpenAIProvider):
             modelId: The identifier of the model to use in API calls. This should
                 be in the format "provider/model" (e.g., "openai/gpt-4").
             modelVersion: The version string of the model (e.g., "latest", "v1").
-            temperature: The sampling temperature for generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             extraConfig: Additional configuration options for the model, such as:
                 - support_tools: Boolean indicating tool support (default: False)
                 - support_images: Boolean indicating image generation support (default: False)
                 - Other provider-specific options
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenRouter API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Returns:
             An OpenrouterModel instance configured with the provided parameters.
@@ -338,9 +343,9 @@ class OpenrouterProvider(BasicOpenAIProvider):
                 name="gpt-4",
                 modelId="openai/gpt-4",
                 modelVersion="latest",
-                temperature=0.7,
                 contextSize=8192,
-                extraConfig={"support_tools": True}
+                extraConfig={"support_tools": True},
+                customParams={"temperature": 0.7},
             )
             ```
         """
@@ -351,9 +356,9 @@ class OpenrouterProvider(BasicOpenAIProvider):
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
             openAiClient=self._client,
         )

@@ -127,6 +127,61 @@ class TestNullCache:
         await self.cache.clear()
         await self.cache.clear()
 
+    @pytest.mark.asyncio
+    async def test_clearold_returns_true(self) -> None:
+        """Test that clearOld() returns True (no-op).
+
+        Verifies that clearOld is a no-op that always returns True,
+        matching the success-including-no-op contract.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If clearOld doesn't return True.
+        """
+        # Should return True regardless of ttl
+        result = await self.cache.clearOld(ttl=None)
+        assert result is True
+
+        result = await self.cache.clearOld(ttl=0)
+        assert result is True
+
+        result = await self.cache.clearOld(ttl=3600)
+        assert result is True
+
+        result = await self.cache.clearOld(ttl=-1)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_clearold_stores_nothing(self) -> None:
+        """Test that clearOld() doesn't store anything.
+
+        Verifies that calling clearOld doesn't affect the no-op behavior
+        of the cache.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If clearOld stores data.
+        """
+        # Call clearOld
+        await self.cache.clearOld(ttl=3600)
+
+        # Verify no state is maintained
+        assert await self.cache.get("any_key") is None
+
+        # Set something to verify clearOld didn't change set behavior
+        await self.cache.set("key", "value")
+        assert await self.cache.get("key") is None
+
     def test_get_stats_returns_disabled(self) -> None:
         """Test that getStats() returns cache disabled indicator.
 

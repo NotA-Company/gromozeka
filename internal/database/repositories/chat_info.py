@@ -8,10 +8,11 @@ as managing forum topic information.
 import logging
 from typing import List, Optional
 
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
-from ..models import ChatInfoDict, ChatTopicInfoDict
-from ..providers.base import ExcludedValue
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import ExcludedValue
+
+from ..models import ChatBotStatus, ChatInfoDict, ChatTopicInfoDict
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ class ChatInfoRepository(BaseRepository):
         title: Optional[str] = None,
         username: Optional[str] = None,
         isForum: Optional[bool] = False,
+        *,
+        botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE,
     ) -> bool:
         """Add or update chat information in the database.
 
@@ -55,6 +58,7 @@ class ChatInfoRepository(BaseRepository):
             title: Optional chat title
             username: Optional chat username
             isForum: Whether the chat is a forum (default: False)
+            botStatus: bot accessibility status.
 
         Returns:
             bool: True if successful, False otherwise
@@ -78,6 +82,7 @@ class ChatInfoRepository(BaseRepository):
                     "is_forum": isForum,
                     "created_at": currentTimestamp,
                     "updated_at": currentTimestamp,
+                    "bot_status": botStatus,
                 },
                 conflictColumns=["chat_id"],
                 updateExpressions={
@@ -86,6 +91,7 @@ class ChatInfoRepository(BaseRepository):
                     "username": ExcludedValue(),
                     "is_forum": ExcludedValue(),
                     "updated_at": ExcludedValue(),
+                    "bot_status": ExcludedValue(),
                 },
             )
             return True

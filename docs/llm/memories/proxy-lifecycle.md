@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Proxy Lifecycle Management — Durable Memory
 
 Archived notes from the proxy lifecycle management feature (completed 2026-06-26).
@@ -21,7 +25,7 @@ Read when touching `internal/services/proxy/`, `lib/proxy/` lifecycle fields,
 ### Integration Points
 - `QueueService` CRON_JOB: periodic health checks (~60s ticks, gated by modulo on interval).
 - `QueueService` DO_EXIT: graceful shutdown of all proxy processes.
-- `main.py`: `ProxyService.getInstance().initialize()` called after `setGlobalProxyConfig()`.
+- `main.py` (`GromozekBot` init, ~:92): `ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)`; `setGlobalProxyConfig()` happens INSIDE `initialize()` (`internal/services/proxy/service.py` ~:103, via `ProxyHelper.getInstance()`).
 - Call sites migrated (4 files): `telegram/application.py`, `max/application.py`, `weather.py`, `yandex_search.py`.
 
 ### Call-Site Migration Pattern

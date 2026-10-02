@@ -1,15 +1,19 @@
+---
+category: reference
+---
+
 # Teamlead Memory
 
 Durable working memory for `.opencode/agents/teamlead.md`.
 
-How to use this file:
-- Read it at the beginning of every task.
-- If the task touches a subsystem with archived task memory under [`memories/`](memories/index.md), read the relevant file too.
-- Re-read it when prior context feels uncertain or incomplete.
-- Update it immediately after learning durable new information.
-- Consolidate and clean it before finishing a task.
-- Store reusable facts, not temporary task chatter.
-- Never store secrets, tokens, `.env` values, or raw logs.
+How to use this file (markdown-mcp era, updated 2026-09-14):
+- Read the FULL file at the beginning of every task — deliberate recall insurance. Semantic search is score-floored and must not gate first exposure to gotchas; the full read is the guarantee.
+- Mid-task re-reads: when markdown-mcp is available, prefer `doc_outline("llm/teamlead-memory.md")` + targeted `doc_read(section_slug=…)` over re-reading the whole file; plain `read` is the exact fallback. Section names are the addressing API — keep them descriptive when adding content.
+- Subsystem memory discovery: `doc_search(query, file_glob="llm/memories/*.md")` surfaces relevant archived memories semantically — use it alongside the topic catalog below (raw Grep stays the exhaustive completion check for sweeps).
+- Re-read when prior context feels uncertain or incomplete.
+- Update immediately after learning durable new information; consolidate and clean before finishing a task.
+- Writes to this file stay on the native `edit` tool — markdown-mcp write tools are denied for teamlead by the permission matrix (deliberate). Bulk extraction to `memories/` goes through `/refine-memory` (docs-writer owns the MCP writes there).
+- Store reusable facts, not temporary task chatter. Never store secrets, tokens, `.env` values, or raw logs.
 
 ## User Preferences
 
@@ -19,43 +23,127 @@ How to use this file:
 - Responses must be in English.
 - **Anonymize identifiable third-party content in tests**, even for regression tests that reproduce a specific production failure. Keep the STRUCTURAL shape that exercises the bug (bracket positions, character classes, regex-relevant punctuation, JSON block layout) but replace real article text, real site names, and real URLs with placeholders (e.g. `[Новостный сайт](https://news.ru/1/2/3)`). The bot's own prompts/tool-call payloads that don't identify third parties can be inlined verbatim (precedent: `FAILED_0703_TEXT`, `FAILED_0710_TEXT` inline Russian image-generation prompts verbatim). When a brief says "verbatim" for failure-log test data, default to anonymized unless the user explicitly asks for the real text. Do NOT claim "round-trip-verified identical" if you sanitized — say so explicitly so the teamlead can verify the structural shape is preserved.
 - **`.opencode/memory.jsonl` is OpenCode's own auto-managed session memory store.** It is auto-appended/modified by OpenCode on every task, is expected to show as modified in `git status` during any session, and IS normally committed as part of regular flow — do NOT exclude it from commits. The rule is HANDS-OFF, not exclude-from-git: NEVER read, edit, or manually touch it (don't `cat`, don't explicitly stage, don't flag as a stray/unrelated change, don't include its contents in reports/diffs). When staging a doc/cleanup commit, just let it ride with whatever else is being committed; don't single it out.
+- **ALWAYS stage `docs/llm/teamlead-memory.md` in arc commits** — update memory BEFORE dispatching the commit agent and list the file in the staging expectations (missed once when edited post-commit; promoted from the stats arc 2026-09-02).
+- When the user pushes back on a design with a concrete alternative, stress-test THEIR version (especially against history/backfill constraints) before defending yours — their alternative has repeatedly been better on a dimension I'd missed (promoted from the stats arc 2026-09-02).
+- **Deployment taste:** NOTHING outside the project dir (no docker named volumes, no `~/` paths — runtime state lives in project-local gitignored dirs); private-host deps download at build like any other dependency; prefer sharing the aliased stack (`alias_httpx()`) over installing shadow duplicates in satellite deployments.
+- **No value-pinning regression tests for catalog/config data** (2026-09-25): user had `TestYandexModelCatalogRegression` (tests pinning TOML catalog values — contexts, model_ids, temperatures, key presence) removed the day it was added. Catalog/config data is a user-maintained surface; accepted drift. Do NOT add such tests even when a review P2 asks for regression coverage on a catalog fix — the AGENTS.md regression-test rule is for code bugs.
 
 ## Task-Specific Memory Files
 
-Full index and one-line descriptions live in [`memories/index.md`](memories/index.md) — read the relevant file before working on a subsystem. Topics covered: proxy config & lifecycle, Max Messenger API migration & webhooks, chat history & vector search, bot handlers (delete-from-user, resender, bot-answer-probability), LLM tooling & internals (use-tools filtering, tool-call healing, maxRounds limit, user-message format, messages-handler structure, shutdown state dump, empty TRUNCATED_FINAL bug), **user memories (+ v2 pre-merge review, refinement, context dedup, compaction)**, **condensed-context retrieval**, **chat-users cache**, **DB cache cleanup & cron**, **DB maintenance scripts**, **dependency-usage regression tests**, **doc-link checking + docs reorg/archive/audit**, **test-suite speedup**, **review-campaign lessons**, **skills & agents landscape audit**, codebase cleanup (Any types, dedoodization), testing & sandbox.
+Full catalog with one-liners: [`memories/index.md`](memories/index.md). Retired memories: [`docs/archive/llm-memories/`](../archive/llm-memories/). Docs-tree navigation: [`docs/README.md`](../README.md) and [`docs/archive/README.md`](../archive/README.md).
 
-## DB Cache Cleanup (verified 2026-07-15)
+### Subsystems and libraries
 
-See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable notes for the cache cleanup mechanism: `clearOldCacheEntries`, weekly cron + on-shutdown triggers, per-namespace TTLs, Bayes tokens cleanup, `cache_storage` exemption.
+- /sandbox update (pool staging/swap arc, 2026-09): [`sandbox-update.md`](memories/sandbox-update.md); lib/sandbox subsystem reference: [`sandbox.md`](memories/sandbox.md)
+- lib/stats (collecting + aggregation + /stats display): [`stats-subsystem.md`](memories/stats-subsystem.md)
+- lib/db + lib/cache extraction (ADR-022/024, complete): [`lib-db-extraction.md`](memories/lib-db-extraction.md)
+- Max webhook receiver → lib (ADR-025): [`max-webhook-receiver-extraction.md`](memories/max-webhook-receiver-extraction.md); Max API + TLS: [`max-api-migration.md`](memories/max-api-migration.md)
+- STT media transcription (v1+v1.1): [`stt-media-transcription.md`](memories/stt-media-transcription.md)
+- httpx2 migration: [`httpx2-migration.md`](memories/httpx2-migration.md)
+- Proxy subsystem (config semantics + lifecycle): [`proxy.md`](memories/proxy.md), [`proxy-lifecycle.md`](memories/proxy-lifecycle.md)
+- Native vector search (sqlite-vec/vec0): [`vector-search.md`](memories/vector-search.md)
+- Model catalog generation + migration tool + vision flag (2026-09 arcs): [`models-catalog-generation.md`](memories/models-catalog-generation.md), [`model-migration-tool.md`](memories/model-migration-tool.md), [`vision-flag.md`](memories/vision-flag.md)
+
+### User memory and context
+
+- User memories (unified store, relevance scores, compaction): [`user-memories.md`](memories/user-memories.md) (+ refinement, ADR-018 context dedup, v2 pre-merge review)
+- Condensed-context retrieval (ADR-019): [`condensed-context-retrieval.md`](memories/condensed-context-retrieval.md)
+- Chat history search: [`chat-history-search.md`](memories/chat-history-search.md)
+- Embedding model-lookup refactor: [`embedding-model-lookup-refactor.md`](memories/embedding-model-lookup-refactor.md)
+
+### LLM internals
+
+- Tool-call healing (6 matchers): [`llm-tool-call-healing.md`](memories/llm-tool-call-healing.md)
+- useTools per-tool filtering: [`use-tools-filtering.md`](memories/use-tools-filtering.md)
+- maxRounds round-limit: [`llm-max-rounds.md`](memories/llm-max-rounds.md)
+- customParams refactor: [`llm-customparams-refactor.md`](memories/llm-customparams-refactor.md)
+- User-message JSON format: [`llm-user-message-format.md`](memories/llm-user-message-format.md)
+- llm_messages handler structure: [`llm-messages-handler.md`](memories/llm-messages-handler.md)
+- Empty TRUNCATED_FINAL bug (open): [`llm-empty-truncated-final.md`](memories/llm-empty-truncated-final.md)
+
+### sessionId contract for lib/ai calls (audited 2026-09-20 — HISTORICAL SNAPSHOT; superseded by the completed implementation two sections down)
+
+See [`memories/llm-sessionid-domains.md`](memories/llm-sessionid-domains.md) — the pre-implementation audit snapshot (ContextVar transport, sole consumer, canonical generator, ~30 omission sites), archived with — and superseded by — the completed implementation in the same file.
+
+### grabliarium LLM seam + sessionId domain design (2026-09-20; COMPLETE — all gates passed)
+
+See [`memories/llm-sessionid-domains.md`](memories/llm-sessionid-domains.md) — full D1–D6 domain taxonomy, user decisions, the 8-phase implementation wave (canonical record: ADR-026 in docs/llm/architecture.md), design amendments, and the deferred-embeddings stance. (The ext_modules gitignore blind spot and the 8-way-parallel-wave review lesson were hoisted to Repo Facts / Workflow Lessons.)
+
+### Bot features
+
+- ChatSettingsPage (page-lowering = privilege escalation): [`chat-settings-pages.md`](memories/chat-settings-pages.md)
+- Chat accessibility (getChatAdmins + bot_status): [`chat-accessibility.md`](memories/chat-accessibility.md)
+- Chat users cache (ADR-015): [`chat-users-cache.md`](memories/chat-users-cache.md)
+- Telegram send retry: [`telegram-send-retry.md`](memories/telegram-send-retry.md)
+- DB cache cleanup cron: [`db-cache-cleanup.md`](memories/db-cache-cleanup.md)
+
+### Docs, review, and process
+
+- Docs rewrite 2026-09 (markdown-mcp arc): [`docs-rewrite-2026-09.md`](memories/docs-rewrite-2026-09.md)
+- markdown-mcp adoption arc (permission matrix + benchmark + evidence reports): [`markdown-mcp-adoption-arc.md`](memories/markdown-mcp-adoption-arc.md)
+- Docs reorg lessons: [`docs-reorg-lessons.md`](memories/docs-reorg-lessons.md)
+- Full /docs audit + drift taxonomy: [`full-docs-audit.md`](memories/full-docs-audit.md)
+- Documentation audit lessons: [`documentation-audit.md`](memories/documentation-audit.md)
+- Review-fix lessons: [`review-fix-lessons.md`](memories/review-fix-lessons.md)
+- Skills & agents audit: [`skills-agents-audit.md`](memories/skills-agents-audit.md)
+- Dependency-usage regression tests: [`dependency-usage-tests.md`](memories/dependency-usage-tests.md)
+- Test-suite speedup patterns: [`test-suite-speedup.md`](memories/test-suite-speedup.md)
 
 ## Repo Facts And Gotchas
 
+### Tooling: freeze-requirements and the lockfile
+
+- **`make freeze-requirements` is BROKEN by pre-existing venv drift (2026-08-13, discovered):** `make freeze-requirements` just runs `pip freeze > requirements.txt`, capturing the WHOLE local venv. The dev venv has pre-existing cruft NOT in the committed lockfile: `lib/ext_modules/grabliarium` deps (lxml, weasyprint, fonttools, tinycss2, cssselect2, pydyf, pyphen, tinyhtml5, webencodings, brotli, zopfli) and `onnxruntime` (fastembed needs it, but CI gets `py3-onnxruntime` from Alpine system packages, so the committed lockfile DELIBERATELY excludes it). grabliarium is NOT installed by the Makefile and is NOT a pip package in the venv (no dist-info) — its deps were manually `pip install`ed. So running `make freeze-requirements` pollutes requirements.txt with ~13 unrelated packages + reordering churn. **The committed requirements.txt deliberately excludes OS-provided/ext-module packages.** When adding a new pip dependency: either (a) regenerate in a CLEAN venv (`make clean && make venv && make install-direct && make freeze-requirements` — but note this would re-add onnxruntime, diverging from the deliberate-exclusion pattern, and is slow due to torch/onnxruntime), or (b) the pragmatic correct path used for the httpx2 migration: **hand-edit requirements.txt to add ONLY the genuinely-new packages** (justified exception to the "never hand-edit" rule, since the sanctioned tool is what's broken). Always verify the httpx2-style diff is exactly the new packages. Tech debt: freeze-workflow should be fixed (clean-venv target or documented hand-edit exception). `Makefile`: `install` uses requirements.txt, `install-direct` uses requirements.direct.txt, `freeze-requirements` = `pip freeze`.
+- **ext_modules gitignore blind spot:** `lib/ext_modules/grabliarium/` is gitignored (nested vendored repo with its own `.git`) — grep/glob tools that respect .gitignore see NOTHING inside `lib/ext_modules/`; verify ext_modules contents with direct file reads, and discover its tests with `find`, not glob. Caused a false "zero usage" census result (2026-09-20 sessionId audit).
+- See [`memories/httpx2-migration.md`](memories/httpx2-migration.md) — httpx→httpx2 research + completed migration (2026-08-13): `alias_httpx()`, PTB b2 decision, native SOCKS `proxy=`, lockfile facts, h2-over-SOCKS5 verdict (D3 guard removed as dead weight).
+- See [`memories/chat-accessibility.md`](memories/chat-accessibility.md) — `getChatAdmins` graceful degradation (Forbidden/NotFoundError → `{}` + warning, no cache poisoning) + `chat_info.bot_status` tracking (migration_026, `ChatBotStatus`, cache-aside, preprocessor self-heal).
+### Test infrastructure and routing lessons
+
+- **Migration-test infra: `rollbackTo` is the durable fix (2026-08-12, IMPLEMENTED):** Per-migration tests in `tests/database/test_migration_NNN_*.py` used `rollback(steps=N)` with N hard-coded against a specific "latest" version — adding ANY new migration broke them (recurring on 021, 024, and now 026). Fixed properly by adding `MigrationManager.rollbackTo(targetVersion=...)` (absolute target, independent of latest) and making `rollback(steps=...)` delegate to it; converted all fragile helpers to `rollbackTo(targetVersion=K)`. **Future migrations need ZERO per-migration test edits.** The old "bump the step count by +1" advice (memories `ad02a28e`/`8b804554`) is SUPERSEDED — always use `rollbackTo(targetVersion=K)`.
+- **Routing lesson — software-developer step budget on test-heavy harnesses (2026-08-12):** Writing tests against the `MessagePreprocessorHandler` harness repeatedly hit the ~60-step limit and twice returned an EMPTY `task_result` (the work was actually applied to the tree, just unreported). Lessons: (1) Decompose — dispatch `explore` FIRST to extract the exact existing test-driving pattern (fixture + message builder + how `newMessageHandler` is invoked), then write a zero-exploration `software-developer` brief with that pattern inlined. (2) An empty `task_result` does NOT mean failure — verify working-tree state via a read-only agent before re-delegating. (3) When a phase's production change breaks PRE-EXISTING tests (e.g. adding `await self.cache.markChatActive(...)` to the preprocessor hot path broke tests whose `CacheService.getInstance()` stubs were plain `Mock()`), the fix is updating those fixtures (`Mock(spec=CacheService)` + `AsyncMock` for awaited methods, `Mock` for sync), NOT weakening production.
+- **Validator/emitter parity (models-catalog arc lesson):** any value shape accepted at parse-time validation must be provably emittable — lock it with validation → emission → `tomllib.loads` DEEP-equality round-trip tests (a nested-customParams gap once passed validation and crashed emission; found only in review).
+- **Empty `task_result` from software-developer can mean ZERO work landed (2026-09-14), not just mid-work truncation** — always verify the working tree read-only before re-delegating (refines the 2026-08-12 lesson above); splitting a combined fix+tests+regeneration brief into a code-fix round + a tests/regen round succeeded where the combined brief truncated.
+- **Real-Docker tests:** the desktop Docker VM shares only `/Users` (pytest `tmp_path` under `/var/folders` binds to empty VM dirs) — use `~/.gromozeka-tests/<suite>/<uuid>` workspaces; Colima host binds are root-owned → containers run `0:0`; invoke with `DOCKER_AVAILABLE=1 DOCKER_HOST=unix://<colima-socket>` — full recipe in [`memories/sandbox-update.md`](memories/sandbox-update.md).
+- Tests keyed to `iterdir()`/filesystem order can silently lose mutation-sensitivity under APFS — derive expectations from the same enumeration the code uses.
+### Cache mutation, utilities, and repo idioms
+
+- **CACHE-MUTATION GOTCHA (repo-wide, discovered 2026-08-11):** `CacheService.getMemoriesByIds` (and the underlying `LRUCache.get`) return DIRECT references into the shared in-process cache — no copy. Any caller that augments a returned cached dict (e.g. a `SingleMemoryDict`) MUST shallow-copy first (`{**entry, "score": ...}`); mutating in place permanently pollutes the cache and leaks the mutation across ALL future callers (e.g. a score attached in one render leaks into a later scoreless render). Caught by a Gate-1 review during the user-memories score work; locked by `tests/bot/models/test_ensured_message.py::test_cacheMutation_bug_shortTermScoresLeakBetweenCalls`. Apply this rule anywhere code augments a cache-returned dict.
+- See [`memories/user-memories.md`](memories/user-memories.md) §"Semantic Relevance Score" — ephemeral-memory relevance score plumbing (`searchMemories` → `shortTermScores` → `formatForLLM`; shallow-copy rule above).
+- See [`memories/stt-media-transcription.md`](memories/stt-media-transcription.md) — the full STT media-transcription arc: lib/stt design + user simplifications, stateless STTService, `_processMediaV2` integration, v1.1 Object Storage + provider stats, speaker attribution/channelTag closeout, aurumentation golden suite, v1+v1.1 review campaign.
 - `lib/utils/ttl_dict.py` provides a thread-safe TTL dict with GC, lazy expiration, and full dict API. Uses sentinel pattern for unspecified TTL vs ttl=None.
 - `pathlib.relative_to()` is preferred over `str.startswith()` for path containment checks (cross-platform, handles symlinks/trailing slashes).
 - `dict.setdefault()` is the canonical one-liner fix for check-then-create race conditions in CPython (GIL-protected).
 - Async tests should use `async def test_...` without `@pytest.mark.asyncio`; `asyncio_mode = "auto"` handles them.
-- Bot handler config-gating pattern: `if self.configManager.get("section", {}).get("enabled", False)` in HandlersManager, register before LLMMessageHandler (line ~534). Use `HandlerParallelism.PARALLEL` for most handlers.
+### Bot handler and chat-settings patterns
+
+- Bot handler config-gating pattern: `if self.configManager.get("section", {}).get("enabled", False)` in HandlersManager, register before LLMMessageHandler (`manager.py:639`). Use `HandlerParallelism.PARALLEL` for most handlers.
 - Chat setting access: `BaseBotHandler.getChatSettings()` returns `ChatSettingsDict` = `Dict[ChatSettingsKey, ChatSettingsValue]` — values are objects; use `.toBool()`/`.toStr()`/`.toInt()`/`.toFloat()`/`.toList()`/`.toModel()` (NOT tuple indexing). The `(value, updatedBy)` tuple shape exists ONLY at the DB-repo layer (`self.db.chatSettings.getChatSettings()`, returns `Dict[str, tuple[str, int]]`). Writes: handler `setChatSetting(..., *, user: MessageSender)` — keyword-only is `user`; repo `setChatSetting(..., *, updatedBy: int)`.
 - `isBotOwner()` is on `BaseBotHandler` (not `_bot`). Mock it as `handler.isBotOwner = Mock(...)` in tests, not `handler._bot.isBotOwner`.
 - `ConfigManager.get()` does NOT support dotted-path traversal -- it is plain `dict.get(key, default)`. Always use nested `.get()` calls.
 - Multi-section truncation: update cumulative length after each section or all sections share the same remaining space (overflow risk).
 - `newMessageHandler` does NOT gate commands. Commands are dispatched via `@commandHandlerV2` decorator and bypass the message handler chain. Per-command access checks must be in each command method (use a shared `_checkAccess()` helper).
+### LLM tool registration and provider seams
+
 - LLM tool registration: `self.llmService.registerTool(name, description, [LLMFunctionParameter(...)], handler=self._method)` in `__init__`. Gate with feature-enabled flag. Imports: `from lib.ai import LLMFunctionParameter, LLMParameterType`.
 - LLM tool handler method naming: use `_llmTool*` prefix (e.g., `_llmToolRunSandboxCode`, `_llmToolSandboxListFiles`) so the method's role is clear without reading the registration code.
 - LLM tool handler signature: `async def _llmTool*(self, extraData: Optional[Dict[str, Any]], param1, ..., **kwargs: Any) -> Dict[str, Any]`. Return a dict with `{"done": bool, ...}` — the LLM service handles JSON serialization. NEVER raise. Get chat context from `extraData["ensuredMessage"]`.
 - LLM tool handlers can return dicts directly (not JSON strings). This is cleaner — no `json.dumps()`/`jsonDumps()` needed. The LLM service serializes the dict.
 - `lib/ai/providers/basic_openai_provider.py`: `BasicOpenAIModel` has two image-generation transports: (1) `_generateImage()` using `chat.completions.create` with `modalities=["image", "text"]`, (2) `_generateImageViaImagesApi()` using `client.images.generate()`. Models opt into the second via `image_generation_api = "openai-images"` in `extraConfig`.
-- Hook methods available for subclasses: `_getModelId()` (text models), `_getImageModelId()` (image models), `_getExtraParams()`, `_getImageRequestOptions()` (whitelisted image API params), `_getClientParams()` (extra AsyncOpenAI constructor kwargs).
+- Hook methods available for subclasses: `_getModelId()` (text models), `_getImageModelId()` (image models), `_getExtraParams()` (returns `dict(self._customParams)` — the canonical seam for per-request inference params; subclass overrides merge provider-specific defaults with `customParams`, user `customParams` wins), `_getImageRequestOptions()` (returns `dict(self._customParams)` — NO whitelist since the 2026-07-20 customParams refactor; all keys pass through), `_getClientParams()` (extra AsyncOpenAI constructor kwargs).
 - `YcOpenaiModel` uses `gpt://...` URIs for text and `art://...` URIs for images -- two different URI schemes from the same provider.
 - `YcOpenaiProvider._folderId` is set **before** `super().__init__()` so `_getClientParams()` (called during `_initClient()`) can access it. This ordering is critical.
 - `_getClientParams()` affects ALL requests through the OpenAI client (text, images, tools), not just the API it was added for.
 - `image_generation_api = "openai-images"` dispatch in `BasicOpenAIModel._generateImage()` is **generic** -- it works for any `BasicOpenAIModel` subclass, not just `YcOpenaiModel`. Old docs claimed it was YC-only; this was corrected in `docs/llm/configuration.md`.
+### Test mocking and media handling
+
 - When production code has `isinstance(x, SomeType)` guards, mock objects in tests need `MagicMock().__class__ = SomeType` to pass them. Cleaner than constructing real SDK objects and doesn't require knowing all constructor params.
 - If the user adds guards to production code and tests break, fix the tests -- don't remove the guards. The user's intent is clear: guards are there by design.
 - Bot media sending: all goes through `TheBot.sendMessage()` with `attachmentList: List[Tuple[bytes, MessageType, Optional[str]]]`. No dedicated `sendPhoto/sendVideo/sendAudio/sendDocument` methods. MIME detection uses `magic.from_buffer(data, mime=True)` consistently across 6 call sites. MIME→MessageType mapping: `image/*`→IMAGE, `video/*`→VIDEO, `audio/*`→AUDIO, rest→DOCUMENT.
 - `python-magic==0.4.27` is a direct pinned dependency (not optional). All imports use bare `import magic` at top level (no `try/except ImportError` guard).
 - No magic numbers — extract numeric constants to module-level `UPPER_CASE` variables with a comment explaining the value (e.g., `MAX_SANDBOX_READ_FILE_BYTES = 65536  # 64 KB`).
 - When handling `FileContent.content` (or any `bytes | str` union), decode only if bytes: `if isinstance(data, bytes): text = data.decode(...) else: text = data`. Don't encode str to bytes and back — it's wasteful.
+### Renames, migrations, and test-surface hazards
+
 - **Nested `chat_users.metadata` writes:** `setUserMetadata(isUpdate=True)` shallow-merges at the top level — a partial `{"<subKey>": {<threadId>: ...}}` wipes every other thread's entry under that sub-key. Write nested sub-dicts via direct read-modify-write through `cache.updateUserMetadata()` (or hold the `chatUserMetadataLock()` for the full RMW). See [`memories/chat-users-cache.md`](memories/chat-users-cache.md).
 - **`str.isdecimal()` NOT `str.isdigit()`** to guard `int()` parsing. `isdigit()` returns True for Unicode "other digit" chars (e.g. superscript `²` U+00B2) that `int()` CANNOT parse → `ValueError`. `isdecimal()` is the precise predicate for the base-10 set `int()` accepts.
 - **`mock.patch` string-target rename hazard:** renaming a module requires updating STRING-targeted `mock.patch` paths (e.g. `"internal.bot.common.handlers.user_data.asyncio.sleep"`), not just `import` statements. Grep for string-literal module paths (`"internal.bot.common.handlers.<oldName>`) after any module rename. A stale target raises `AttributeError: module '...' has no attribute '<oldName>'` at runtime.
@@ -64,26 +152,56 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 - **`expectedTables`/`requiredTables` lists:** schema-creation tests (e.g. `testSchemaCreation`, `testAllRequiredTablesExist`) hardcode table names in expected-table lists. When dropping a table, grep tests for its name in these hardcoded assertions, not just in repo usage.
 - **`.discard()` over `.remove()` for set eviction:** when a set is populated by one async caller and evicted by another after an `await`, use `.discard()` — `.remove()` can `KeyError` if the element was evicted between pick and remove.
 - **`MessageId(str)` accepts ANY string** (`internal/models/types.py`) — Max message IDs are arbitrary strings, so `MessageId("not-a-number")` does NOT raise. Therefore a handler `except (ValueError, TypeError): pass` fallback after `MessageId(x)` is only reachable for **non-str/non-int** types (float/list/bool/None-ish) — no `str` input ever triggers it. A string `thread_message_id` always becomes a valid root and overrides sibling scoping. When writing tests for "invalid message id" fallbacks, pass a float (e.g. `3.14`), not a junk string.
+### Embedding and STT service contracts
+
 - **Embedding generation — two methods, two return shapes (don't mix):**
-  - `LLMService.generateEmbedding(text, chatId=None, chatSettings=None)` **(SINGULAR, the service wrapper)** → `Optional[Tuple[str, List[float]]]` = `(modelName, vector)`. Resolves the model internally from `chatSettings[EMBEDDING_MODEL]`, rate-limits when `chatId is not None`, and SWALLOWS internal failures → returns `None` (does not raise in normal operation). Callers extract vector via `[1]`, model via `[0]`. Used by `_llmToolSearchMessages` (`chat_search.py`), `embedAndSaveMessage`, `message_preprocessor`, `user_memories`.
+  - `LLMService.generateEmbedding(text, chatId, chatSettings, doRateLimit=True)` **(SINGULAR, the service wrapper)** → `Optional[Tuple[str, List[float]]]` = `(modelName, vector)`. `chatId` is a **mandatory int** (updated 2026-08-23): always threads `consumerId=str(chatId)` into the model call for stats attribution; rate-limits unless `doRateLimit=False` (background backfill/refinement passes the real chat id + `doRateLimit=False`). Resolves the model internally from `chatSettings[EMBEDDING_MODEL]` and SWALLOWS internal failures → returns `None` (does not raise in normal operation). Callers extract vector via `[1]`, model via `[0]`. Used by `_llmToolSearchMessages` (`chat_search.py`), `embedAndSaveMessage`, `message_preprocessor`, `user_memories`.
   - `model.generateEmbeddings(text)` **(PLURAL, the model-level method)** → `List[float]` (bare vector); raises on failure. Callers that use it resolve the model themselves via `self.llmService.getLLMManager().getModel(name)` + `model.supportsEmbedding` and read `chatSettings[EMBEDDING_MODEL]` to get `name`. Still used by the `/search` slash command (`searchCommand`) and the CRON backfill gate (`_dtCronJob`) — NOT migrated.
   - **Migration gotcha (caused a test failure 2026-07-16):** moving a caller from the plural model method to the singular wrapper changes the return shape `List[float]` → `Optional[Tuple[str, List[float]]]` AND makes the caller's explicit `getLLMManager().getModel()`/`supportsEmbedding`/`EMBEDDING_MODEL`-empty checks dead (the wrapper owns them). Tests must swap `mockModel.generateEmbeddings = AsyncMock(return_value=[...])` → `handler.llmService.generateEmbedding = AsyncMock(return_value=("modelName", [...]))`, and tests that asserted the removed model-error paths must be repurposed: `None` return → graceful degrade to filter-only (`done: True`); `side_effect=raise` → defensive `"Unable to generate query embedding"` error. Precedent for the wrapper mock in `tests/bot/common/handlers/test_chat_search.py` (`TestEmbedAndSaveMessage`, CRON tests) — set it on the `handler` fixture so `assert_not_awaited()` stays meaningful.
+- **`STTService.transcribeMedia(data, *, chatId: int)` (updated 2026-08-23):** `chatId` is a mandatory `int` used BOTH as the per-chat `stt-chat` rate-limit key AND as the stats `consumerId` (`str(chatId)` always) — the old `Optional[int]` branch that skipped the per-chat limiter and dropped attribution to `__global__` on `None` was removed (same decoupling as `LLMService`'s mandatory `chatId` + `doRateLimit`). The global `stt-global` limiter applies unconditionally when configured. Only production caller: `BaseBotHandler._transcribeMedia` (already passed the real chat id).
+### Tool-gating settings (USE_TOOLS vs ALLOW_TOOLS_COMMANDS)
+
 - **Two distinct tool-gating settings — DO NOT conflate (verified 2026-07-16):**
-  - **`USE_TOOLS`** (`internal/bot/models/chat_settings.py:819`, "Можно ли использовать боту различные инструменты?") = the **LLM-tool master switch**. Read at `LLMMessageHandler._sendLLMChatMessage` (`internal/bot/common/handlers/llm_messages.py:275`) to build the chat-time `useTools` dict; when `False`, NO tools are sent to the model and the execution loop's `filteredToolNames` is empty. Per-tool exclusions in the dict: `DELETE_MEMORY` always-off; the 5 sandbox tools off when `ALLOW_SANDBOX=False`; `ADD_MEMORY`+`SEARCH_MEMORIES` off when `MEMORY_ENABLED=False`. This is the D3 chat-time gating (see `.agents/skills/add-llm-tool/SKILL.md` Site 4, `docs/llm/memories/use-tools-filtering.md`).
-  - **`ALLOW_TOOLS_COMMANDS`** (`chat_settings.py:872`, "Разрешить команды использования инструментов (`/draw`, `/analyze`, …)") = the **slash-command gate** for `CommandCategory.TOOLS` (`/search`, `/users`, `/draw`, `/tarot`, `/run`, `/weather`, …), enforced ONLY at `internal/bot/common/handlers/manager.py:985` (`canProcess = chatSettings[ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner`). It does NOT participate in the `useTools` dict at all.
+  - **`USE_TOOLS`** (`internal/bot/models/chat_settings.py:374`, info entry `:856`, "Можно ли использовать боту различные инструменты?") = the **LLM-tool master switch**. Read at `LLMMessageHandler._sendLLMChatMessage` (`internal/bot/common/handlers/llm_messages.py:283`) to build the chat-time `useTools` dict; when `False`, NO tools are sent to the model and the execution loop's `filteredToolNames` is empty. Per-tool exclusions in the dict: `DELETE_MEMORY` always-off; the 5 sandbox tools off when `ALLOW_SANDBOX=False`; `ADD_MEMORY`+`SEARCH_MEMORIES` off when `MEMORY_ENABLED=False`. This is the D3 chat-time gating (see `.agents/skills/add-llm-tool/SKILL.md` Site 4, `docs/llm/memories/use-tools-filtering.md`).
+  - **`ALLOW_TOOLS_COMMANDS`** (`chat_settings.py:389`, info entry `:909`, "Разрешить команды использования инструментов (`/draw`, `/analyze`, …)") = the **slash-command gate** for `CommandCategory.TOOLS` (`/search`, `/users`, `/draw`, `/tarot`, `/run`, `/weather`, …), enforced ONLY at `internal/bot/common/handlers/manager.py:1022` (`canProcess = chatSettings[ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner`). It does NOT participate in the `useTools` dict at all.
   - **Decision 2026-07-16:** the in-tool `ALLOW_TOOLS_COMMANDS` guards in `_llmToolSearchMessages`/`_llmToolListUsers`/`_llmToolGetThread` (`internal/bot/common/handlers/chat_search.py`) were REMOVED — they were a double-gate / semantic mismatch repurposing a slash-command setting for LLM tools that `USE_TOOLS` already gates. `USE_TOOLS` is now the sole LLM-tool gate. Consequence: `USE_TOOLS=True` + `ALLOW_TOOLS_COMMANDS=False` → LLM CAN call search tools (ALLOW_TOOLS_COMMANDS now gates only slash commands). (`_llmToolGetMessagesByIds` never had the guard — pre-existing drift, now consistent.)
-  - **Tool-call healing bypass note:** `_tryHealToolCall` (`internal/services/llm/service.py`) accepts on the GLOBAL registry (`toolName in self.toolsHandlers`, line ~319) — it does NOT consult `filteredToolNames` or any per-chat allowlist. But the execution loop (`service.py:806`) re-guards on `filteredToolNames`, so a `useTools`-filtered tool gets healed→"not available" error, never executes. The in-tool `ALLOW_TOOLS_COMMANDS` guard was the ONLY thing that ever stopped an ALLOW_TOOLS_COMMANDS-filtered (but useTools-allowed) tool from executing via healing — now moot since that guard is gone and ALLOW_TOOLS_COMMANDS no longer applies to LLM tools. **Post-budget interaction (`maxRounds` round-limit, added 2026-07-16):** healing and the TOOL_CALLS execution branch are gated on `not budgetExhausted`, `filteredToolNames` is cleared, and the loop terminates within one extra round — see the "LLM maxRounds round-limit" section below for the full mechanism (incl. why `tools=[]` alone is insufficient, the `roundLimitHit` flag, error-status propagation, and the steering fold-in).
-- **Portable case-insensitive LIKE: `BaseSQLProvider.getLikeComparison(column, param)`** (`internal/database/providers/base.py:478`) — all 4 providers return `LOWER({column}) LIKE LOWER(:{param})`. Use for substring matching; the caller wraps the bound value as `f"%{value}%"`. Precedent: `internal/database/repositories/divinations.py:207-220` (no ESCAPE). **Caveats:** (1) NO `ESCAPE` clause on any provider → a literal `%`/`_` in user input acts as a wildcard. Portable escaping would require a NEW provider method (`ESCAPE '\'` works on SQLite/PostgreSQL but MySQL needs `ESCAPE '\\'` in the SQL text, so no single string is portable). The `user_memories.py` `tags LIKE ... ESCAPE '\\'` pattern is SQLite/PostgreSQL-only. (2) SQLite's `LOWER()` is **ASCII-only** → no Unicode (Cyrillic) case-insensitivity on SQLite; PostgreSQL/MySQL are full-Unicode. Sibling `getCaseInsensitiveComparison` is for EQUALITY (`LOWER(col)=LOWER(:param)`; MySQL uses `COLLATE utf8mb4_general_ci`). Established repo null-semantics filter idiom: `AND (:param IS NULL OR <comparison>)` so a `None` bound value short-circuits to "no filter".
+  - **Tool-call healing bypass note:** `_tryHealToolCall` (`internal/services/llm/service.py`) accepts on the GLOBAL registry (`toolName in self.toolsHandlers`, `service.py:334`; def at `:725`) — it does NOT consult `filteredToolNames` or any per-chat allowlist. But the execution loop (`service.py:1013`) re-guards on `filteredToolNames`, so a `useTools`-filtered tool gets healed→"not available" error, never executes. The in-tool `ALLOW_TOOLS_COMMANDS` guard was the ONLY thing that ever stopped an ALLOW_TOOLS_COMMANDS-filtered (but useTools-allowed) tool from executing via healing — now moot since that guard is gone and ALLOW_TOOLS_COMMANDS no longer applies to LLM tools. **Post-budget interaction (`maxRounds` round-limit, added 2026-07-16):** healing and the TOOL_CALLS execution branch are gated on `not budgetExhausted`, `filteredToolNames` is cleared, and the loop terminates within one extra round — see [`memories/llm-max-rounds.md`](memories/llm-max-rounds.md) for the full mechanism (incl. why `tools=[]` alone is insufficient, the `roundLimitHit` flag, error-status propagation, and the steering fold-in).
+### SQL LIKE portability and vector-search test paths
+
+- **Portable case-insensitive LIKE: `BaseSQLProvider.getLikeComparison(column, param)`** (`lib/db/providers/base.py` — moved from internal/database/providers/base.py in 1a953117/ADR-022) — all 4 providers return `LOWER({column}) LIKE LOWER(:{param})`. Use for substring matching; the caller wraps the bound value as `f"%{value}%"`. Precedent: `internal/database/repositories/divinations.py:207-220` (no ESCAPE). **Caveats:** (1) NO `ESCAPE` clause on any provider → a literal `%`/`_` in user input acts as a wildcard. Portable escaping would require a NEW provider method (`ESCAPE '\'` works on SQLite/PostgreSQL but MySQL needs `ESCAPE '\\'` in the SQL text, so no single string is portable). The `user_memories.py` `tags LIKE ... ESCAPE '\\'` pattern is SQLite/PostgreSQL-only. (2) SQLite's `LOWER()` is **ASCII-only** → no Unicode (Cyrillic) case-insensitivity on SQLite; PostgreSQL/MySQL are full-Unicode. Sibling `getCaseInsensitiveComparison` is for EQUALITY (`LOWER(col)=LOWER(:param)`; MySQL uses `COLLATE utf8mb4_general_ci`). Established repo null-semantics filter idiom: `AND (:param IS NULL OR <comparison>)` so a `None` bound value short-circuits to "no filter".
 - **Semantic-search test path selection** (`tests/database/repositories/test_chat_search*.py`): `sqlite-vec` is installed (v0.1.9, `requirements.direct.txt`), so `saveMessageEmbedding` dual-writes the vec0 table and the **native** vector path runs by default — the **numpy** path is skipped. To test the numpy path deterministically, stub `_nativeVectorSearch` to return `[]` (forces the fall-through). To lock in an OR-style `needsPostFilter` guard term-by-term, you need SINGLE-filter tests (a combined-filter test is structurally immune to single-term removal because the other filter keeps the OR `True`).
 - **`tests/dependencies/test_sqlite_vec.py` skip-on-missing behavior** (added 2026-07-16): the file uses module-level `sqlite_vec = pytest.importorskip("sqlite_vec")` so the WHOLE module is SKIPPED (not failed) when the `sqlite_vec` package is not importable. Distinct from the separate failure mode where the wheel IS installed but its bundled native binary won't load — that path is caught by the `RuntimeError` raised inside the file's `loadVecConnection()` helper (production load path mirror). So: missing package → skip; broken binary → fail loudly (RuntimeError). Both are intentional. `numpy` is NOT importorskip-guarded (always present as a portable wheel dep) — only sqlite-vec, the genuinely environment-fragile native extension, is.
+
+## markdown-mcp adoption arc (2026-09-14)
+
+See [`memories/markdown-mcp-adoption-arc.md`](memories/markdown-mcp-adoption-arc.md) — adoption campaign record: owner decisions, live-verified permission matrix (write-trio denies, explore read-allows), benchmark verdict, global agent tuning, search-quality evidence report + upstream revalidation. The normative house style bullet stays live in "markdown-mcp ops" below.
+
+## markdown-mcp ops
+
+- **`doc_section_edit` blank-line normalization hazard (CONFIRMED systemic, 2026-09-14; extends to `op=insert_after`, 2026-09-15):** replace AND insert_after ops eat the blank lines around the edited body AND at both junctions to adjacent headings — 15 + 13 + 14 native-edit repairs across three docs-writer passes in one arc (every section op did it). Budget a native-`edit` repair + `git diff -U0` boundary check after EVERY doc_section_edit batch. Note: the in-call reindex captures pre-repair bytes — after a repair, the index line map is off by the repaired lines until the next reindex/30s-rescan pass (content/embeddings unaffected). For row-level tweaks inside big table sections, prefer native `edit` outright (full-section CAS bodies make `doc_section_edit` heavy) — the serve 30s rescan re-indexes; lint validity is unaffected when headings/slugs don't change. On UNTRACKED files `git diff -U0` shows nothing (nothing vs HEAD) — verify section boundaries by native reads instead.
+- **markdown-mcp house style (normative since the adoption arc, Gate-2 enforced):** every MCP preference phrased conditionally ("when the markdown-mcp tools are available") with tool-unavailability explicitly in the fallback list; MCP call examples docs-root-relative; slugs resolved via `doc_outline` at use time, never hard-coded; instructions must remain valid for MCP-less agents. (Full adoption-arc record: [`memories/markdown-mcp-adoption-arc.md`](memories/markdown-mcp-adoption-arc.md).)
+- `doc_section_edit` CAS-fails on byte-identical bodies (recurred 2026-09-20 on model-catalogs.md and on this file) — treat plain-edit fallback + briefly-stale MCP index as a known, self-resolving quirk (the next MCP write or the serve 30s rescan re-syncs).
+- **Fitness audit + fix pass (2026-09-14, measured):** section-addressability and memories/ discovery FIT; gaps were snippet self-containment + metadata. Fix pass landed (2 prose callouts in `llm/tasks.md` §3.1, descriptions on 5 hot docs, intro sentence, §9 See-also) + owner-ratified minimal tag vocabulary {agent, sql, testing, process, workflow}. **Measured lessons: short self-contained prose H4 callouts are THE lever — the two new callouts became the top-2 scoring chunks of the whole 10-query re-run (Q7 partial→win; Q9 improved but snippet still cuts mid-accessor-list). Inbound links (See-also) and thin intro sentences have ZERO ranking effect — retrieval follows section content volume + title match; to move a losing query, promote its key content into a dedicated short section.** New doc_search gotchas: duplicate window chunks of ONE section consume multiple top-k slots (contracted no-dedup; window constants hard-coded); snippet truncation cuts mid-cell/mid-list regardless of content; only search knobs = `[search] min_score` (default ~0.828) + per-call top_k. **markdown-mcp is the user's OWN local checkout** (`~/Development/NotA/markdown-mcp`, v1.8.0, editable install) — dedup is an evidence-gated backlog item there (v1.1-backlog §5); our audit/validation queries are the measured examples the gate wants.
+- check-docs baseline 2026-09-14 (evidence-report pass): 148 files / 2937 links / 0 broken (incl. the concurrent model-catalogs workstream's untracked file; docs-scoped markdown-mcp index = 109 files; was 146/2911 post-fitness-pass).
+- The running `serve` process holds its config from process start — exclude changes apply only after a restart; its 30s rescan also beats the CLI (`indexed=0` after edits is normal — verify currency via the index.db files-table hash).
+- NEVER run `markdown-mcp index --force` — the embedding rebuild times out; incremental `markdown-mcp index` repairs partial rebuilds.
+- Plain `grep -c '^# '` overcounts H1s (fenced `#` comments) — trust `doc_lint`/outline only.
+- Structural-split sanctions: GFM tables split by repeating header+delimiter rows at boundaries; code fences split by added fence-marker lines + a heading between parts; mega table-rows converted word-identical to prose under headings. Rewording any heading (slug change) requires a repo-wide anchor grep first.
+- `make check-docs` cannot see links inside phantom code blocks — an unfenced diagram can hide broken links; fencing a diagram can surface latent breaks.
+- CLI `markdown-mcp lint` respects `[docs].exclude`; historically the MCP `doc_lint` tool did NOT (~9 duplicate-slug findings under docs/other/ as noise) — but a 2026-09-14 probe returned 0 findings from MCP `doc_lint`, so the current serve/version honors exclude too. CLI stays authoritative on disputes.
+
+## Models Catalog Generation Arc (2026-09-14, COMPLETE — all gates passed)
+
+See [`memories/models-catalog-generation.md`](memories/models-catalog-generation.md) — generation arc (`scripts/fetch_models.py` pipeline + drift-guard tests) + tier-rescue follow-on (`ChatTier.resolveModelTier`) + price-comments increment + Yandex manual-catalog facts (2026-09-25). The five durable review-loop process lessons were hoisted to Teamlead Workflow Lessons / Repo Facts (test infra); the two config gotchas (`${VAR}` literal passthrough, filter-config-not-under-configs/) to Config & Tier System.
 
 ## Opencode Slash-Command Mechanism
 
 - Slash-commands are markdown files in a `commands/` dir. Filename `<name>.md` → `/<name>`.
 - YAML frontmatter fields observed: `description`, `agent` (routes to a named agent from `agents/`), `subtask` (bool). Body = free-form prompt; `$ARGUMENTS` = args passed at invocation.
-- Global commands live in `~/.config/opencode/commands/` (2 existing: `caveman-compress.md`, `caveman-review.md`). Repo-local commands live in `.opencode/commands/` (3 existing):
+- Global commands live in `~/.config/opencode/commands/` (2 existing: `caveman-compress.md`, `caveman-review.md`). Repo-local commands live in `.opencode/commands/` (4 existing):
   - `changelog` — drafts a `CHANGELOG.md` entry from the current diff (see [`changelog.md`](changelog.md)).
   - `refine-memory` — extracts task-specific deep-dive sections from this file into [`memories/`](memories/index.md) to keep the main file compact; routed to `teamlead` with `subtask: true`.
+  - `generate-release` — automates the release cut (rename `[Unreleased]`, bump version, tag); see `docs/llm/changelog.md` §Release operations.
   - `review-large` — runs the methodology in [`reviewing-large-changes.md`](reviewing-large-changes.md) for reviewing diffs >24 files (characterize → batch → per-batch review → integration → consolidated findings, stopping before remediation); routed to `teamlead`.
 - Repo `.opencode/opencode.json` sets `default_agent: "teamlead"`; per-subagent model tiers under `agent`. Global config is `~/.config/opencode/opencode.jsonc`.
 - Commands are discovered by filename, NOT registered via any `command`/`commands` key in config.
@@ -113,6 +231,8 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 - **`[bot.tier-defaults.friend]`** in `configs/common/01-bot-defaults.toml` only has `allow-sandbox = true` — NO `chat-model` or other model overrides. Falls through to `[bot.defaults]`. Same for `bot-owner` tier.
 - **Tier hierarchy** (`ChatTier` enum, `chat_settings.py:43-61`): `BANNED(1) < FREE(2) < FREE_PERSONAL(3) < PAID(4) < FRIEND(5) < BOT_OWNER(6)`. `isBetterOrEqualThan()` uses `getId()` comparison.
 - **Common footgun**: setting `paid-tier` on a chat without a future `paid-tier-untill-ts` — the paid-tier check fails silently and falls back to `base-tier`.
+- **Missing `${VAR}` in config passes through LITERALLY** (`lib/utils/utils.py` `replaceMatchToEnv` → `os.getenv(key, match.group(0))`) — no error, no empty string. Tracked config must keep env-dependent provider blocks COMMENTED OUT (silent bad api_key otherwise). (Hoisted 2026-09-26 from the models-catalog arc.)
+- **Filter/tooling config must NOT live under `configs/`** — ConfigManager rglobs every `*.toml` in config dirs into merged runtime config. (Hoisted 2026-09-26 from the models-catalog arc.)
 
 ## Test Mocking: Chat Settings Must Be Complete Dicts
 
@@ -120,23 +240,9 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 - `_makeChatSettings()` helpers must include every `ChatSettingsKey` that the production path accesses. When adding a new gate check in production (e.g., `REGENERATE_EMBEDDINGS`), the test helper must be updated to include it.
 - `test_cron_no_enabled_chats` had a second-order bug: the assertion used a stale key (`REGENERATE_EMBEDDINGS`) that didn't match the current production query (`EMBEDDINGS_ENABLED`). When production queries change, test assertions must follow.
 
-## Reviewing Large Changes
-
-See [`docs/llm/reviewing-large-changes.md`](reviewing-large-changes.md) -- methodology for reviewing changes exceeding the single-pass budget of the `code-reviewer` agent (>24 files). Covers pre-review characterization, batching by feature domain, per-batch review with parallel execution, integration pass, and remediation workflow. Created 2026-06-28.
-
-## User Memory V2 Pre-Merge Review (2026-07-14, in progress)
-
-See [`memories/user-memory-v2-review.md`](memories/user-memory-v2-review.md) — full pre-merge review campaign for the 140-file `user_data`→`user_memories` feature branch: pre-review state/batching plan + post-review durable contracts/invariants established.
-
-## Large Review Campaign Lessons (2026-06-28)
-
-See [`memories/large-review-campaign.md`](memories/large-review-campaign.md) — durable lessons from the 78-file/6-batch parallel review campaign: batch sizing (15–20 sweet spot), parallel dispatch mechanics, integration pass for cross-batch drift, per-batch fix verification.
-
-## Review-Fix Round Lessons (2026-07-01)
-
-See [`memories/review-fix-lessons.md`](memories/review-fix-lessons.md) — durable lessons from the 2026-07-01 review-fix round on branch `max-v2`: single-developer many-fix dispatch, `logger.exception` misuse pattern, `except Exception` narrowing, config-defaults alignment, doc drift from review fixes.
-
 ## Teamlead Workflow Lessons
+
+### Subagent behavior quirks
 
 - The `code-reviewer` subagent may return empty results in some sessions. If it does twice, fall back to `general` agent for the review — use the same prompt structure, just route through `general`.
 - Parallel `software-developer` edits to the same file cause conflicts. Always reconcile with a follow-up `software-developer` pass after parallel batches on the same file.
@@ -145,6 +251,8 @@ See [`memories/review-fix-lessons.md`](memories/review-fix-lessons.md) — durab
 - When code reviewers flag a Returns: format inconsistency, propagate the fix to ALL files in that batch (or the entire library) at once to avoid repeat reviews.
 - Explicit type prefix format in Returns: sections (e.g., `int: Number of sessions`) is WRONG for this project -- use plain descriptions.
 - Docstring correctness matters: always verify that docstring descriptions match actual implementation (not what the method is "supposed" to do).
+### Dispatch and verification discipline
+
 - When fixing many small, independent issues from review documents: first explore thoroughly to determine which are already fixed, then batch independent fixes into parallel `software-developer` tasks (group by file to avoid conflicts), then do a single Gate 2 whole-work review. Per-subtask Gate 1 reviews are excessive for single-line fixes.
 - Always verify the exploration phase -- several candidate fixes may already be present from prior sessions. Avoid re-fixing fixed issues.
 - When the same fact appears in a focused doc and in handler/class docstrings, update both surfaces explicitly; one does not propagate to the other.
@@ -153,19 +261,24 @@ See [`memories/review-fix-lessons.md`](memories/review-fix-lessons.md) — durab
 - For multi-phase implementation from a design doc: exploration first to verify assumptions (code has drift), then implement foundation phase, review it, then wire consumers + config, review again, then docs, then whole-work review. Parallelize config changes with implementation phases when possible.
 - When subagents fail with `ProviderModelNotFoundError`, check the `model:` field in each agent's `.md` file and in `.opencode/opencode.json` -- the `standard` model may not be provisioned while `cheap`/`smart`/`smartest` are.
 - The `explore` subagent (model: `cheap`) and `code-reviewer` (model: `smart`) are reliable for read-only work; `software-developer` needs `standard` model to be functional.
+- After any step-ceiling truncation mid-verification, dispatch a tiny verify-finisher — in the sandbox arc, mutation checks were left applied twice before this rule existed.
+- **Documented example commands must be executed before being documented** (an `--all` + fixture example collided by design; docs now say `--provider openrouter`). (Hoisted 2026-09-26 from the models-catalog arc.)
+- `code-reviewer`'s ability to run commands is SESSION-DEPENDENT — its permission matrix has at times blocked all command execution (e.g. the 2026-09-14 models-catalog arc), while other sessions grant read-only gates (`make check-docs` was run directly by a Gate-2 reviewer on 2026-09-26). When a review hinges on a command the reviewer cannot execute itself, close the loop with an agent that can (historically `explore`, which has bash). (Hoisted 2026-09-26 from the models-catalog arc; qualified same day after the direct-execution counterexample.)
+- **Concurrent-maintainer hazard:** the user works the same tree mid-arc — staging state can change mid-session (twice in one 2026-09-20 session). Always scope reviews/verification to an EXPLICIT file list via `git diff HEAD -- <files>`; never review "everything modified"; instruct every subagent hands-off on git state. (Hoisted 2026-09-26 from the vision-flag arc.)
+- **Step-cap recovery pattern works:** a developer truncated at ~90% (missing only final gates) — dispatching a separate verifier agent to run `make format lint` + `make test` + `make check-docs` closed the gap cleanly; cheaper than re-implementing. (Hoisted 2026-09-26 from the vision-flag arc.)
+- **Unexplained test-count deltas:** always reconcile against `git status` — a +8-vs-+5 delta was fully explained by 3 tests in the maintainer's unrelated staged changeset. (Hoisted 2026-09-26 from the vision-flag arc.)
+- `code-reviewer` occasionally fails on provider usage limits — a plain retry has worked every time so far.
+### Parallelism, brief sizing, and workflow rules
+
 - **Rename propagation:** after a module/symbol rename, run `rg "<oldSymbol>\b" internal/ docs/ tests/` and propagate to docstrings/comments/prose in LIVE files; leave `docs/plans/*`, `docs/archive/*`, and superseded-banner docs as historical. String-targeted `mock.patch` paths + AST/glob coverage tests are the two sneaky leak surfaces (see Repo Facts above).
 - **Concurrent-session hazard:** two opencode sessions editing the same production file clobber each other's regions repeatedly. Ensure single-session before merge; a regression test that pins the contested invariant (e.g. media-only embedding) catches the regression.
 - **Parallel dev agents MUST have disjoint file sets** — grep-driven "cleanup" agents are especially prone to touching files outside their intended scope. Concurrent `software-developer` agents that both run `make test`/`make lint`/`make check-docs` also see each other's INTERMEDIATE working-tree state → their cross-phase pass/fail verdicts are UNRELIABLE; do a fresh SERIAL verification pass after all parallel agents finish.
+- **Parallel-wave review noise (2026-09-20, 8-way wave):** transient lint/test failures from siblings' in-flight edits (F401 unused imports mid-wiring, half-saved files) and even one session restaging another's files — all self-resolved, final states green. Reviewers must locate findings by symbol (line drift) and judge the FINAL state, not intermediate noise. (Hoisted 2026-09-26 from the sessionId arc.)
+- **Serialise code agents that run `make format`** — parallel formatter runs caused real lost-update races (an agent's formatter wrote back tree content read before another agent's edits, silently reverting them; a whole remediation wave was reverted this way). Run format only at the END of each agent's run; keep format-running agents strictly serial. (Promoted from the stats review campaign 2026-09-02.)
+- **Size software-developer briefs at ≤10 substantive items** — MAX_STEPS empirically covers ~10 items; 12–17-item briefs truncate mid-verification (verified repeatedly). Split into ≤10-item phases and pre-plan tiny mechanical finisher briefs (extraction-completion + gates) for overruns. Use ≤6-7 items for mutation-heavy rounds — sandbox-arc evidence. (Promoted 2026-09-02.)
+- **Sequential uncommitted Gate-review baseline:** when a later docstring-only task revisits a file changed by an earlier, already-passed implementation phase, a reviewer diffing against `HEAD` sees both phases and can falsely demand rollback of the approved executable work. In the re-review brief, explicitly identify the prior approved symbols/lines as baseline and ask it to assess only the later task’s semantic delta; never revert prior Gate-1-passed behavior solely because of this diff-scope artifact.
 - **Scripts have tests** — `tests/scripts/test_*.py` is the established pattern (sibling tests for `prune_unknown_chat_settings.py`, `clear_memory_embeddings.py`, etc.). New scripts under `scripts/` should get a corresponding test file.
 - **Docs-only change workflow:** `make lint` is the only gate needed (black/isort are no-ops on `.md`); no `make test`. Historical/plan/archived docs are frozen snapshots — update only LIVE docs.
-
-## Test Suite Performance Profile (2026-07-12, measured)
-
-See [`memories/test-suite-speedup.md`](memories/test-suite-speedup.md) — durable notes from the 2026-07-12 test-suite profiling + speedup effort (107s → 38.17s, −64.3%): profile findings, fake-clock + no-op asyncio.sleep patterns, unittest/pytest fixture-interaction gotchas, flagged-but-not-fixed items. Merges the diagnostic phase (this section) with the implementation phase (`Test Speedup IMPLEMENTED` section below) into one continuous narrative.
-
-## Test Speedup IMPLEMENTED (2026-07-12): A+B applied, result 107s → 38.17s (−64.3%)
-
-See [`memories/test-suite-speedup.md`](memories/test-suite-speedup.md) — implementation/outcome half of the merged speedup narrative (full-suite 38.17s, two reusable patterns: fake-clock for timing-assertion tests, no-op `asyncio.sleep` for pacing tests; unittest/pytest fixture-interaction gotchas; flagged-but-not-fixed WIP).
 
 ## Configs Tracking Gotcha (2026-07-04)
 
@@ -186,110 +299,10 @@ See [`memories/test-suite-speedup.md`](memories/test-suite-speedup.md) — imple
 - Makefile/shell/yaml edit gotcha: recipe indentation must be literal TABs; `make format`/`make lint`/`make test` target Python and do NOT validate Makefile/shell/yaml (and risk reformatting unrelated WIP). For such changes verify with `make -n <target>` (dry-run; catches "missing separator" tab bugs), `sh -n scripts/ci.sh` (shell syntax), and `make help`. `CI_IMAGE` uses plain `=` (hard-pin intended).
 - `make ci` is dev tooling → NO CHANGELOG entry (per `docs/llm/changelog.md` skip rules). Doc surfaces carrying the `make ci` line ("; needs Docker"): `AGENTS.md` (Run/dev commands block), `README.md` (Development section), `docs/developer-guide.md` (### Make Commands block), plus the Makefile `help` target.
 
-## LLM Tool-Call Healing (internal/services/llm/service.py) — implemented 2026-07-15
+## Model-migration tool arc (2026-09-19, COMPLETE — all gates passed)
 
-See [`memories/llm-tool-call-healing.md`](memories/llm-tool-call-healing.md) — durable notes for the tool-call healing subsystem: `_tryHealToolCall` orchestrator + 5 matchers (JSON-fence, `<tool_call>`, TOOL_CALL_START, `[name]{json}`, broken-known-tool fallback: as of 2026-07-19 scans ALL brackets via finditer and accepts at edge OR when the suffix is a fenced JSON params block (`hasJsonParams`), fixing two root-cause misses — wrong-bracket matching when a markdown link appears earlier, and over-strict edge constraint; same date: JSON-fence and `<tool_call>` matchers also accept `"function"` key as tool-name fallback when `"name"` is absent/empty), `LLMToolCall.errorMessage` consumer-audit gotcha, failure-log JSONL corpus.
+See [`memories/model-migration-tool.md`](memories/model-migration-tool.md) — shipped `scripts/migrate_models.py` (+ run wrapper + 21 offline tests), review-loop history, user decisions, verified facts for any tool touching model ids / model settings, and the durable gotchas (argparse exit-2 vs app exit codes, dotenv-dependent `LLMManager`, untested main() I/O seam, manager.py per-model logging bug, override-without-base `KeyError('provider')` incl. the non-toggle recurrence).
 
-## LLM maxRounds round-limit (`generateTextViaLLM`) — added 2026-07-16
+## Vision flag arc (2026-09-20, COMPLETE — all gates passed)
 
-See [`memories/llm-max-rounds.md`](memories/llm-max-rounds.md) — durable notes for the `maxRounds` budget/round-limit feature: `budgetExhausted` gates (tools=[] alone insufficient — must also clear `filteredToolNames` + gate healing + gate TOOL_CALLS execute-branch), `ModelRunResult.roundLimitHit` flag, steering fold-in, `internal/services/llm/constants.py` layering.
-
-## LLM User-Message Format (verified 2026-07-11)
-
-See [`memories/llm-user-message-format.md`](memories/llm-user-message-format.md) — durable notes for the LLM user-message JSON format: `EnsuredMessage.formatForLLM` JSON branch + falsy-value dropping, `chat-prompt-suffix` enumeration on the `BOT_OWNER_SYSTEM` settings page, ADR-018/019 render entry points, `CHAT_PROMPT`/`CHAT_PROMPT_SUFFIX` as `ChatSettingsKey` enum values.
-
-## LLM Messages Handler Structure (verified 2026-07-05)
-
-See [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md) — durable anchors for `internal/bot/common/handlers/llm_messages.py` (`_sendLLMChatMessage` signature + JSON-unwrap gate, `handleReply`/`handleMention`/`handleRandomMessage` call sites, abstention sentinel INVARIANT, `<media-description>` extraction, `ModelMessage`/`getThreadByMessageForLLM`/`EnsuredMessage.__slots__` gotchas, chat-settings symbol locations, conftest fixtures).
-
-## Docs Archive Layout (2026-07-04)
-
-- `docs/plans/` holds active/retained design refs only. After the 2026-07-18 full `/docs` audit it contains 2 files: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`, status `implemented`) and `llm-empty-truncated-final-handling-v1.md` (status `PARTIALLY IMPLEMENTED` — Option B handler-half shipped at `llm_messages.py:394`, Option A + `bot.py` empty-string guard + regression tests still pending).
-- `docs/design/` holds 2 retained docs: `markdown-specification.md` (living grammar spec) and `vector-search-native.md` (forward-looking pgvector/MySQL/SQLink contract; SQLite path implemented).
-- `docs/database-multi-source.md` (at docs/ root, NOT in plans/) is the relocated operational reference for the multi-source DB architecture (was `docs/plans/database-multi-source-configuration.md`).
-- `docs/archive/plans/README.md` and `docs/archive/design/README.md` are the authoritative indexes of archived docs with one-line descriptions. Update them when archiving new docs.
-- Frozen historical session/review snapshots live under `docs/archive/llm-sessions/` and `docs/archive/review/` (relocated from `docs/llm-sessions/` and `docs/review/` on 2026-07-04). They retain old `docs/plans/...`-style internal paths intentionally — they are snapshots, not active cross-references. Do not rewrite their content.
-
-## Docs Reorg Lessons (2026-07-04)
-
-See [`memories/docs-reorg-lessons.md`](memories/docs-reorg-lessons.md) — durable lessons from the 2026-07-04 docs bulk-reorg: sibling-relative-link gap inside moved files, code-doc references in `*.py` docstrings + migration modules + `tests/**` golden-doc files, config-comment doc-path references, status/scope/phase header reconciliation. (`lib/` is currently clean; hotspots are `internal/**/*.py` ~16 refs + `tests/**` ~6 refs.)
-
-## Documentation Audit Lessons (2026-06-28)
-
-See [`memories/documentation-audit.md`](memories/documentation-audit.md) — durable notes from the 2026-06-28 documentation audit: drift-pattern taxonomy (line numbers / counts / method names / enum values / DDL phantoms), highest/medium/low-drift doc lists, fix-all-files-at-once rule.
-
-## Skills & Agents Landscape Audit (2026-07-11)
-
-See [`memories/skills-agents-audit.md`](memories/skills-agents-audit.md) — durable notes from the 2026-07-11 audit: inventory (8 project skills, 4 global, 7 custom agents), identified gaps + ROI ranking, session outcomes (getChatSettings drift resolved across 9+ surfaces, code-reviewer/docs-writer permission hardening, `make check-docs` shipped, add-handler ↔ add-llm-tool bidirectional cross-ref).
-
-## Dependency-Usage Regression Tests (2026-07-15, COMPLETED)
-
-See [`memories/dependency-usage-tests.md`](memories/dependency-usage-tests.md) — durable notes for the `tests/dependencies/` dep-usage regression test suite (6 files, 79 tests): PURE/EXTERNAL/MIXED/DEV classification, version-pinning convention (`importlib.metadata.version()` + native probes), philosophy (pin deterministic outputs / TOLERANCE for implementation-defined), behavioral findings (dateutil month-first, html-to-markdown `.content`, numpy tie-breaking, sqlite-vec DELETE shapes).
-
-## user-memory-v2 Pre-Merge Review (2026-07-14)
-
-See [`memories/user-memory-v2-review.md`](memories/user-memory-v2-review.md) — post-review half of the merged campaign narrative: 2 Critical + ~15 Important + ~25 Recommend + ~15 Nit found (all fixed); durable contracts (`CondensingDict.messageCount` counts ALL processed positions, per-message memory injection, `getThreadByMessageForLLM` dedup accumulator invariant, `condenseContext.batchLength` floor at 1, `MAX_SQL_VARIABLES=900`, `_normalizeTags` strips `"`/`\`); user-preference + process-lessons reinforcement.
-
-## Full /docs Audit (2026-07-18, COMPLETED)
-
-End-to-end audit of all 85 files under `/docs/` (excluding `docs/archive/`): 36 memories + 12 `docs/llm/` non-memory + 8 `docs/` root + 29 plans/designs/examples/templates/other. Outcomes: ~78 FIX, ~6 KEEP, 13 ARCHIVE moves (12 in Phase 2 + 1 in Phase 3d Wave 9 `condensing-prompt-tool-param.md` + 1 in Phase 3d Wave 11 `max-bot-client-generation-brief.md`). Gate 2 review closed cleanly. `make check-docs` green (106 files / 1615 links / 0 broken). Process: 1 inventory agent → 1 bulk-archive agent → 5 waves of 8 memory audits (Phase 3a) → 2 waves of 6 `docs/llm/` non-memory (Phase 3b) → 1 wave of 8 `docs/` root (Phase 3c) → 2 waves of 11+18 plans/examples/templates/other (Phase 3d) → 3 parallel reconciliation agents (Phase 4) → 1 whole-work review + 1 fix dispatch + 1 re-review (Phase 5). 8 files/wave was the right batch size; 2 of 6 high-drift `docs/llm/` files needed re-dispatch (libraries.md, configuration.md — step limit). Per-file agents were strict one-file-only; cross-file consistency was the explicit Phase 4+5 gap to close.
-
-### Recurring drift patterns (for future audits — apply repo-wide grep verification)
-
-1. **`_persistMemoryEntry` → `_runSingleRefinement` inlined cursor-persist** — method removed (inlined into `_runSingleRefinement` at `user_memories.py:1356-1374` under `cache.chatUserMetadataLock()`); class `UserDataHandler` → `UserMemoriesHandler`; file `user_data.py` deleted (now `user_memories.py`). Historical-pointer convention: *"`_runSingleRefinement`'s inlined cursor-persist (formerly `_persistMemoryEntry`)"*.
-2. **`chatMessages.searchChatMessages` → `chatSearch.searchChatMessages`** — repository split; `chat_search.py` is a separate repo, accessed as `db.chatSearch`. Test: `grep -rn 'chatMessages.searchChatMessages' docs/` (outside `docs/archive/`) must return 0.
-3. **`excludeMemoryIds` is OPTIONAL, not REQUIRED** — only `cache` is required keyword-only; `excludeMemoryIds: Optional[Set[str]] = None` at `ensured_message.py:1073, 1203, 1275` (3 sites). The "pyright enforces both" claim is false — pyright does NOT enforce optional-with-default.
-4. **`handleRandomAnswer` → `handleRandomMessage`** — method at `llm_messages.py:790`.
-5. **Repository class merges**: `DivinationLayoutsRepository` → `DivinationsRepository` (layout CRUD was merged in; `db.divinations` accessor); `CommonRepository` → `CommonFunctionsRepository`. Test: `grep -rn -E '(CommonRepository|DivinationRepository|DivinationLayoutsRepository)\b' docs/` (outside `docs/archive/` + clarifying-mention narrative) must return ~0.
-6. **`[database.sources.*]` → `[database.providers.*]`** — config schema rename; `DatabaseManagerConfig.providers` is the live shape (`configs/00-defaults/00-config.toml`).
-7. **SQLink is a REMOTE-DB HTTP client, NOT SQLite with async** — required kwargs are `url`/`user`/`password`/`database`. The `dbPath` kwarg belongs to `SQLite3Provider` only. Don't conflate them in multi-source examples. SQLink's `readOnly` is server-controlled (`db.access == "ro"`), not a client-side flag.
-8. **Handler chain ordering** — full list (verified `manager.py:478-612`): 9 always-on + 3 Telegram-only (`DeleteFromUserMessageHandler` at position 10, `ReactOnUserMessageHandler`, `TopicManagerHandler`) + 6 config-gated (`MessagePreprocessorHandler`, `SpamHandler`, `ChatSearchHandler`, `ResenderHandler`, `SandboxHandler`, `DivinationHandler`) + custom-loader + `LLMMessageHandler` (MUST BE LAST — appended after conditional/custom handlers). Don't forget `DeleteFromUserMessageHandler` (registered before `ReactOnUserMessageHandler`).
-9. **Method renames** — `saveChatUser`→`updateChatUser`, `saveChatInfo`→`updateChatInfo`, `saveChatTopic`→`updateChatTopicInfo`, `getMessages`→`getChatMessagesSince`, `addMessage`→`saveChatMessage`, `saveMediaAttachment`→`addMediaAttachment`, `saveSpamMessage`→`addSpamMessage`, `saveHamMessage`→`addHamMessage`, `saveDelayedTask`→`addDelayedTask`, `getCache`/`setCache`→`getCacheEntry`/`setCacheEntry`, `getChatSummarizationCache`/`setChatSummarizationCache`→`getChatSummarization`/`addChatSummarization`, `markDelayedTaskDone(taskId)`→`updateDelayedTask(id, isDone)`. Pattern: `save*`/`get*` (legacy) → `update*`/`add*`/descriptive (current). Always grep current code before trusting doc method names.
-10. **`HandlersManager.injectBot` was renamed to `initialize`** — `BaseBotHandler.injectBot` (`base.py:178`) is now the narrower method that just sets `self._bot`. Don't conflate them in refactor proposals.
-11. **`_sendLLMChatMessage` returns `LLMReplyOutcome` StrEnum** (3 members: SENT/ERROR/SKIPPED_BY_MODEL), not `bool`. Span `llm_messages.py:221-443`. `SKIPPED_BY_MODEL` returned by handler-level empty-guard at L394 (Option B handler-half of `llm-empty-truncated-final` fix).
-12. **`ModelResultStatus` has 8 values**: UNSPECIFIED, PARTIAL, TRUNCATED_FINAL, FINAL, CONTENT_FILTER, TOOL_CALLS, UNKNOWN, ERROR (`lib/ai/models.py:923-950`). `ERROR_STATUSES = {UNSPECIFIED, CONTENT_FILTER, UNKNOWN, ERROR}` (excludes TRUNCATED_FINAL, PARTIAL, FINAL, TOOL_CALLS). Older docs fabricated `TIMEOUT`/`EMPTY` — they don't exist.
-13. **`RANDOM_ANSWER_PROMPT` wiring** — `ChatSettingsKey` at `chat_settings.py:334`; entry at `:701-707` (page `BOT_OWNER_SYSTEM`); TOML default at `bot-defaults.toml:227-237`; used in `handleRandomMessage` at `llm_messages.py:865-874` (thread path, slice-rebuild) and `:878-887` (non-thread path).
-14. **`HandlersManager` line refs drifted massively (~200+ lines)** since early 2026: class 177→382, `__init__` 185→416, `self.handlers` list 249→478, `awaitStepDone` 110→236, `messageProcessed` 149→330, `injectBot`/`initialize` 389→703, `shutdown` 430→738. **Always re-locate by symbol before trusting line numbers.**
-15. **`lib/ext_modules/grabliarium/tests/` is sanctioned-collocated** — vendored subpackage with its own `pyproject.toml`/tests. **AGENTS.md L127 carve-out added 2026-07-18** (Phase 10 follow-up); `docs/llm/testing.md` also documents it.
-16. **Counts as of 2026-07-18**: 36 memories + `memories/index.md` = 37; ADR count = 19 (ADR-001..019); `ToolName` StrEnum = 22 members; `registerTool` call sites = 22; migrations = 24 (`migration_001..024`); `Database` repos = 15; tests ≈ 3392 collected. These drift monotonically — re-verify before relying on absolute counts.
-17. **YC SDK docs fully re-captured against pinned v0.22.0** (2026-07-18, Phase 12 wave of 7 parallel agents + Gate 2 fix dispatch + serial verification): all 7 files in `docs/other/yc-ai-sdk/` now have H1 stamp `(verified against pinned v0.22.0, 2026-07-18)` and a banner stating verification scope. ~30 newly-discovered drifts fixed across the bundle (most critical: `embeddings-and-other.md` had 13 — nonexistent `as_batch()`/`query()` methods, invalid `"BM25"`/`"TextGeneration"` enums, etc.; `chat-openai-compat.md` had wrong `ChatModelResult` dataclass fields; `speech.md`/`completions.md`/`chat-openai-compat.md` had `await run_stream()` bugs that would raise `TypeError` — async generator, not coroutine). `⚠` convention: server-side facts only (model catalogues, context sizes, required scopes). `make check-docs` green.
-18. **Max Messenger host lineage**: `botapi.max.ru` (legacy, retired 2026-07-19) → `platform-api.max.ru` (deprecated, also retired 2026-07-19) → `platform-api2.max.ru` (current production host, `lib/max_bot/constants.py:18`). Migration COMPLETE per `memories/max-api-migration.md`. Schema snapshots in `docs/other/Max-Messenger/` carry deprecation banners.
-19. **Dependency pins (verified 2026-07-18)**: `aiodocker==0.27.0` (was 0.26.0); `sqlite-vec==0.1.9` (was 0.1.10a4); `httpx-socks[asyncio]==0.11.0` (was `>=0.10.0`); `numpy==2.5.1` (was 2.4.6); `pillow==12.3.0` (new direct dep at `lib/ai/models.py:48`, **zero dep-usage coverage — candidate for future round**); `aiohttp==3.14.1`.
-
-### Cross-cutting code-side follow-ups (ALL RESOLVED 2026-07-18 in Phase 8-9 follow-up pass)
-
-All items below were flagged as out-of-`/docs`-scope during the initial audit; the user requested them resolved. Status: every item landed, `make format lint` clean, `make test` green (3389 passed).
-
-- ✅ **`internal/database/database.py`** class docstring (removed `divinationLayouts`; added `userMemories`/`chatEmbeddings`/`chatSearch`) + module/class example `getMessages`→`getChatMessagesSince` (×2).
-- ✅ **`internal/services/cache/service.py:1137`** + **`internal/bot/common/handlers/base.py:1174`** docstrings → `_runSingleRefinement`'s inlined cursor-persist (with "formerly `_persistMemoryEntry`" historical pointer).
-- ✅ **`internal/services/llm/service.py:78-80`** `generateCondensingDict` docstring → `messageCount += 1` is unconditional; only metadata extraction skipped in None branch.
-- ✅ **`internal/bot/models/message_metadata.py:289`** `mergeCondensingDicts` docstring → "set-unique (unsorted)" for participants; "plain extend (NO de-dup)" for messageIds.
-- ✅ **`internal/bot/common/handlers/chat_search.py:974-978`** comment → `extra=` is commented out; runtime `str(mid).strip()` + `MessageId(midStr)` coercion is the actual safety net.
-- ✅ **`internal/bot/common/handlers/dev_commands.py:842`** docstring → `reconstructMessages` replaced with `ModelMessage.fromDictList` (the actual consumer at `lib/ai/models.py:676`).
-- ✅ **`internal/bot/max/application.py:127`** `unregister-webhook` code default `True` → `False` (RUNTIME change; aligns with config default `false`; doc-sync rippled to 4 docs).
-- ✅ **`internal/bot/common/handlers/manager.py:491-492`** comment → corrected handler-ordering misattribution.
-- ✅ **`internal/bot/constants.py:65,168`** stale paths → `docs/archive/plans/...`.
-- ✅ **`lib/markdown/__init__.py:17`** docstring → camelCase `markdownToMarkdownV2` (was snake_case).
-- ✅ **`lib/geocode_maps/client.py:14`** docstring → "TypedDict models" (was "Pydantic models"; file path was `client.py` not `__init__.py` as initially flagged).
-- ✅ **Test-side stale comments**: `test_user_memories.py:819,855,28,1214,1729`; `test_user_memories_memory_regen.py:4`; `test_yandex_search.py:4`; `test_user_info.py:449` — all updated.
-- ✅ **`.agents/skills/add-llm-tool/SKILL.md:353`** stale `~line 1306` ref → symbol-only reference.
-- ✅ **17 stale `docs/plans/` paths in code/tests** all → `docs/archive/plans/...` (8 in `user_memories.py`, 2 in `constants.py`, 1 each in `migration_020/021`, `llm/models.py`, 5 across 4 test files).
-- ✅ **Regression tests for `llm_messages.py:394` empty-guard** — `TestLLMEmptyResponseGuard` class (5 tests) added to `tests/bot/common/handlers/test_llm_messages.py`; `testPostStopUnregisterWebhookKeyAbsentDefaultsToFalse` added to `tests/bot/max/test_webhook_mode.py`. Test count: 3381 → 3389.
-
-### Open documentation decisions (status as of 2026-07-18 end-of-day)
-
-- ✅ **`docs/database-README.md`**: FREEZE-and-link framing removed (Phase 11); file is now a normal maintained overview with positive "Canonical sources" navigation pointer. All 27 Phase 3c drift fixes intact.
-- ✅ **`docs/plans/llm-empty-truncated-final-handling-v1.md`**: Test Plan implemented (Phase 9, 5 tests); status remains `PARTIALLY IMPLEMENTED` (Option A provider downgrade + `bot.py` empty-string guard still pending — those are product decisions, not doc drift).
-- ✅ **AGENTS.md L124-127**: `lib/ext_modules/*/tests/` sanctioned-exception carve-out added (Phase 10).
-- ✅ **YC SDK version drift** (`docs/other/yc-ai-sdk/`): **FULLY RE-CAPTURED 2026-07-18 (Phase 12)**. All 7 files re-verified against installed v0.22.0 SDK source. ~30 newly-discovered drifts fixed. H1 + banners consistent across the bundle. `⚠` markers discipline: server-side facts only. See "Recurring drift patterns" item 17 above.
-- ⚠ **`docs/archive/design/` count** = 23 archived + 1 README = 24 total (decremented from 24+1=25 after `custom-modules-design.md` was restored to `docs/design/` in Phase 7).
-- ℹ **Per-section archive READMEs** enumerate files without explicit count statements; parent `docs/archive/README.md` carries the canonical counts. Intentional — enumeration suffices.
-
-### Process lessons reinforced
-
-- **Per-file agents need explicit cross-file-flag instructions.** When a drift is found, the agent should be told which sibling files might carry the same drift and instructed to flag (not fix — that would violate one-file-only scope) for Phase 4 reconciliation. This worked well; only 4 of ~85 files had residual cross-file drift after Phase 3.
-- **Gate 2 (whole-work review) is non-optional for multi-file audits.** Caught 3 HIGH-severity cross-file inconsistencies (Pattern-1 incomplete in `user-memory-refinement.md`; Pattern-5 missed in `architecture.md` + `database-schema.md`) that per-file agents couldn't see.
-- **Re-dispatch is normal for high-drift files.** 2 of 6 `docs/llm/` non-memory files hit the ~60 step budget on first pass; the brief was tightened and re-dispatched successfully. Don't fight it — just re-dispatch with the remaining scope made explicit.
-- **Count methodology in archive indexes**: "content-only + `+ 1 README` suffix" is now the convention. `docs/archive/plans/` = 66 archived + 1 README = 67 total; `docs/archive/design/` = 23 archived + 1 README = 24 total (was 24+1=25 before `custom-modules-design.md` was restored to `docs/design/` in Phase 7).
-- **Strict one-subagent-per-file + Phase 4 reconciliation**: worked well at 85 files; the alternative (parallel multi-file agents) would have caused more merge conflicts and harder review.
-- **Archive-vs-live decision principle (learned from user feedback 2026-07-18)**: a doc referenced as **current operational guidance** by a live skill/code-path is NOT a historical-only candidate, regardless of its "Status: Implemented" header. Phase 2 incorrectly archived `custom-modules-design.md` because it looked like a "shipped-feature design doc"; the user pointed out that `.agents/skills/add-handler/SKILL.md` references it as routing/decision guidance under "When NOT to use" — so it's a living reference. Restoration to `docs/design/` (not original `docs/` root — that would re-create clutter) + revert of inbound links to current-guidance framing was the correct fix. Apply this principle to future archive decisions: grep for **operational** references (skills, "see this for how to X"), not just historical-plan-of-record references.
+See [`memories/vision-flag.md`](memories/vision-flag.md) — per-model `support_image_input` ("can see") flag: verified facts (config plumbing via `extraConfig`, catalog pipeline touchpoints, test pins, /configure label site), Phase 1/2 history, capability-metadata-only stance. The four arc-closure lessons (concurrent-maintainer hazard, step-cap recovery via verifier agent, doc_section_edit CAS-fail recurrence, test-count reconciliation) were hoisted to Teamlead Workflow Lessons / markdown-mcp ops.

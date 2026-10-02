@@ -1,42 +1,42 @@
 """Repository for chat message search (filter-only and semantic).
 
 This module provides the :class:`ChatSearchRepository` class which
-unifies the two chat-message search modes that previously lived across
-:mod:`chat_messages` and :mod:`chat_embeddings`:
+unifies the two chat-message search modes:
 
 - **Filter-only mode** (``queryEmbedding is None``): the SQL filter
   path that applies ``userFilter`` / ``categoryFilter`` / ``maxAgeDays``
   / ``rootMessageId`` directly against ``chat_messages`` joined to
   ``chat_users``, ordered by ``date`` descending.
-- **Semantic mode** (``queryEmbedding is not None``): loads
-  ``message_embeddings`` rows for the chat, applies the same SQL
-  pre-filters to the candidate set, computes cosine similarity against
-  ``queryEmbedding`` via ``numpy``, and returns the top-K messages
-  ranked by similarity descending.
+- **Semantic mode** (``queryEmbedding is not None``): delegates cosine
+  ranking to the provider's native vec0 virtual table
+  (``vec_message_embeddings_{N}``). There is NO in-process fallback
+  anymore — the legacy ``message_embeddings`` BLOB side table and the
+  numpy cosine block were dropped in ``migration_025`` (plan §4.5 /
+  Decision D8 — numpy fully retired from this file). When vec0 is
+  unavailable, raises, or yields no matches, semantic search returns
+  ``[]``.
 
 The public :meth:`ChatSearchRepository.searchChatMessages` dispatcher
-selects the mode at runtime. This replaces the prior
-cross-repository back-reference between ``ChatMessagesRepository`` and
-``ChatEmbeddingsRepository`` (``ChatMessagesRepository._embeddingsRepo``,
-wired by ``Database.__init__``) and consolidates the search surface
-into a single, cohesive repository that has all the methods it needs
-in-process.
+selects the mode at runtime. Decision D6 (extended) keeps the
+handler-facing signature stable — callers keep passing
+``modelName=...``; resolution to ``model_id`` happens internally via
+the injected resolver (Decision D10 — see
+:meth:`ChatSearchRepository.__init__`).
 """
 
 import array
 import datetime
 import logging
+import math
 from collections.abc import Sequence
-from typing import List, Optional
-
-import numpy as np
+from typing import Awaitable, Callable, List, Optional
 
 from internal.models import MessageId
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import BaseSQLProvider, VectorDistanceMetric
 
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageCategory
-from ..providers.base import BaseSQLProvider, VectorDistanceMetric
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -49,34 +49,80 @@ _MESSAGE_ID_FILTER_BATCH_SIZE: int = 1024
 
 
 class ChatSearchRepository(BaseRepository):
-    """Unified chat-message search across ``chat_messages`` and ``message_embeddings``.
+    """Unified chat-message search across ``chat_messages`` and vec0.
 
     The repository owns both the filter-only SQL path and the semantic
-    (embedding-based cosine-similarity) path, plus the private helpers
-    (``_loadEmbeddingsFromDb``, ``_filterMessageIds``,
-    ``_fetchSearchResultRows``) that the semantic path composes. The
-    embedding CRUD itself (``saveMessageEmbedding``,
-    ``getMessageEmbedding``, ``deleteChatEmbeddings``,
-    ``getMessagesWithoutEmbeddings``) lives in
-    :class:`ChatEmbeddingsRepository` — this repository only consumes
-    embeddings, it does not own their lifecycle.
+    (vec0-backed) path, plus the private helpers
+    (``_filterMessageIds``, ``_fetchSearchResultRows``) that the
+    semantic path composes. Post-``migration_025``:
 
-    Caching of decoded embeddings belongs in the handler layer
-    (via :class:`CacheService`). The repository always re-reads
-    ``message_embeddings`` BLOB rows on every semantic-mode call,
-    pre-filtered by ``modelName`` to keep the result set bounded by the
-    active model.
+    - The legacy ``message_embeddings`` BLOB side table is gone; vec0
+      (``vec_message_embeddings_{N}``) is the sole vector store on the
+      message side.
+    - The numpy cosine fallback block is gone (Decision D8). When vec0
+      is unavailable, raises, or returns no matches, semantic search
+      returns ``[]``.
+    - Provenance is keyed by ``model_id`` (the small integer from
+      :class:`EmbeddingModelsRepository`); the ``(modelName, dimensions)``
+      handler-facing argument is resolved internally via the injected
+      ``modelIdResolver`` (Decision D10).
+
+    Embedding CRUD itself (``saveMessageEmbedding``,
+    ``getMessagesWithoutEmbeddings``, ``deleteObsoleteModelEmbeddings``)
+    lives in :class:`ChatEmbeddingsRepository` — this repository only
+    consumes the stored vectors for ranking.
+
+    Attributes:
+        _modelIdResolver: Async callable resolving ``(modelName,
+            dimensions)`` to a ``model_id`` integer. Wired in
+            :meth:`Database.__init__` to
+            :meth:`EmbeddingModelsRepository.getOrCreateModelId` (bound method).
     """
 
-    __slots__ = ()
+    # ``manager`` is inherited from ``BaseRepository.__slots__`` and is
+    # NOT redeclared here (re-declaring raises
+    # ``ValueError: 'manager' in __slots__ conflicts with class variable``).
+    __slots__ = ("_modelIdResolver",)
 
-    def __init__(self, manager: DatabaseManager) -> None:
+    def __init__(
+        self,
+        manager: DatabaseManager,
+        *,
+        modelIdResolver: Callable[..., Awaitable[int]],
+    ) -> None:
         """Initialize the chat search repository.
 
         Args:
             manager: Database manager instance for provider access.
+            modelIdResolver: Async callable that resolves
+                ``(modelName, dimensions)`` to a ``model_id`` integer.
+                Wired in :meth:`Database.__init__` to
+                :meth:`EmbeddingModelsRepository.getOrCreateModelId` (the bound
+                method). The resolver is called as
+                ``resolver(model, dimensions, *, dataSource=...)``; tests
+                inject a mock.
         """
         super().__init__(manager)
+        self._modelIdResolver = modelIdResolver
+
+    async def _resolveModelId(self, model: str, dimensions: int, *, dataSource: Optional[str] = None) -> int:
+        """Resolve ``(model, dimensions)`` to a ``model_id`` via the injected resolver.
+
+        Thin wrapper around :attr:`_modelIdResolver` so call sites within
+        this repo read as ``await self._resolveModelId(model, dims)``;
+        the underlying caching / probe-then-insert contract lives in
+        :class:`EmbeddingModelsRepository`.
+
+        Args:
+            model: Embedding model name string.
+            dimensions: Vector dimensionality.
+            dataSource: Optional explicit data source forwarded to the
+                injected resolver for multi-source routing.
+
+        Returns:
+            The integer ``model_id``.
+        """
+        return await self._modelIdResolver(model, dimensions, dataSource=dataSource)
 
     ###
     # Public dispatcher
@@ -102,12 +148,14 @@ class ChatSearchRepository(BaseRepository):
 
         Two modes:
 
-        - **Semantic mode** (``queryEmbedding`` provided): loads
-          ``message_embeddings`` rows for the chat (filtered by
-          ``modelName``), applies the SQL pre-filters over the
-          candidate set, computes cosine similarity against
-          ``queryEmbedding`` via ``numpy``, and returns the top-K
-          messages ranked by similarity descending.
+        - **Semantic mode** (``queryEmbedding`` provided): delegates
+          cosine ranking to the provider's native vec0 virtual table.
+          ``modelName`` is resolved to ``model_id`` internally via the
+          injected resolver (Decision D6 extended + Decision D10) —
+          handler call sites keep passing the model name string
+          unchanged. When vec0 is unavailable, raises, or yields no
+          matches, an empty list is returned (there is no in-process
+          fallback post-``migration_025``).
         - **Filter-only mode** (``queryEmbedding is None``): the SQL
           filters (``userFilter``, ``categoryFilter``, ``maxAgeDays``,
           ``rootMessageId``) are applied directly against
@@ -137,11 +185,14 @@ class ChatSearchRepository(BaseRepository):
                 restricted to messages with
                 ``root_message_id == rootMessageId`` (i.e. replies
                 within the same thread).
-            modelName: Embedding model name to filter by when loading
-                from ``message_embeddings``. Required for semantic mode
-                (the caller resolves the active model via the
-                ``EMBEDDING_MODEL`` chat setting).
-            maxMessages: Cap on how many embedding rows to load for
+            modelName: Embedding model name (the resolved value of the
+                ``EMBEDDING_MODEL`` chat setting). Required for
+                semantic mode — when ``None``, semantic search returns
+                an empty list. The repo resolves
+                ``(modelName, len(queryEmbedding))`` to a ``model_id``
+                internally; the handler-facing signature is unchanged
+                per Decision D6 (extended).
+            maxMessages: Cap on how many embedding rows to consider for
                 this chat. Defaults to ``None`` (no cap). Honours the
                 ``MAX_MESSAGES_FOR_SEMANTIC_SEARCH`` chat setting when
                 passed through by the caller.
@@ -160,7 +211,9 @@ class ChatSearchRepository(BaseRepository):
             user info, and the optional ``score`` field populated.
             In filter-only mode the ``score`` field is ``0.0`` (no
             ranking applied); in semantic mode it is the cosine
-            similarity against ``queryEmbedding``.
+            similarity against ``queryEmbedding``. Returns ``[]`` when
+            vec0 is unavailable, raises, yields no matches, or when
+            ``modelName`` is ``None``.
 
         Raises:
             Exception: Database errors are caught and logged; an empty
@@ -319,17 +372,14 @@ class ChatSearchRepository(BaseRepository):
     ) -> List[ChatMessageDict]:
         """Semantic search path used by :meth:`searchChatMessages`.
 
-        1. Load all embeddings for the chat from ``message_embeddings``
-           (filtered by the active model).
-        2. Apply pre-filters (``userFilter``, ``categoryFilter``,
-           ``maxAgeDays``, ``rootMessageId``, ``threadId``,
-           ``substring``) over the loaded ``messageIds`` to produce a
-           small candidate set.
-        3. Compute cosine similarity using ``numpy`` over the candidate
-           matrix, take the top-K.
-        4. Fetch full message data for the top-K and return as
-           :class:`ChatMessageDict` (with the ``score`` field populated)
-           sorted by similarity descending.
+        Post-``migration_025`` contract (Decision D8 — numpy fully
+        retired): vec0 (``vec_message_embeddings_{N}``) is the sole
+        vector store on the message side. The legacy numpy fallback
+        block is gone. Returns ``[]`` when vec0 is unavailable, raises,
+        or yields no matches. There is no in-process fallback.
+
+        The vec0 path resolves ``modelName`` to ``model_id`` internally
+        via :meth:`_nativeVectorSearch` + the injected resolver.
 
         Args:
             chatId: Chat to search in.
@@ -342,9 +392,9 @@ class ChatSearchRepository(BaseRepository):
             categoryFilter: Optional message category filter.
             maxAgeDays: Only consider messages newer than N days.
             rootMessageId: Optional thread root to filter by.
-            modelName: Embedding model name to filter by when loading
-                from ``message_embeddings``. Required for semantic mode.
-            maxMessages: Cap on how many embedding rows to load.
+            modelName: Embedding model name. When ``None``, semantic
+                search returns ``[]`` (no resolution possible).
+            maxMessages: Cap on how many embedding rows to consider.
             dataSource: Optional explicit data source.
             threadId: Optional thread/topic id filter (``0`` = main).
             substring: Optional case-insensitive substring; bound as
@@ -353,204 +403,69 @@ class ChatSearchRepository(BaseRepository):
         Returns:
             List of :class:`ChatMessageDict` with message content,
             user info, and ``score`` set to the cosine similarity.
-            Empty list on failure.
+            Empty list when vec0 is unavailable, raises, yields no
+            matches, or when ``modelName`` is ``None``.
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
 
-            # --- Native vector search fast path ---
-            # When the provider supports native vector search, push the
-            # cosine distance computation into the database engine and
-            # avoid loading every embedding BLOB into Python. Empty
-            # results (vec0 table empty / not yet created for this
-            # dimension) fall through to the numpy path; any exception
-            # also falls through to numpy.
-            if await sqlProvider.isVectorSearchSupported():
-                try:
-                    # Dimension is inferred from the query vector length,
-                    # avoiding dependency on model introspection APIs that
-                    # vary across embedding providers.
-                    dimension = len(queryEmbedding)
-                    # NOTE: The native path may operate on a partially-mirrored vec0 corpus
-                    # during the transitional period after rollout. Pre-existing embeddings
-                    # in message_embeddings are only dual-written to vec0 when they are
-                    # re-generated (backfill on model change or when embeddings are enabled).
-                    # Until then, the vec0 table may contain fewer rows than message_embeddings,
-                    # and native results will only reflect the dual-written subset.
-                    # Resolution: keep ``EMBEDDINGS_ENABLED`` on for affected chats to trigger
-                    # a full re-embedding pass, which populates vec0 via the dual-write.
-                    nativeResults = await self._nativeVectorSearch(
-                        sqlProvider=sqlProvider,
-                        chatId=chatId,
-                        queryEmbedding=queryEmbedding,
-                        limit=limit,
-                        topK=topK,
-                        userFilter=userFilter,
-                        categoryFilter=categoryFilter,
-                        maxAgeDays=maxAgeDays,
-                        rootMessageId=rootMessageId,
-                        modelName=modelName,
-                        maxMessages=maxMessages,
-                        dimension=dimension,
-                        threadId=threadId,
-                        substring=substring,
-                    )
-                    if nativeResults:
-                        return nativeResults
-                    # Empty result — vec0 table may be empty (pre-backfill).
-                    # Fall through to numpy path below.
-                except Exception:
-                    logger.warning(
-                        "Native vector search failed for chat %s, falling back to numpy",
-                        chatId,
-                        exc_info=True,
-                    )
-                    # Fall through to numpy path below.
-
-            # 1. Always load embeddings fresh from the DB. The repository
-            #    no longer maintains an in-memory cache — callers (e.g.
-            #    ChatSearchHandler) own the caching layer via CacheService.
-            embeddingList, messageIds = await self._loadEmbeddingsFromDb(
-                sqlProvider=sqlProvider,
-                chatId=chatId,
-                modelName=modelName,
-                maxMessages=maxMessages,
-            )
-
-            if not embeddingList or not messageIds:
-                return []
-
-            # 2. Build the candidate set via SQL pre-filter on message_id.
-            candidateMessageIds = await self._filterMessageIds(
-                sqlProvider=sqlProvider,
-                chatId=chatId,
-                candidateMessageIds=messageIds,
-                userFilter=userFilter,
-                categoryFilter=categoryFilter,
-                maxAgeDays=maxAgeDays,
-                rootMessageId=rootMessageId,
-                threadId=threadId,
-                substring=substring,
-            )
-            if not candidateMessageIds:
-                return []
-
-            # Map candidate MessageId -> row index in the cached embedding list.
-            idToIndex: dict = {mid.asStr(): i for i, mid in enumerate(messageIds)}
-            candidateIndices: list = []
-            candidateIdsOrdered: list = []
-            for mid in candidateMessageIds:
-                idx = idToIndex.get(mid.asStr())
-                if idx is not None:
-                    candidateIndices.append(idx)
-                    candidateIdsOrdered.append(mid)
-            if not candidateIndices:
-                return []
-
-            # 3. Cosine similarity over the candidate rows.
-            queryVec = np.asarray(queryEmbedding, dtype=np.float32)
-            candidateMatrix = np.asarray([embeddingList[i] for i in candidateIndices], dtype=np.float32)
-            queryVecNorm = np.linalg.norm(queryVec)
-            if queryVecNorm < 1e-8:
-                logger.warning(
-                    f"Query embedding has near-zero norm ({queryVecNorm}) for chat {chatId}; "
-                    f"semantic search results will be arbitrary"
+            # --- Native vector search (sole path post-migration_025) ---
+            # vec0 is the only vector store on the message side. When
+            # the provider does not support native vector search, the
+            # vec0 lookup raises, or the result is empty, we return []
+            # — there is no in-process fallback anymore (the numpy
+            # cosine block was dropped with the ``message_embeddings``
+            # BLOB side table; Decision D8).
+            if not await sqlProvider.isVectorSearchSupported():
+                logger.error(
+                    "Semantic search for chat %s returning [] — vec0 not supported by provider",
+                    chatId,
                 )
-            queryNorm = queryVec / (queryVecNorm or 1.0)
-            rowNorms = np.linalg.norm(candidateMatrix, axis=1, keepdims=True)
-            rowNorms[rowNorms == 0.0] = 1.0  # avoid div-by-zero for zero-vectors
-            normalizedMatrix = candidateMatrix / rowNorms
-            similarities = normalizedMatrix @ queryNorm
+                return []
 
-            # Pick top-K by similarity (argpartition is O(N), faster than full sort).
-            k = min(int(topK), similarities.shape[0])
-            topPartition = np.argpartition(-similarities, k - 1)[:k] if k > 0 else np.array([], dtype=np.int64)
-            # Order the partition by similarity descending for stable results.
-            topPartition = topPartition[np.argsort(-similarities[topPartition])]
-            topIds = [candidateIdsOrdered[int(i)] for i in topPartition]
-            topScores = [float(similarities[int(i)]) for i in topPartition]
+            try:
+                # Dimension is inferred from the query vector length,
+                # avoiding dependency on model introspection APIs that
+                # vary across embedding providers.
+                dimension = len(queryEmbedding)
+                nativeResults = await self._nativeVectorSearch(
+                    sqlProvider=sqlProvider,
+                    chatId=chatId,
+                    queryEmbedding=queryEmbedding,
+                    limit=limit,
+                    topK=topK,
+                    userFilter=userFilter,
+                    categoryFilter=categoryFilter,
+                    maxAgeDays=maxAgeDays,
+                    rootMessageId=rootMessageId,
+                    modelName=modelName,
+                    maxMessages=maxMessages,
+                    dimension=dimension,
+                    dataSource=dataSource,
+                    threadId=threadId,
+                    substring=substring,
+                )
+            except Exception:
+                logger.warning(
+                    "Native vector search failed for chat %s; returning [] (no in-process fallback)",
+                    chatId,
+                    exc_info=True,
+                )
+                return []
 
-            # 4. Fetch full message data for the top-K and assemble results.
-            return await self._fetchSearchResultRows(
-                sqlProvider=sqlProvider,
-                chatId=chatId,
-                topIds=topIds,
-                topScores=topScores,
-                limit=limit,
-            )
+            if not nativeResults:
+                # Empty result — vec0 table empty / not yet created for
+                # this dimension (pre-backfill). No fallback; just [].
+                logger.debug(
+                    "Native vector search returned no results for chat %s; returning []",
+                    chatId,
+                )
+                return []
+
+            return nativeResults
         except Exception as e:
             logger.error(f"Failed semantic search for chat {chatId}: {e}")
             return []
-
-    async def _loadEmbeddingsFromDb(
-        self,
-        sqlProvider: BaseSQLProvider,
-        chatId: int,
-        modelName: Optional[str],
-        maxMessages: Optional[int],
-    ) -> tuple[List[List[float]], List[MessageId]]:
-        """Load all embeddings for ``chatId`` filtered by ``modelName``.
-
-        Results are ordered by the corresponding ``chat_messages.date``
-        descending (most recent first), then by ``message_id`` descending
-        as tiebreaker. A ``JOIN`` to ``chat_messages`` is used to obtain
-        the chronological sort key because ``message_embeddings.message_id``
-        is stored as ``TEXT`` (via ``MessageId.asStr()``), so sorting on
-        it directly would produce lexicographic (not chronological) order
-        — e.g. ``"9" > "10"`` — which would keep the wrong rows under
-        the ``maxMessages`` cap.
-
-        Args:
-            sqlProvider: SQL provider to use.
-            chatId: Chat identifier.
-            modelName: Model name to filter by. When ``None``, returns
-                immediately with empty lists (semantic search requires
-                a resolved model).
-            maxMessages: Optional cap on rows loaded. ``None`` means no
-                cap.
-
-        Returns:
-            ``(embeddingList, messageIds)`` where ``embeddingList`` is a
-            list of ``list[float]`` vectors and ``messageIds`` is a list
-            of :class:`MessageId` aligned 1:1 with ``embeddingList``.
-            Both are empty on failure or when ``modelName`` is ``None``.
-        """
-        if modelName is None:
-            return [], []
-
-        query = """
-            SELECT me.message_id, me.embedding, me.dimensions
-            FROM message_embeddings me
-            JOIN chat_messages c
-                ON c.chat_id = me.chat_id AND c.message_id = me.message_id
-            WHERE me.chat_id = :chatId AND me.model = :modelName
-            ORDER BY c.date DESC, me.message_id DESC
-        """
-        params: dict = {"chatId": chatId, "modelName": modelName}
-        if maxMessages is not None:
-            query = sqlProvider.applyPagination(query=query, limit=int(maxMessages))
-
-        rows = await sqlProvider.executeFetchAll(query, params)
-        embeddingList: list = []
-        messageIds: list = []
-        for row in rows:
-            try:
-                vec = list(array.array("f", row["embedding"]))
-            except Exception as e:  # malformed BLOB - log and skip
-                logger.warning(
-                    f"Skipping malformed embedding BLOB for message {row['message_id']} " f"in chat {chatId}: {e}"
-                )
-                continue
-            if len(vec) != row["dimensions"]:
-                logger.warning(
-                    f"Skipping embedding with mismatched dimensions for message "
-                    f"{row['message_id']} in chat {chatId}: "
-                    f"expected {row['dimensions']}, got {len(vec)}"
-                )
-                continue
-            embeddingList.append(vec)
-            messageIds.append(MessageId(row["message_id"]))
-        return embeddingList, messageIds
 
     async def _filterMessageIds(
         self,
@@ -719,42 +634,41 @@ class ChatSearchRepository(BaseRepository):
         modelName: Optional[str],
         maxMessages: Optional[int],
         dimension: int,
+        dataSource: Optional[str] = None,
         threadId: Optional[int] = None,
         substring: Optional[str] = None,
     ) -> List[ChatMessageDict]:
-        """Semantic search using the provider's native vector search.
+        """Semantic search using the provider's native vec0 vector search.
 
         Pushes the cosine distance computation into the database engine,
-        avoiding loading all embeddings into Python memory. Exceptions
-        propagate to the caller (:meth:`_semanticSearch`), which catches
-        them and falls back to the numpy path.
+        avoiding loading all embeddings into Python memory. The vec0
+        partition-key filter is ``(chat_id, model_id)`` — the
+        ``model_id`` integer is resolved from ``modelName`` (and the
+        query vector's dimension) via the injected resolver (Decision
+        D10 + Decision D6 extended).
 
-        If the native search returns an empty result (vector table exists
-        but has no matching rows — e.g. during the pre-backfill period),
-        the caller checks the return value and falls through to numpy.
-        If the vec0 table does not exist at all (no embeddings written yet
-        for this dimension), :meth:`BaseSQLProvider.vectorSearch` raises
-        an exception that propagates to the caller's ``try/except`` and
-        triggers the numpy fallback. Table creation happens solely in the
-        write path (``saveMessageEmbedding`` ->
-        ``_upsertVecMessageEmbedding``).
+        When ``modelName`` is ``None`` the method short-circuits to
+        ``[]`` (no resolution possible). When vec0 raises or returns
+        ``[]`` (table missing or empty), the result is ``[]`` and the
+        :meth:`_semanticSearch` caller logs + returns ``[]`` (there is
+        no in-process fallback post-``migration_025``).
 
         The approach:
-         1. If ``maxMessages`` is set, compute ``minDate`` by querying the
-            date of the Nth most recent message in
-            ``message_embeddings`` (filtered by ``modelName`` and joined
-            to ``chat_messages`` for the chronological sort key). This
-            mirrors the numpy path's candidate set so both paths rank over
-            the same pool even during partial backfill or model change.
-        2. Call ``sqlProvider.vectorSearch()`` with the partition-key
-           filter (chatId, model) and optionally ``date >= :minDate`` to
-           cap the candidate pool to the ``maxMessages`` most recent
-           messages (Option B pre-filter — mirrors the numpy path's
-           ``LIMIT`` semantics so both paths rank over the same pool).
-        3. Apply user/category/age/thread post-filters via
-           :meth:`_filterMessageIds`.
-        4. Convert distances to similarity scores and re-rank descending.
-        5. Fetch full message rows via :meth:`_fetchSearchResultRows`.
+         1. Resolve ``modelId`` from ``(modelName, dimension)`` via the
+            injected resolver.
+         2. If ``maxMessages`` is set, compute ``minDate`` by querying
+            the date of the Nth most recent ``chat_messages`` row
+            carrying that ``model_id`` (single-table query — the legacy
+            ``message_embeddings`` JOIN is gone post-``migration_025``).
+         3. Call ``sqlProvider.vectorSearch()`` with the partition-key
+            filter (chatId, modelId) and optionally
+            ``date >= :minDate`` to cap the candidate pool to the
+            ``maxMessages`` most recent messages.
+         4. Apply user/category/age/thread post-filters via
+            :meth:`_filterMessageIds`.
+         5. Convert distances to similarity scores and re-rank
+            descending.
+         6. Fetch full message rows via :meth:`_fetchSearchResultRows`.
 
         Args:
             sqlProvider: The SQL provider (must have
@@ -767,30 +681,42 @@ class ChatSearchRepository(BaseRepository):
             categoryFilter: Optional category filter.
             maxAgeDays: Only messages newer than N days.
             rootMessageId: Optional thread root filter.
-            modelName: Embedding model name filter. When ``None``, native
-                search returns an empty list (caller falls through).
+            modelName: Embedding model name. When ``None``, returns
+                ``[]`` immediately (no resolution possible).
             maxMessages: If set, limit candidates to the N most recent
                 messages by date. Applied as a pre-filter via
                 ``date >= :minDate`` in the vec0 MATCH query.
             dimension: Embedding dimension (e.g. 384, 1024). Used to
                 construct the vec0 table name
-                ``f"vec_message_embeddings_{dimension}"``.
+                ``f"vec_message_embeddings_{dimension}"`` and to resolve
+                the ``model_id`` via the injected resolver.
+            dataSource: Optional explicit data source forwarded to the
+                injected resolver for multi-source routing on the
+                ``model_id`` lookup.
             threadId: Optional thread/topic id filter (``0`` = main).
             substring: Optional case-insensitive substring; bound as
                 ``%...%`` via ``getLikeComparison``.
 
         Returns:
             List of :class:`ChatMessageDict` with ``score`` set to the
-            cosine similarity (``1.0 - distance``). Returns an empty list
-            when the vec0 table is empty or has no matching rows; the
-            caller falls through to the numpy path.
+            cosine similarity (``1.0 - distance``). Returns ``[]`` when
+            ``modelName`` is ``None``, the query vector has near-zero
+            norm, vec0 returns no matches, or post-filters remove every
+            candidate.
         """
         if modelName is None:
             return []
 
+        # Resolve ``model_id`` via the injected resolver (Decisions
+        # D6 extended + D10). Handler callers keep passing the model
+        # name string; resolution to ``model_id`` is the repo's job.
+        modelId = await self._resolveModelId(modelName, dimension, dataSource=dataSource)
+
         # Guard against zero or near-zero query vectors — cosine distance
-        # is undefined and the results would be arbitrary noise.
-        queryNorm = float(np.linalg.norm(np.asarray(queryEmbedding, dtype=np.float32)))
+        # is undefined and the results would be arbitrary noise. Uses
+        # ``math.sqrt`` (pure Python) instead of ``numpy.linalg.norm``
+        # — numpy is fully retired from this file (Decision D8).
+        queryNorm = math.sqrt(sum(x * x for x in queryEmbedding))
         if queryNorm < 1e-8:
             logger.warning(
                 "Query embedding has near-zero norm (%s) for chat %s; " "semantic search results will be arbitrary",
@@ -802,33 +728,36 @@ class ChatSearchRepository(BaseRepository):
         queryVectorBytes: bytes = array.array("f", queryEmbedding).tobytes()
 
         # Build the vec0 MATCH filter. The partition-key filter
-        # (chat_id, model) is always present so the engine only scans
-        # rows belonging to the active chat/model pair.
-        filterParts: list[str] = ["chat_id = :chatId AND model = :modelName"]
+        # (chat_id, model_id) is always present so the engine only
+        # scans rows belonging to the active chat / model pair. The
+        # ``model_id`` integer is the partition key post-migration_025
+        # (it replaced the legacy ``model TEXT`` partition key).
+        filterParts: list[str] = ["chat_id = :chatId AND model_id = :modelId"]
         filterParams: dict[str, str | int | float | None] = {
             "chatId": chatId,
-            "modelName": modelName,
+            "modelId": modelId,
         }
 
-        # Option B pre-filter: enforce the ``maxMessages`` cap by pushing
-        # a ``date >= :minDate`` constraint into the vec0 query. The cutoff
-        # is the date of the Nth most recent message in ``chat_messages``
-        # (same ordering the numpy path uses for its ``LIMIT``).
+        # Option B pre-filter: enforce the ``maxMessages`` cap by
+        # pushing a ``date >= :minDate`` constraint into the vec0 query.
+        # The cutoff is the date of the Nth most recent message in
+        # ``chat_messages`` filtered by ``model_id`` — a single-table
+        # query (the legacy ``message_embeddings`` JOIN was dropped in
+        # ``migration_025``).
         if maxMessages is not None:
             cutoffQuery = (
-                "SELECT c.date, me.message_id "
-                "FROM message_embeddings me "
-                "JOIN chat_messages c "
-                "    ON c.chat_id = me.chat_id AND c.message_id = me.message_id "
-                "WHERE me.chat_id = :chatId AND me.model = :modelName "
-                "ORDER BY c.date DESC, me.message_id DESC"
+                "SELECT message_id, date FROM chat_messages "
+                "WHERE chat_id = :chatId AND model_id = :modelId "
+                "ORDER BY date DESC, message_id DESC"
             )
             cutoffQuery = sqlProvider.applyPagination(cutoffQuery, limit=1, offset=maxMessages - 1)
-            cutoffRow = await sqlProvider.executeFetchOne(cutoffQuery, {"chatId": chatId, "modelName": modelName})
+            cutoffRow = await sqlProvider.executeFetchOne(cutoffQuery, {"chatId": chatId, "modelId": modelId})
             if cutoffRow is not None:
-                # Compound filter: exclude messages strictly before the cutoff,
-                # and messages equal to the cutoff but with earlier message_id.
-                # This mirrors the numpy path's ORDER BY c.date DESC, me.message_id DESC.
+                # Compound filter: exclude messages strictly before the
+                # cutoff, and messages equal to the cutoff but with
+                # earlier message_id. Mirrors ``ORDER BY date DESC,
+                # message_id DESC`` semantics so messages sharing the
+                # cutoff timestamp do not leak into / out of the pool.
                 filterParts.append("(date > :minDate OR (date = :minDate AND message_id >= :minMessageId))")
                 filterParams["minDate"] = cutoffRow["date"]
                 filterParams["minMessageId"] = cutoffRow["message_id"]

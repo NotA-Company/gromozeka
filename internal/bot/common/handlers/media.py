@@ -47,6 +47,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.session import buildSessionId
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -177,6 +178,10 @@ class MediaHandler(BaseBotHandler):
             image_prompt,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
+            # Session id (D1): this tool executes mid-conversation, so it
+            # shares the conversation's prompt-cache session (chat + thread
+            # root), same as the chat generator itself.
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
         )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -532,12 +537,33 @@ class MediaHandler(BaseBotHandler):
                 ),
             ]
 
+            # Session id (D2): one-shot analysis of a content item — bucket
+            # per analyzed media item. Prefer the parent message's stored
+            # media id (file_unique_id-based; index-aligned mediaList entry,
+            # then the legacy single mediaId) so repeated analyses of the
+            # same item share one prompt-cache bucket. Freshly downloaded
+            # media with no stored id (e.g. the Telegram
+            # parentMessage.photo[-1].file_id path) falls back to the
+            # analyzing command message id.
+            storedMediaId: Optional[str] = None
+            if i < len(parentEnsuredMessage.mediaList):
+                storedMediaId = parentEnsuredMessage.mediaList[i].id
+            elif parentEnsuredMessage.mediaId:
+                storedMediaId = parentEnsuredMessage.mediaId
+            if storedMediaId:
+                analyzeSessionId = buildSessionId("media", storedMediaId)
+            else:
+                analyzeSessionId = buildSessionId(
+                    "analyze", str(ensuredMessage.recipient.id), ensuredMessage.messageId.asStr()
+                )
+
             llmRet = await self.llmService.generateText(
                 reqMessages,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
+                sessionId=analyzeSessionId,
             )
             if typingManager:
                 await typingManager.sendTypingAction()
@@ -615,6 +641,11 @@ class MediaHandler(BaseBotHandler):
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
         chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
+        # Session id (D3): one /draw invocation — the image prompt below may
+        # be the text call's output, so both lib/ai calls share one
+        # prompt-cache session bucket keyed by the command message.
+        drawSessionId = buildSessionId("draw", str(ensuredMessage.recipient.id), ensuredMessage.messageId.asStr())
+
         prompt = ensuredMessage.messageText
 
         if ensuredMessage.isQuote and ensuredMessage.quoteText:
@@ -667,6 +698,7 @@ class MediaHandler(BaseBotHandler):
                 chatSettings=chatSettings,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
+                sessionId=drawSessionId,
             )
             # Should I check llmRet.status? do not wanna for now
             if llmRet.resultText:
@@ -697,6 +729,7 @@ class MediaHandler(BaseBotHandler):
             prompt,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
+            sessionId=drawSessionId,
         )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"

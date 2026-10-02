@@ -1,3 +1,7 @@
+---
+category: plan
+---
+
 # Plan: Handling Empty TRUNCATED_FINAL LLM Responses
 
 Status: PARTIALLY IMPLEMENTED (re-verified 2026-07-18). Shipped:

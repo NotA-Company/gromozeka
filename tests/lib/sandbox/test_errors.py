@@ -9,6 +9,8 @@ Covers:
 - SandboxBusy is NOT under RunError or SessionError.
 """
 
+from pathlib import Path
+
 import pytest
 
 from lib.sandbox.errors import (
@@ -24,6 +26,7 @@ from lib.sandbox.errors import (
     LibraryPoolLocked,
     MissingDependenciesError,
     PathOutsideWorkspace,
+    PoolSwapRollbackFailed,
     RunCancelled,
     RunError,
     RunOomKilled,
@@ -64,6 +67,7 @@ _ALL_ERROR_CLASSES = [
     LibraryInstallFailed,
     LibraryPoolLocked,
     InvalidPackageSpec,
+    PoolSwapRollbackFailed,
     FileError,
     PathOutsideWorkspace,
     SandboxBusy,
@@ -84,6 +88,8 @@ def testIsInstanceOfSandboxError(cls: type) -> None:
         exc = cls(["pkg"])
     elif cls is InvalidPackageSpec:
         exc = cls("spec", "reason")
+    elif cls is PoolSwapRollbackFailed:
+        exc = cls(Path("/libs"), Path("/tmp/run-1/oldpool"), OSError(16, "swap"), OSError(16, "rollback"))
     else:
         exc = cls("msg")
     assert isinstance(exc, SandboxError)
@@ -114,6 +120,7 @@ _PARENT_CHILD_PAIRS: list[tuple[type, type]] = [
     (LibraryError, LibraryInstallFailed),
     (LibraryError, LibraryPoolLocked),
     (LibraryError, InvalidPackageSpec),
+    (LibraryError, PoolSwapRollbackFailed),
     (SandboxError, FileError),
     (FileError, PathOutsideWorkspace),
     (SandboxError, SandboxBusy),
@@ -139,6 +146,8 @@ def testSpecificParentRelationship(parent: type, child: type) -> None:
         exc = child(["pkg"])
     elif child is InvalidPackageSpec:
         exc = child("spec", "reason")
+    elif child is PoolSwapRollbackFailed:
+        exc = child(Path("/libs"), Path("/tmp/run-1/oldpool"), OSError(16, "swap"), OSError(16, "rollback"))
     else:
         exc = child("msg")
     assert isinstance(exc, parent)
@@ -213,6 +222,8 @@ def testRaiseAndCatchOwnType(cls: type) -> None:
         expected = cls(["pkg"])
     elif cls is InvalidPackageSpec:
         expected = cls("spec", "reason")
+    elif cls is PoolSwapRollbackFailed:
+        expected = cls(Path("/libs"), Path("/tmp/run-1/oldpool"), OSError(16, "swap"), OSError(16, "rollback"))
     else:
         expected = cls("msg")
     with pytest.raises(cls):

@@ -30,6 +30,10 @@ These implemented plans were moved out of `docs/plans/` during the 2026-07-18 do
 - [`user-info-cache-plan-v1.md`](user-info-cache-plan-v1.md) — Write-through chat_users cache (IMPLEMENTED 2026-07-05; ADR-015; canonical memory: [`docs/llm/memories/chat-users-cache.md`](../../llm/memories/chat-users-cache.md))
 - [`user-memories-v1.md`](user-memories-v1.md) — User Memories v1 (IMPLEMENTED; canonical memory: [`docs/llm/memories/user-memories.md`](../../llm/memories/user-memories.md))
 
+## Recently Archived (2026-09-06 docs rewrite)
+
+- [`gromozeka-rewrite-brief.md`](gromozeka-rewrite-brief.md) — One-time agent briefing that drove the 2026-09 docs rewrite for markdown-mcp (EXECUTED, Phases 0-7; ongoing guidance now lives in [`docs/docs-playbook/`](../../docs-playbook/)).
+
 ## Recently Archived (2026-07-04)
 
 These plans were moved out of `docs/plans/` once their features shipped or the
@@ -73,5 +77,5 @@ plan was superseded:
 
 ---
 
-*Last updated: 2026-07-18*
+*Last updated: 2026-09-06*
 *Plans archive maintained for historical context only*

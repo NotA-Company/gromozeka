@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Bot Answer Probability
 
 Durable notes from the bot answer probability feature (2026-07-04). Read this when working on bot-to-bot interaction gating in `LLMMessageHandler`.

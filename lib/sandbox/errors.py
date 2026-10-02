@@ -27,12 +27,15 @@ Hierarchy::
         LibraryInstallFailed
         LibraryPoolLocked
         InvalidPackageSpec
+        PoolSwapRollbackFailed
       FileError
         PathOutsideWorkspace
       SandboxBusy
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 
 class SandboxError(Exception):
@@ -161,6 +164,50 @@ class InvalidPackageSpec(LibraryError):
         self.spec: str = spec
         self.reason: str = reason
         super().__init__(f"invalid package spec {spec!r}: {reason}")
+
+
+class PoolSwapRollbackFailed(LibraryError):
+    """Raised when a pool swap fails AND its inline rollback fails too.
+
+    After both rename failures the live ``libs`` path is absent and the only
+    complete pool copies (``oldpool`` + ``newpool``) survive inside the
+    staging run dir. Callers MUST preserve that run dir — deleting it would
+    destroy every copy of the pool and leave startup recovery nothing to
+    adopt ("no holes, ever", plan §4.5).
+
+    Attributes:
+        pool: The live pool directory path (absent when raised).
+        oldPoolParking: Path where the old pool remains parked.
+        swapError: The original swap rename failure.
+        rollbackError: The rollback rename failure.
+    """
+
+    pool: Path
+    oldPoolParking: Path
+    swapError: OSError
+    rollbackError: OSError
+
+    def __init__(self, pool: Path, oldPoolParking: Path, swapError: OSError, rollbackError: OSError) -> None:
+        """Initialize the rollback-failed error.
+
+        Args:
+            pool: The live pool directory path (absent when raised).
+            oldPoolParking: Path where the old pool remains parked.
+            swapError: The original swap rename failure.
+            rollbackError: The rollback rename failure.
+
+        Returns:
+            None
+        """
+        self.pool: Path = pool
+        self.oldPoolParking: Path = oldPoolParking
+        self.swapError: OSError = swapError
+        self.rollbackError: OSError = rollbackError
+        super().__init__(
+            f"Pool swap failed ({swapError}) AND the inline rollback failed too ({rollbackError}); "
+            f"the old pool remains parked at {oldPoolParking} and the live pool {pool} is absent — "
+            "preserve the staging run dir so startup recovery can adopt a complete copy"
+        )
 
 
 class FileError(SandboxError):

@@ -25,7 +25,7 @@ Example:
     ...     name="local-minilm",
     ...     modelId="sentence-transformers/all-MiniLM-L6-v2",
     ...     modelVersion="latest",
-    ...     temperature=0.0,
+    ...     customParams={},
     ...     contextSize=0,
     ...     statsStorage=stats,
     ...     extraConfig={"support_text": False, "support_embeddings": True, "embedding_dimensions": 384},
@@ -38,9 +38,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from threading import Lock
-from typing import Any, Dict, List, Optional
-
-import numpy as np
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from lib.stats import StatsStorage
 
@@ -54,6 +52,8 @@ try:
 except ImportError:
     _FASTEMBED_AVAILABLE = False
 
+if TYPE_CHECKING:
+    from numpy import ndarray
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class FastembedProvider(AbstractLLMProvider):
         ...     name="local-minilm",
         ...     modelId="sentence-transformers/all-MiniLM-L6-v2",
         ...     modelVersion="latest",
-        ...     temperature=0.0,
+        ...     customParams={"cache_dir": "/var/cache/fastembed"},
         ...     contextSize=0,
         ...     statsStorage=stats,
         ...     extraConfig={"support_embeddings": True, "embedding_dimensions": 384},
@@ -173,10 +173,10 @@ class FastembedProvider(AbstractLLMProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Register a new FastEmbed embedding model with this provider.
 
@@ -190,8 +190,6 @@ class FastembedProvider(AbstractLLMProvider):
                 ``"sentence-transformers/all-MiniLM-L6-v2"``).
             modelVersion: Version string (fastembed models are versioned
                 by their identifier; pass ``"latest"``).
-            temperature: Sampling temperature. Embeddings are deterministic
-                so callers pass ``0.0``; stored for protocol consistency.
             contextSize: Maximum context in tokens. Not applicable to
                 embedding models; callers pass ``0``.
             statsStorage: StatsStorage instance for recording usage.
@@ -203,11 +201,11 @@ class FastembedProvider(AbstractLLMProvider):
                   accidental use for chat completion.
                 - ``embedding_dimensions`` (int): explicit output
                   dimensionality. If absent, detected from fastembed.
-                - Any other keys (e.g. ``cache_dir``, ``threads``,
-                  ``max_length``) are passed through to
-                  ``TextEmbedding(...)`` as keyword arguments. A
-                  model-level ``cache_dir`` overrides the provider-wide
-                  default (see :attr:`FastembedProvider.cacheDir`).
+            customParams: Per-model kwargs forwarded verbatim to
+                ``TextEmbedding(model_name=..., **customParams)`` (e.g.
+                ``cache_dir``, ``threads``, ``max_length``). A
+                model-level ``cache_dir`` here overrides the provider-wide
+                default (see :attr:`FastembedProvider.cacheDir`).
 
         Returns:
             The registered :class:`FastembedModel` instance.
@@ -229,10 +227,10 @@ class FastembedProvider(AbstractLLMProvider):
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
         )
         self.models[name] = model
         logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), " f"dims={model._dimensions}")
@@ -265,7 +263,7 @@ class FastembedProvider(AbstractLLMProvider):
             self._embeddingModels[modelId] = embedding
             return embedding
 
-    async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> "np.ndarray":
+    async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> "ndarray":
         """Embed a single text using the named FastEmbed model.
 
         Runs the (sync) fastembed call in a thread pool so the event loop
@@ -303,10 +301,12 @@ class FastembedModel(AbstractModel):
     The model advertises itself as embedding-only (``support_text`` should
     be ``False`` in config) so it is never picked for chat completion by
     accident. All fastembed-specific configuration flows through
-    ``extraConfig`` (stored as ``self._config`` by
-    :meth:`AbstractModel.__init__`); everything not consumed by the base
-    class (``support_text``, ``support_embeddings``, ``embedding_dimensions``,
-    plus any unrelated provider keys) is passed through to fastembed.
+    ``customParams`` (stored as ``self._customParams`` by
+    :meth:`AbstractModel.__init__`) and is forwarded verbatim to
+    ``TextEmbedding(model_name=..., **customParams)`` on first use. No
+    filtering is applied — the caller is responsible for providing
+    fastembed-compatible keys (``cache_dir``, ``threads``,
+    ``max_length``, etc.).
 
     When ``embedding_dimensions`` is provided in ``extraConfig``, the
     output dimensionality is known at construction time. When it is
@@ -320,7 +320,9 @@ class FastembedModel(AbstractModel):
         _dimensions: Output dimensionality (from config or lazily probed).
         _dimensionsProbed: Whether the lazy probe has already run.
         _fastembedKwargs: Extra kwargs forwarded to ``TextEmbedding(...)``
-            on first use.
+            on first use. Seeded from ``self._customParams`` with the
+            provider-wide ``cacheDir`` applied as a default when the user
+            did not set one.
 
     Example:
         >>> provider = FastembedProvider({})
@@ -328,39 +330,14 @@ class FastembedModel(AbstractModel):
         ...     provider=provider,
         ...     modelId="sentence-transformers/all-MiniLM-L6-v2",
         ...     modelVersion="latest",
-        ...     temperature=0.0,
         ...     contextSize=0,
         ...     statsStorage=stats,
         ...     extraConfig={"support_embeddings": True, "embedding_dimensions": 384},
+        ...     customParams={"cache_dir": "/var/cache/fastembed"},
         ... )
         >>> model.embeddingDimensions
         384
     """
-
-    #: Keys consumed by AbstractModel / FastembedModel and stripped
-    #: from the kwargs passed through to ``TextEmbedding(...)``. Anything
-    #: else in ``extraConfig`` is forwarded verbatim.
-    _CONSUMED_EXTRA_KEYS = frozenset(
-        {
-            # Capability flags consumed by AbstractModel / getInfo
-            "support_text",
-            "support_tools",
-            "support_images",
-            "support_structured_output",
-            "support_embeddings",
-            # FastembedModel-consumed
-            "embedding_dimensions",
-            "tier",
-            # Standard model-config keys passed through by LLMManager._initModels
-            # (these are NOT fastembed constructor args and must be stripped)
-            "provider",
-            "model_id",
-            "model_version",
-            "temperature",
-            "context",
-            "enabled",
-        }
-    )
 
     def __init__(
         self,
@@ -368,10 +345,10 @@ class FastembedModel(AbstractModel):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Initialize the FastEmbed embedding model.
 
@@ -381,8 +358,6 @@ class FastembedModel(AbstractModel):
                 ``"sentence-transformers/all-MiniLM-L6-v2"``).
             modelVersion: Version string (fastembed models are versioned
                 by their identifier; pass ``"latest"``).
-            temperature: Sampling temperature. Embeddings are deterministic
-                so callers pass ``0.0``.
             contextSize: Maximum context in tokens. Not applicable to
                 embedding models; callers pass ``0``.
             statsStorage: StatsStorage instance for recording usage.
@@ -394,29 +369,27 @@ class FastembedModel(AbstractModel):
                 - ``embedding_dimensions`` (int): explicit output
                   dimensionality. If absent, probed lazily from
                   fastembed on first embed call.
-                - Any other keys are forwarded to ``TextEmbedding(...)``
-                  (e.g. ``cache_dir``, ``threads``, ``max_length``). A
-                  model-level ``cache_dir`` overrides the provider-wide
-                  default (see :attr:`FastembedProvider.cacheDir`).
+            customParams: Per-model kwargs forwarded verbatim to
+                ``TextEmbedding(model_name=..., **customParams)`` on
+                first use (e.g. ``cache_dir``, ``threads``,
+                ``max_length``). A model-level ``cache_dir`` here
+                overrides the provider-wide default (see
+                :attr:`FastembedProvider.cacheDir`).
         """
         super().__init__(
             provider,
             modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
         )
         self._provider = provider
 
-        # Anything in extraConfig that AbstractModel / this class doesn't
-        # consume is forwarded to fastembed on first use.
-        self._fastembedKwargs: Dict[str, Any] = {
-            key: value for key, value in (extraConfig or {}).items() if key not in self._CONSUMED_EXTRA_KEYS
-        }
-        # Apply provider-wide cache_dir as a default; a model-level
-        # cache_dir in extraConfig takes precedence and is left as-is.
+        # Forward the user's customParams verbatim — no filtering. Apply the
+        # provider-wide cache_dir as a default when the user did not set one.
+        self._fastembedKwargs: Dict[str, Any] = dict(self._customParams)
         if "cache_dir" not in self._fastembedKwargs and provider.cacheDir is not None:
             self._fastembedKwargs["cache_dir"] = provider.cacheDir
 

@@ -19,12 +19,23 @@ The repository covers the full lifecycle:
   (``getMemoriesWithoutEmbeddings`` /
   ``deleteObsoleteMemoryEmbeddings``).
 
+**Post-``migration_025`` shape:** the per-row ``(embedding_model,
+embedding_dimensions)`` provenance pair was normalised into the
+``models`` lookup table keyed by a single integer ``model_id`` (see
+Decision D2 of the embedding-model-lookup refactor —
+``docs/plans/embedding-model-lookup-refactor-v1.md``). Every
+embedding-touching method on this repository resolves the model name
+string it receives at its public boundary (Decision D6 extended) to a
+``model_id`` via the injected ``modelIdResolver`` (Decision D10) before
+emitting SQL. Handler-facing signatures stay stable — the ``modelName``
+/ ``currentModel`` string parameters continue to flow in from the bot
+layer unchanged.
+
 **Key difference from chat-history search:** there is NO BLOB
 ``user_memory_embeddings`` table. Embeddings live ONLY in the vec0
-virtual table; ``embedding_model``/``embedding_dimensions`` are tracked
-on ``user_memories`` itself. Semantic search is therefore vec0-only
-(no numpy fallback) — when vec0 is unavailable, ``searchMemories``
-returns ``[]``.
+virtual table; ``model_id`` is tracked on ``user_memories`` itself.
+Semantic search is therefore vec0-only (no numpy fallback) — when vec0
+is unavailable, ``searchMemories`` returns ``[]``.
 
 Repository conventions (mirror ``chat_embeddings.py`` /
 ``chat_search.py``):
@@ -46,10 +57,9 @@ Repository conventions (mirror ``chat_embeddings.py`` /
 import array
 import json
 import logging
+import math
 import re
-from typing import List, Optional
-
-import numpy
+from typing import Awaitable, Callable, Dict, List, Optional
 
 from internal.database.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
@@ -60,20 +70,21 @@ from internal.database.constants import (
     PERMANENT_INJECTION_CAP,
 )
 from internal.database.models import UserMemoryDict, UserMemorySource
-
-from .. import utils as dbUtils
-from ..providers.base import (
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import (
     BaseSQLProvider,
     VectorColumnType,
     VectorDistanceMetric,
 )
+
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
 _SELECT_COLUMNS: str = (
     "chat_id, user_id, thread_id, memory_id, type, content, tags, "
-    "permanent, source, embedding_model, embedding_dimensions, "
+    "permanent, source, model_id, "
     "created_at, updated_at"
 )
 """Column list selected by every read method so ``sqlToTypedDict`` sees all required keys."""
@@ -145,10 +156,61 @@ class UserMemoriesRepository(BaseRepository):
     regeneration helpers. Mirrors the ``chat_embeddings`` /
     ``chat_search`` split but adapted for the single-store model
     (no BLOB table — vec0 is the sole embedding store).
+
+    Attributes:
+        _modelIdResolver: Async callable resolving ``(modelName,
+            dimensions)`` to a ``model_id`` integer. Wired in
+            :meth:`Database.__init__` to
+            :meth:`EmbeddingModelsRepository.getOrCreateModelId` (bound method).
+            Injected per Decision D10 of the embedding-model-lookup
+            refactor.
     """
 
-    __slots__ = ()
+    # ``manager`` is inherited from ``BaseRepository.__slots__`` and is
+    # NOT redeclared here (re-declaring raises
+    # ``ValueError: 'manager' in __slots__ conflicts with class variable``).
+    __slots__ = ("_modelIdResolver",)
     """Restricts instance attributes to prevent dynamic attribute creation."""
+
+    def __init__(
+        self,
+        manager: DatabaseManager,
+        *,
+        modelIdResolver: Callable[..., Awaitable[int]],
+    ) -> None:
+        """Initialize the user memories repository.
+
+        Args:
+            manager: Database manager instance for provider access.
+            modelIdResolver: Async callable that resolves ``(modelName,
+                dimensions)`` to a ``model_id`` integer. Wired in
+                :meth:`Database.__init__` to
+                :meth:`EmbeddingModelsRepository.getOrCreateModelId` (the bound
+                method). The resolver is called as
+                ``resolver(model, dimensions, *, dataSource=...)``; tests
+                inject a mock.
+        """
+        super().__init__(manager)
+        self._modelIdResolver = modelIdResolver
+
+    async def _resolveModelId(self, model: str, dimensions: int, *, dataSource: Optional[str] = None) -> int:
+        """Resolve ``(model, dimensions)`` to a ``model_id`` via the injected resolver.
+
+        Thin wrapper around :attr:`_modelIdResolver` so call sites within
+        this repo read as ``await self._resolveModelId(model, dims)``;
+        the underlying caching / probe-then-insert contract lives in
+        :class:`EmbeddingModelsRepository`.
+
+        Args:
+            model: Embedding model name string.
+            dimensions: Vector dimensionality.
+            dataSource: Optional explicit data source forwarded to the
+                injected resolver for multi-source routing.
+
+        Returns:
+            The integer ``model_id``.
+        """
+        return await self._modelIdResolver(model, dimensions, dataSource=dataSource)
 
     ###
     # Writes
@@ -198,18 +260,20 @@ class UserMemoriesRepository(BaseRepository):
         """
         now = dbUtils.getCurrentTimestamp()
         sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-        # We insert embedding_model and embedding_dimensions as
-        # NULL to ensure they are filled ONLY IF vec0 insert were successfull
-        # This way we'll be sure, that we have embedding with given model\dimensions
+        # We insert model_id as NULL to ensure it is filled ONLY IF vec0
+        # insert were successful. This way we'll be sure, that we have embedding
+        # with given model\dimensions. The post-``migration_025`` shape: the
+        # legacy ``(embedding_model, embedding_dimensions)`` provenance pair
+        # is normalised into the ``models`` lookup table keyed by ``model_id``.
         await sqlProvider.execute(
             """
             INSERT INTO user_memories
                 (chat_id, user_id, thread_id, memory_id, type, content, tags,
-                 permanent, source, embedding_model, embedding_dimensions,
+                 permanent, source, model_id,
                  created_at, updated_at)
             VALUES
                 (:chatId, :userId, :threadId, :memoryId, :type, :content, :tags,
-                 :permanent, :source, NULL, NULL,
+                 :permanent, :source, NULL,
                  :createdAt, :updatedAt)
             """,
             {
@@ -251,8 +315,7 @@ class UserMemoriesRepository(BaseRepository):
         references a now-deleted memory must still resolve its content
         via :meth:`getMemoriesByIds` (which deliberately has no
         ``deleted_at`` filter). The vec0 embedding row is deleted and the
-        provenance columns (``embedding_model`` /
-        ``embedding_dimensions``) are nulled (via
+        provenance column (``model_id``) is nulled (via
         :meth:`deleteMemoryEmbedding(..., vecOnly=False)`) so a deleted
         memory is never a semantic-search hit and the regen cron never
         re-embeds it.
@@ -829,6 +892,11 @@ class UserMemoriesRepository(BaseRepository):
         JOIN query fetches full ``user_memories`` rows by id with
         post-filters (``threadId``, ``type``, ``tags``).
 
+        The model name string received at the public boundary is
+        resolved to a ``model_id`` via the injected resolver (Decision
+        D6 extended + D10); the vec0 partition key is the integer
+        ``model_id`` (post-``migration_025`` shape).
+
         Args:
             chatId: Chat to search in.
             userId: User whose memories are searched.
@@ -847,7 +915,8 @@ class UserMemoriesRepository(BaseRepository):
             limit: Maximum results to return after ranking.
             embeddingModel: Name of the embedding model that produced
                 ``queryEmbedding`` (selects the model-partitioned vec0
-                table).
+                table). Resolved to ``model_id`` internally before the
+                vec0 lookup.
             offset: Number of leading ranked results to skip
                 (pagination; applied AFTER ranking and trimming).
             dataSource: Optional data source name for explicit routing.
@@ -868,8 +937,9 @@ class UserMemoriesRepository(BaseRepository):
                 return []
 
             # Guard against zero or near-zero query vectors — cosine distance
-            # is undefined and the results would be arbitrary noise.
-            queryNorm = float(numpy.linalg.norm(numpy.asarray(queryEmbedding, dtype=numpy.float32)))
+            # is undefined and the results would be arbitrary noise. Pure-Python
+            # norm (Decision D8 — numpy retired from production code).
+            queryNorm = math.sqrt(sum(x * x for x in queryEmbedding))
             if queryNorm < 1e-8:
                 logger.warning(
                     "Query embedding has near-zero norm (%s) for chat %s; " "semantic search results will be arbitrary",
@@ -889,6 +959,9 @@ class UserMemoriesRepository(BaseRepository):
                 )
                 return []
 
+            # Resolve model_id via the injected resolver (Decision D6 extended + D10).
+            modelId = await self._resolveModelId(embeddingModel, dim, dataSource=dataSource)
+
             tableName = f"vec_user_memories_{dim}"
             existingTables = await sqlProvider.listTables(tableName)
             if tableName not in existingTables:
@@ -900,7 +973,7 @@ class UserMemoriesRepository(BaseRepository):
                 return []
 
             # vec0 filter clause: keep it minimal. Only the mandatory
-            # scoping (chat_id, user_id, model partition) and ``permanent``
+            # scoping (chat_id, user_id, model_id partition) and ``permanent``
             # (immutable post-creation → never stale in vec0) are pushed
             # into vec0. ``threadId`` and ``type`` are NOT carried as vec0
             # columns (they live only on the authoritative
@@ -911,12 +984,12 @@ class UserMemoriesRepository(BaseRepository):
             filterParts: List[str] = [
                 "chat_id = :chatId",
                 "user_id = :userId",
-                "model = :modelName",
+                "model_id = :modelId",
             ]
             filterParams: dict[str, str | int | float | None] = {
                 "chatId": chatId,
                 "userId": userId,
-                "modelName": embeddingModel,
+                "modelId": modelId,
             }
             if permanent is not None:
                 filterParts.append("permanent = :permanent")
@@ -1020,6 +1093,12 @@ class UserMemoriesRepository(BaseRepository):
     ) -> bool:
         """Persist a memory embedding: upsert vec0.
 
+        Handler-facing signature is unchanged (Decision D6 extended —
+        callers keep passing the model name string); the repo resolves
+        ``(embeddingModel, len(embedding))`` to a ``model_id`` internally
+        via the injected resolver (Decision D10) before writing vec0 and
+        ``user_memories.model_id``.
+
         Args:
             chatId: Chat the memory belongs to.
             userId: User the memory is about.
@@ -1035,6 +1114,10 @@ class UserMemoriesRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
+
+            dimensions = len(embedding)
+            # Resolve model_id via the injected resolver (Decision D6 extended + D10).
+            modelId = await self._resolveModelId(embeddingModel, dimensions)
 
             # Fetch the memory row to populate the vec0 ``permanent``
             # metadata column. NOTE: deleted_at IS NULL — a soft-deleted
@@ -1066,8 +1149,8 @@ class UserMemoriesRepository(BaseRepository):
             # vec0 write — must succeed BEFORE provenance is set. A
             # failure is already logged inside _upsertVecMemoryEmbedding;
             # here we swallow it and return False WITHOUT running the
-            # provenance UPDATE, leaving embedding_model = NULL so the
-            # regen cron retries. Vec0 is the sole embedding store.
+            # provenance UPDATE, leaving model_id = NULL so the regen
+            # cron retries. Vec0 is the sole embedding store.
             try:
                 if not await self._upsertVecMemoryEmbedding(
                     sqlProvider=sqlProvider,
@@ -1075,8 +1158,8 @@ class UserMemoriesRepository(BaseRepository):
                     userId=userId,
                     memoryId=memoryId,
                     permanent=memoryRow["permanent"],
+                    modelId=modelId,
                     embedding=embedding,
-                    embeddingModel=embeddingModel,
                 ):
                     return False
             except Exception:
@@ -1086,8 +1169,7 @@ class UserMemoriesRepository(BaseRepository):
                 """
                 UPDATE user_memories
                 SET
-                    embedding_model = :modelName,
-                    embedding_dimensions = :dimensions,
+                    model_id = :modelId,
                     updated_at = :updatedAt
                 WHERE
                     chat_id = :chatId AND
@@ -1098,8 +1180,7 @@ class UserMemoriesRepository(BaseRepository):
                     "chatId": chatId,
                     "userId": userId,
                     "memoryId": memoryId,
-                    "modelName": embeddingModel,
-                    "dimensions": len(embedding),
+                    "modelId": modelId,
                     "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
@@ -1121,7 +1202,7 @@ class UserMemoriesRepository(BaseRepository):
         userId: int,
         memoryId: str,
         permanent: bool,
-        embeddingModel: str,
+        modelId: int,
         embedding: list[float],
     ) -> bool:
         """Upsert a row into the dimension-specific vec0 memory table.
@@ -1131,11 +1212,16 @@ class UserMemoriesRepository(BaseRepository):
         INSERT because vec0 does not support conventional UPSERT on
         metadata columns. Write failures are logged and the method
         returns ``False`` so the caller (:meth:`saveMemoryEmbedding`)
-        can skip the provenance UPDATE and leave ``embedding_model =
-        NULL`` — that keeps the memory visible to
+        can skip the provenance UPDATE and leave ``model_id = NULL`` —
+        that keeps the memory visible to
         :meth:`getMemoriesWithoutEmbeddings` for re-embedding (vec0 is
         the sole embedding store; a silent failure would strand the
         memory with no searchable vector).
+
+        Post-``migration_025`` shape (Decision D9): the vec0 table gains
+        a ``model_id INTEGER PARTITION KEY`` (replacing the legacy
+        ``model TEXT PARTITION KEY``). The partition key is the integer
+        ``model_id`` allocated by :class:`EmbeddingModelsRepository`.
 
         Args:
             sqlProvider: SQL provider abstraction (must be writable and
@@ -1144,9 +1230,9 @@ class UserMemoriesRepository(BaseRepository):
             userId: User ID.
             memoryId: Memory identifier.
             permanent: Permanent flag as int (0/1).
-            embeddingModel: Embedding-model name; bound to the vec0 ``model``
-                partition key so a model swap does not cross-contaminate
-                vector spaces.
+            modelId: Resolved ``model_id`` from the ``models`` lookup
+                table; bound to the vec0 ``model_id`` partition key so a
+                model swap does not cross-contaminate vector spaces.
             embedding: Float vector (``list[float]``; serialised to
                 float32 bytes internally).
 
@@ -1174,7 +1260,7 @@ class UserMemoriesRepository(BaseRepository):
                         {"name": "memory_id", "columnType": VectorColumnType.TEXT},
                         {"name": "chat_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
                         {"name": "user_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
-                        {"name": "model", "columnType": VectorColumnType.TEXT, "isPartitionKey": True},
+                        {"name": "model_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
                         {"name": "permanent", "columnType": VectorColumnType.INTEGER},
                         {
                             "name": "embedding",
@@ -1209,13 +1295,13 @@ class UserMemoriesRepository(BaseRepository):
 
             await sqlProvider.execute(
                 f"INSERT INTO {tableName} "
-                f"(memory_id, chat_id, user_id, model, permanent, embedding) "
-                f"VALUES (:memoryId, :chatId, :userId, :modelName, :permanent, :embedding)",
+                f"(memory_id, chat_id, user_id, model_id, permanent, embedding) "
+                f"VALUES (:memoryId, :chatId, :userId, :modelId, :permanent, :embedding)",
                 {
                     "memoryId": memoryId,
                     "chatId": chatId,
                     "userId": userId,
-                    "modelName": embeddingModel,
+                    "modelId": modelId,
                     "permanent": permanent,
                     "embedding": embeddingBytes,
                 },
@@ -1248,11 +1334,10 @@ class UserMemoriesRepository(BaseRepository):
             userId: User the memory is about.
             memoryId: Memory identifier.
             vecOnly: When ``True``, skip the ``user_memories``
-                provenance-column reset (``embedding_model`` /
-                ``embedding_dimensions``) and only delete vec0 rows.
-                Used by callers that manage the relational row
-                themselves. When ``False`` (default), the provenance
-                columns are also nulled and ``updated_at`` bumped.
+                provenance-column reset (``model_id``) and only delete
+                vec0 rows. Used by callers that manage the relational
+                row themselves. When ``False`` (default), the provenance
+                column is also nulled and ``updated_at`` bumped.
 
         Returns:
             True if a vec0 row was deleted OR no vec0 table existed
@@ -1270,8 +1355,7 @@ class UserMemoriesRepository(BaseRepository):
                     """
                     UPDATE user_memories
                     SET
-                        embedding_model = NULL,
-                        embedding_dimensions = NULL,
+                        model_id = NULL,
                         updated_at = :updatedAt
                     WHERE
                         chat_id = :chatId AND
@@ -1351,34 +1435,28 @@ class UserMemoriesRepository(BaseRepository):
         dimensions: Optional[int] = None,
         dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
-        """Return memories whose embedding is stale or absent.
+        """Return memories whose stored provenance does not match the active model.
 
-        Single-table stale-detection (simpler than the chat-history
-        analog — no vec0 JOIN): model/dimensions live on the
-        ``user_memories`` row. A ``NULL`` ``embedding_model``
-        (never-embedded memory) also surfaces here, so this same query
-        serves the initial backfill.
-
-        Per-chat (no ``userId``): keys off BOTH the ``embedding_model``
-        and ``embedding_dimensions`` provenance columns (single-table
-        query — no vec0 JOIN). This is complementary to
-        :meth:`deleteObsoleteMemoryEmbeddings`, the destructive-cleanup
-        step that wipes stale vec0 rows and NULLs provenance for
-        mismatched rows (swallowing exceptions); this method then
-        re-surfaces those NULLed rows for re-embedding — belt-and-suspenders,
-        since a swallowed cleanup failure would otherwise leave stale
-        dimensions undetected.
+        Used by the regeneration cron to discover which memories still
+        need a vector generated (or re-generated) under the chat's
+        active embedding model. Post-``migration_025`` shape: the filter
+        is a single-table predicate against ``user_memories.model_id``
+        (no vec0 JOIN). Returns memories where ``model_id IS NULL`` OR
+        ``model_id != currentModelId`` (resolved from *modelName* +
+        *dimensions* via :meth:`_resolveModelId`). When *modelName* is
+        ``None``, only rows with ``model_id IS NULL`` are returned.
 
         Args:
             chatId: Chat to scan.
             limit: Maximum number of rows to return.
-            modelName: Current embedding model name. Rows whose
-                ``embedding_model`` is ``NULL`` OR differs from this
-                value are returned. When ``None``, only never-embedded
-                rows (``embedding_model IS NULL``) are returned.
-            dimensions: Currently-active embedding dimensionality; rows
-                whose ``embedding_dimensions`` differs are returned. When
-                ``None``, the dimension check is omitted.
+            modelName: Current embedding model name. When provided (with
+                *dimensions*), rows whose ``model_id`` is missing OR
+                does not match the resolved ``model_id`` are returned.
+                When ``None``, only never-embedded rows (``model_id IS
+                NULL``) are returned.
+            dimensions: When provided alongside *modelName*, resolves a
+                single canonical ``model_id`` for ``(modelName,
+                dimensions)`` via :meth:`_resolveModelId`.
             dataSource: Optional data source name for explicit routing.
 
         Returns:
@@ -1387,27 +1465,21 @@ class UserMemoriesRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
+            params: Dict[str, object] = {"chatId": chatId, "currentModelId": None}
+            if modelName is not None and dimensions is not None:
+                params["currentModelId"] = await self._resolveModelId(modelName, dimensions, dataSource=dataSource)
+
             query = f"""
                     SELECT {_SELECT_COLUMNS}
                     FROM user_memories
                     WHERE
                         chat_id = :chatId AND
                         deleted_at IS NULL AND
-                        (
-                            (embedding_model IS NULL OR
-                                (:modelName IS NOT NULL AND embedding_model != :modelName)
-                            ) OR
-                            (embedding_dimensions IS NULL OR
-                                (:dimensions IS NOT NULL AND embedding_dimensions != :dimensions)
-                            )
+                        (model_id IS NULL OR
+                            (:currentModelId IS NOT NULL AND model_id != :currentModelId)
                         )
                     ORDER BY updated_at DESC
                 """
-            params = {
-                "chatId": chatId,
-                "modelName": modelName,
-                "dimensions": dimensions,
-            }
             query = sqlProvider.applyPagination(query=query, limit=limit, offset=0)
             rows = await sqlProvider.executeFetchAll(query, params)
             return [dbUtils.sqlToTypedDict(row, UserMemoryDict) for row in rows]
@@ -1423,40 +1495,53 @@ class UserMemoriesRepository(BaseRepository):
         self,
         chatId: int,
         currentModel: str,
-        currentDimensions: Optional[int],
+        currentDimensions: int,
     ) -> int:
-        """Reset embedding provenance for memories whose model/dimensions are stale.
+        """Reset ``model_id`` on memories whose provenance no longer matches the active model.
 
-        Finds memories where ``embedding_model IS NOT NULL AND
-        (embedding_model != currentModel OR embedding_dimensions !=
-        currentDimensions)``, deletes their vec0 rows, then sets
-        ``embedding_model = NULL`` and ``embedding_dimensions = NULL`` on
-        those ``user_memories`` rows so :meth:`getMemoriesWithoutEmbeddings`
-        picks them up for re-embedding on the next regeneration tick.
+        Called when the embedding model changes for a chat (detected by the
+        caller via in-memory tracking). Resolves the canonical ``model_id``
+        from ``(currentModel, currentDimensions)`` via
+        :meth:`_resolveModelId`, deletes stale vec0 rows from every
+        ``vec_user_memories_{N}`` table, and sets ``user_memories.model_id
+        = NULL`` on every live row whose stored ``model_id`` does not match
+        the resolved id. The regeneration cron then re-discovers those rows
+        via :meth:`getMemoriesWithoutEmbeddings` and re-embeds them under
+        the new model.
 
-        Mirrors ``deleteObsoleteModelEmbeddings``
-        (``chat_embeddings.py:337-464``) but single-store (no BLOB table
-        to clean — only vec0 + the provenance columns). The provenance
-        column reset is what distinguishes this method from the
-        chat-history analog: there is no BLOB table, so the vec0 DELETE
-        alone would leave ``embedding_model`` set and the regen cron's
-        :meth:`getMemoriesWithoutEmbeddings` would never re-surface the
-        stale rows.
+        Stateless and idempotent: on the common path (model unchanged) the
+        UPDATE matches zero rows. Callers should gate this with their own
+        change-detection logic to avoid unnecessary work.
 
-        ``currentDimensions`` accepts ``None`` for embedding models that
-        do not expose a dimension count (e.g. plain OpenAI-style models
-        whose ``getDimensions()`` returns ``None``). In that case the
-        stale-row predicate collapses to model-name-only (the dimensions
-        clause is omitted rather than relying on SQL three-valued
-        ``!= NULL`` semantics — explicit branching mirrors the
-        chat-history analog for readability/portability).
+        Vec0 cleanup mirrors the SQL UPDATE: every
+        ``vec_user_memories_{N}`` table for the chat has its
+        non-matching rows removed. The dimension-matching vec0 table has
+        its non-matching-``model_id`` rows deleted (matching rows
+        survive); tables belonging to a different dimensionality are
+        cleared entirely for the chat. If the provider rejects a DELETE,
+        the failure is logged and swallowed (best-effort mirror).
+
+        Differences from the chat-history analog
+        (:meth:`ChatEmbeddingsRepository.deleteObsoleteModelEmbeddings`):
+
+        - Returns ``int`` (the count of reset rows) rather than ``bool``.
+          The count is computed via ``COUNT(*)`` BEFORE the UPDATE
+          because the provider's ``execute()`` returns ``None`` and does
+          not expose the affected-row count.
+        - Includes ``deleted_at IS NULL`` in the stale-row predicate:
+          ``user_memories`` is soft-delete-aware, so a soft-deleted row
+          must never be touched (it is already excluded from
+          :meth:`getMemoriesWithoutEmbeddings`).
 
         Args:
             chatId: Chat to clean.
             currentModel: The currently-active embedding model name.
+                Rows whose ``model_id`` does not resolve back to this
+                model are cleared.
             currentDimensions: The currently-active embedding
-                dimensionality, or ``None`` when the model does not
-                expose dimensions (dim-less cleanup on model name only).
+                dimensionality. Combined with *currentModel* to resolve
+                the single canonical ``model_id`` used in the stale-row
+                predicate.
 
         Returns:
             The count of reset rows. ``0`` when no rows were stale OR
@@ -1469,28 +1554,38 @@ class UserMemoriesRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
 
+            currentModelId = await self._resolveModelId(currentModel, currentDimensions)
+
             # Delete their vec0 rows from every vec_user_memories_{N} table.
             if await sqlProvider.isVectorSearchSupported():
                 try:
                     vecTables = await sqlProvider.listTables("vec_user_memories_%")
+                    # Filter out vec0 shadow tables (vec_user_memories_384_info,
+                    # vec_user_memories_384_chunks, etc.) — sqlite-vec uses
+                    # internal shadow tables that also match the LIKE pattern
+                    # and appear in sqlite_master with type='table', but they
+                    # don't have our custom columns.
                     vecTables = [t for t in vecTables if re.match(r"^vec_user_memories_\d+$", t)]
                     for table in vecTables:
                         tableDim: Optional[int] = None
-                        if currentDimensions is not None:
-                            try:
-                                tableDim = int(table.rsplit("_", 1)[-1])
-                            except (ValueError, IndexError):
-                                # Defensive: skip tables with non-numeric suffixes
-                                # (shouldn't happen after the regex filter above).
-                                continue
-                        if tableDim == currentDimensions or currentDimensions is None:
+                        try:
+                            tableDim = int(table.rsplit("_", 1)[-1])
+                        except (ValueError, IndexError):
+                            # Defensive: skip tables with non-numeric suffixes
+                            # (shouldn't happen after the regex filter above).
+                            continue
+
+                        if tableDim == currentDimensions:
+                            # Same-dimension table — clear rows whose model_id
+                            # does not match the resolved current id.
                             await sqlProvider.execute(
-                                f"DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel",
-                                {"chatId": chatId, "currentModel": currentModel},
+                                f"DELETE FROM {table} WHERE chat_id = :chatId AND model_id != :currentModelId",
+                                {"chatId": chatId, "currentModelId": currentModelId},
                             )
-                        # If the table dimension does not match the current dimension,
-                        # delete all rows from the table for given chatId.
                         else:
+                            # The table belongs to a different dimensionality
+                            # entirely — clear all rows for this chat (the
+                            # partitioning itself is stale).
                             await sqlProvider.execute(
                                 f"DELETE FROM {table} WHERE chat_id = :chatId",
                                 {"chatId": chatId},
@@ -1498,38 +1593,18 @@ class UserMemoriesRepository(BaseRepository):
 
                 except NotImplementedError:
                     logger.debug(
-                        "listTables not supported for chat %d; skipping vec0 cleanup",
+                        "listTables not supported for chat %d; skipping vec0 memory cleanup",
                         chatId,
                     )
-
-            # Build the stale-row predicate ONCE — used by both the
-            # COUNT and the UPDATE so they stay in lockstep. Explicit
-            # branching on currentDimensions mirrors chat_embeddings.py
-            # (avoids relying on SQL three-valued != NULL semantics).
-            # Only rows that HAVE been embedded (embedding_model IS NOT
-            # NULL) are candidates — never-embedded rows are already
-            # NULL and already surfaced by getMemoriesWithoutEmbeddings.
-            if currentDimensions is not None:
-                staleWhere = (
-                    "chat_id = :chatId AND embedding_model IS NOT NULL "
-                    "AND deleted_at IS NULL "
-                    "AND (embedding_model != :currentModel OR embedding_dimensions != :currentDimensions)"
-                )
-                staleParams: dict[str, object] = {
-                    "chatId": chatId,
-                    "currentModel": currentModel,
-                    "currentDimensions": currentDimensions,
-                }
-            else:
-                staleWhere = (
-                    "chat_id = :chatId AND embedding_model IS NOT NULL "
-                    "AND deleted_at IS NULL "
-                    "AND embedding_model != :currentModel"
-                )
-                staleParams = {
-                    "chatId": chatId,
-                    "currentModel": currentModel,
-                }
+            staleWhere = (
+                "chat_id = :chatId AND model_id IS NOT NULL "
+                "AND deleted_at IS NULL "
+                "AND model_id != :currentModelId"
+            )
+            staleParams: Dict[str, object] = {
+                "chatId": chatId,
+                "currentModelId": currentModelId,
+            }
 
             # Count the stale rows BEFORE cleanup so the caller knows how
             # many were reset (the provider's execute() returns None, so
@@ -1540,14 +1615,13 @@ class UserMemoriesRepository(BaseRepository):
             )
             resetCount = int(countRow["cnt"]) if countRow is not None else 0
 
-            # Reset provenance columns on user_memories. THIS is the step
-            # that re-surfaces stale rows for re-embedding: without it,
-            # getMemoriesWithoutEmbeddings (which keys on
-            # embedding_model IS NULL / != modelName) would never see
-            # these rows again — the regen cron's stale-detection loop
-            # would be broken.
+            # Reset provenance on user_memories. THIS is the step that
+            # re-surfaces stale rows for re-embedding: without it,
+            # getMemoriesWithoutEmbeddings (which keys on model_id IS NULL
+            # / != :currentModelId) would never see these rows again — the
+            # regen cron's stale-detection loop would be broken.
             await sqlProvider.execute(
-                f"UPDATE user_memories SET embedding_model = NULL, embedding_dimensions = NULL WHERE {staleWhere}",
+                f"UPDATE user_memories SET model_id = NULL WHERE {staleWhere}",
                 staleParams,
             )
 

@@ -5,9 +5,9 @@ provenance in ``user_memories`` so the regen cron fully re-embeds from scratch.
 The memory-embedding subsystem stores each embedding model's vectors in a
 dedicated sqlite-vec ``vec0`` virtual table named ``vec_user_memories_{N}``,
 where ``{N}`` is the embedding dimensionality (e.g. ``384``, ``768``). Each
-``user_memories`` row carries two provenance columns -- ``embedding_model`` and
-``embedding_dimensions`` -- recording which model/dimension produced its stored
-vector.
+``user_memories`` row carries a ``model_id`` provenance column — the FK-like
+integer into the ``models`` lookup table — recording which ``(model,
+dimensions)`` pair produced its stored vector (``NULL`` = not yet embedded).
 
 When the vec0 schema changes (e.g. the column layout of the virtual table is
 extended), the regen cron needs every memory re-embedded from scratch. This
@@ -21,9 +21,9 @@ one-off maintenance script:
      drop shadow tables by hand.
   2. Drops each discovered virtual table (``DROP TABLE IF EXISTS``).
   3. Clears the embedding provenance on every ``user_memories`` row by setting
-     ``embedding_model = NULL`` and ``embedding_dimensions = NULL``. The regen
-     cron treats a NULL ``embedding_model`` as "needs re-embedding", so the
-     next run fully repopulates the new-schema virtual tables.
+     ``model_id = NULL``. The regen cron treats a NULL ``model_id`` as "needs
+     re-embedding", so the next run fully repopulates the new-schema virtual
+     tables.
 
 Writes are issued in a single transaction (``BEGIN`` ... ``COMMIT``); any
 unexpected error during the drop/update batch triggers ``ROLLBACK`` and a
@@ -64,7 +64,7 @@ from typing import Optional
 # shared library and exposes its path via loadable_path(). When unavailable
 # (e.g. Alpine Linux with no musl wheel), the caller must pass --vec-extension
 # with a source-built path. Mirrors the production provider's pattern
-# (internal/database/providers/sqlite3.py).
+# (lib/db/providers/sqlite3.py).
 try:
     import sqlite_vec  # pyright: ignore[reportMissingImports]
 
@@ -136,7 +136,7 @@ def _loadVecExtension(conn: sqlite3.Connection, vecExtensionPath: Optional[str])
     SQLite cannot DROP a vec0 virtual table unless the vec0 module is
     registered, which only happens once the shared library is loaded. This
     mirrors the production provider's loading sequence
-    (internal/database/providers/sqlite3.py) but uses the synchronous
+    (lib/db/providers/sqlite3.py) but uses the synchronous
     stdlib ``sqlite3`` API since this script is not async.
 
     Extension-source resolution, in priority order:
@@ -290,7 +290,7 @@ def processDatabase(dbPath: Path, dryRun: bool, vecExtensionPath: Optional[str] 
                 # interpolation into DDL is safe here -- no injection surface.
                 conn.execute(f"DROP TABLE IF EXISTS {tableName}")
             if userMemoriesExists:
-                conn.execute("UPDATE user_memories " "SET embedding_model = NULL, embedding_dimensions = NULL")
+                conn.execute("UPDATE user_memories SET model_id = NULL")
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -316,9 +316,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Drop all vec_user_memories_{N} vec0 virtual tables and clear the "
-            "embedding_model/embedding_dimensions columns in user_memories of "
-            "a SQLite database, so the regen cron re-embeds all memories from "
-            "scratch."
+            "model_id provenance column in user_memories of a SQLite database, "
+            "so the regen cron re-embeds all memories from scratch."
         ),
     )
     parser.add_argument("dbPath", type=Path, help="Path to the SQLite database file.")

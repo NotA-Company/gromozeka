@@ -8,6 +8,7 @@ The service supports fallback models and provides a unified interface for LLM op
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable, MutableSequence, MutableSet, Sequence
 from threading import RLock
@@ -30,7 +31,9 @@ from lib.ai.models import (
     ModelRunResult,
     ModelStructuredResult,
 )
+from lib.ai.session import buildSessionId
 from lib.rate_limiter.manager import RateLimiterManager
+from lib.stats import NullStatsStorage, StatsStorage
 
 from .constants import DEFAULT_MAX_ROUNDS, TOOLS_DEFAULT_DICT_KEY
 from .models import ExtraDataDict
@@ -191,6 +194,7 @@ class LLMService:
             self.toolsHandlers: Dict[str, LLMToolFunction] = {}
             self.rateLimiterManager = RateLimiterManager()
             self.llmManager: Optional[LLMManager] = None
+            self.toolStatsStorage: StatsStorage = NullStatsStorage()
 
             self.initialized = True
             logger.info("LLMService initialized")
@@ -214,6 +218,17 @@ class LLMService:
             None
         """
         self.llmManager = llmManager
+
+    def injectStatsStorage(self, statsStorage: Optional[StatsStorage]) -> None:
+        """Inject a StatsStorage instance for tool call statistics.
+
+        Args:
+            statsStorage: The StatsStorage instance to inject, or None to use NullStatsStorage
+
+        Returns:
+            None
+        """
+        self.toolStatsStorage = statsStorage or NullStatsStorage()
 
     def registerTool(
         self, name: str, description: str, parameters: Sequence[LLMFunctionParameter], handler: LLMToolHandler
@@ -541,6 +556,52 @@ class LLMService:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
 
+    def _matchTextForInlineCodeToolNameAndJson(self, mlRunResult: ModelRunResult) -> bool:
+        """Detect an inline-code tool name followed by fenced JSON arguments.
+
+        Some models emit a registered tool name in an inline-code block and put
+        only its argument object in the following fenced JSON block instead of
+        using a native tool call. The complete response must have this exact
+        shape so ordinary prose that happens to mention a tool remains text.
+
+        Args:
+            mlRunResult: The model run result to inspect and potentially mutate.
+
+        Returns:
+            True if a valid tool call was detected and *mlRunResult* was converted;
+            False otherwise.
+        """
+        resultText = mlRunResult.resultText.strip()
+        match = re.match(
+            r"^`(\S+?)`\s*```(?:json\s*)?\s*({.*})\s*```$",
+            resultText,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if match is not None:
+            try:
+                logger.debug(f"inline-code tool name + {{json}} found: {match.groups()}")
+                toolArgsStr = match.group(2)
+                toolArgs, _ = self._tryParseJson(toolArgsStr)
+                # ``_tryParseJson`` uses raw_decode and can repair ``\'`` by
+                # removing one character, so its offset may not refer to the
+                # original string. Parse the full block separately to reject
+                # trailing content without rejecting repaired arguments.
+                try:
+                    json.loads(toolArgsStr)
+                except json.JSONDecodeError:
+                    json.loads(re.sub(r"(?<=[^\\])\\'", r"'", toolArgsStr))
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=match.group(1),
+                    parameters=toolArgs,
+                    toolCallId=None,
+                    prefixStr="",
+                    suffixStr="",
+                )
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to decode JSON: {e}")
+        return False
+
     def _matchTextForBrokenKnownToolCall(self, mlRunResult: ModelRunResult) -> bool:
         """Detect a broken-but-recognised tool call as a last-resort fallback.
 
@@ -673,7 +734,9 @@ class LLMService:
         2. :meth:`_matchTextForToolCallTags` — JSON inside ``<tool_call>`` tags.
         3. :meth:`_matchTextForToolCallStart` — ``[TOOL_CALL_START]`` marker.
         4. :meth:`_matchTextForToolCallSquareBracketsAndJson` — ``[name]\\n{json}``.
-        5. :meth:`_matchTextForBrokenKnownToolCall` — broken call of a known
+        5. :meth:`_matchTextForInlineCodeToolNameAndJson` — inline-code tool
+           name followed by fenced JSON arguments.
+        6. :meth:`_matchTextForBrokenKnownToolCall` — broken call of a known
            tool, converted to a retry-error instead of an execution.
 
         Args:
@@ -692,6 +755,8 @@ class LLMService:
             return True
         if self._matchTextForToolCallSquareBracketsAndJson(mlRunResult):
             return True
+        if self._matchTextForInlineCodeToolNameAndJson(mlRunResult):
+            return True
         if self._matchTextForBrokenKnownToolCall(mlRunResult):
             return True
         return False
@@ -700,7 +765,7 @@ class LLMService:
         self,
         messages: Sequence[ModelMessage],
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
         modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         fallbackModelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
@@ -715,6 +780,8 @@ class LLMService:
         condensingSystemPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
         condensingModelKey: Optional[Union[AbstractModel, ChatSettingsKey]] = None,
         maxRounds: Optional[int] = DEFAULT_MAX_ROUNDS,
+        doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support.
 
@@ -730,7 +797,9 @@ class LLMService:
 
         Args:
             messages: List of conversation messages to send to the LLM
-            chatId: The Telegram/Max chat identifier used for rate-limiting
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict used to resolve models and the rate limiter name
             modelKey: Primary model selector - an AbstractModel instance, a ChatSettingsKey,
                 or None to fall back to ChatSettingsKey.CHAT_MODEL
@@ -767,11 +836,28 @@ class LLMService:
                 UNKNOWN) propagate untouched so callers can detect the failure.
                 Pass ``None`` to disable the limit (unlimited rounds); ``0``
                 drops tools on the very first call.
+            doRateLimit: When False, skip the per-chat rate limit for every
+                model call in this loop (including the condensing path, which
+                never rate-limits anyway). Stats attribution via ``chatId`` is
+                NOT affected — use this for background/system-initiated work
+                that must not consume the per-chat hot-path budget.
+            sessionId: Optional conversation identifier (e.g.
+                ``gromozeka-<chatId>-<rootMessageId>``) forwarded to every
+                model call in this loop so providers can optimize prompt
+                caching (OpenCode Go's ``x-opencode-session`` header). When
+                ``None``, a chat-level fallback ``gromozeka-auto-<chatId>``
+                is built via :func:`lib.ai.session.buildSessionId` so
+                omissions land in a per-chat prompt-cache bucket instead of
+                the shared provider default.
 
         Returns:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
             if any tools were executed during the conversation
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateTextViaLLM: sessionId not provided, using chat-level fallback")
+
         if callId is None:
             callId = str(uuid.uuid4())
 
@@ -842,6 +928,8 @@ class LLMService:
                 condensingModel=condensingModel,
                 condensingPrompt=condensingPrompt,
                 condensingSystemPrompt=condensingSystemPrompt,
+                consumerId=str(chatId),
+                sessionId=sessionId,
             )
 
             # Inject the steering directive AFTER condense (which returns a
@@ -889,6 +977,8 @@ class LLMService:
                 fallbackKey=fallbackModel,
                 tools=tools,
                 doDebugLogging=False,
+                doRateLimit=doRateLimit,
+                sessionId=sessionId,
             )
             roundN += 1
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
@@ -922,13 +1012,18 @@ class LLMService:
 
                 for toolCall in ret.toolCalls:
                     toolRet: Union[str, Dict[str, Any]] = ""
+                    elapsed: float = 0.0
+                    toolExecuted: bool = False
                     if toolCall.errorMessage is not None:
                         # Synthesised from a broken-but-recognised tool call
                         # (_matchTextForBrokenKnownToolCall): do NOT execute the
                         # handler; tell the model to retry with a proper tool call.
                         toolRet = {"done": False, "error": toolCall.errorMessage}
                     elif toolCall.name in filteredToolNames:
+                        t0 = time.monotonic()
                         toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
+                        elapsed = time.monotonic() - t0
+                        toolExecuted = True
                     else:
                         # If wrong tool called, return error about it.
                         # Report only the actually-available (filtered) names so the LLM
@@ -938,6 +1033,31 @@ class LLMService:
                             "error": f"Tool {toolCall.name} not available, available tools are "
                             + str(sorted(filteredToolNames)),
                         }
+
+                    # Record tool call statistics
+                    ensuredMessage = extraData.get("ensuredMessage")
+                    if ensuredMessage is not None:
+                        userId = str(ensuredMessage.sender.id)
+                        statsChatId = str(ensuredMessage.recipient.id)
+                        # isError True iff `toolRet.get("done") is False` OR (an "error"/"errorMessage" key
+                        # present with a truthy value)
+                        doneValue = toolRet.get("done") if isinstance(toolRet, dict) else None
+                        hasTruthyError = isinstance(toolRet, dict) and (
+                            toolRet.get("error") or toolRet.get("errorMessage")
+                        )
+                        isError = doneValue is False or hasTruthyError
+                        statsDict: Dict[str, Union[int, float]] = {
+                            "tool_call_count": 1,
+                            "elapsed_time": elapsed,
+                            "is_error": 1 if isError else 0,
+                        }
+                        if toolExecuted:
+                            statsDict["tool_exec_count"] = 1
+                        await self.toolStatsStorage.record(
+                            stats=statsDict,
+                            consumerId=statsChatId,
+                            labels={"user_id": userId, "toolName": toolCall.name},
+                        )
 
                     # Content of ModelMessage should be string, so if tool result is not string,
                     # convert it to string via utils.jsonDumps()
@@ -1011,6 +1131,8 @@ class LLMService:
         condensingSystemPrompt: Optional[str] = None,
         maxTokens: Optional[int] = None,
         force: bool = False,
+        consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]:
         """Condense a sequence of messages to fit within a token limit.
 
@@ -1032,6 +1154,18 @@ class LLMService:
                 When provided, replaces the chat personality system prompt during condensing.
             maxTokens: Maximum number of tokens allowed in the condensed result
             force: Whether to force condensing even if the result would fit within the token limit
+            consumerId: Optional consumer identifier threaded into the
+                condensing model's stats recording (``llm_request`` events).
+                The condensing path never rate-limits, so this is a stats-only
+                attribution parameter — pass ``None`` only when the caller has
+                no chat to attribute the work to
+            sessionId: Optional conversation identifier forwarded to the
+                condensing model calls (OpenCode Go's ``x-opencode-session``
+                prompt-cache affinity). When ``None`` and ``consumerId`` is
+                provided, a ``gromozeka-auto-<consumerId>`` fallback is built
+                via :func:`lib.ai.session.buildSessionId`; when both are
+                ``None`` the session id stays ``None`` (the provider default
+                bucket applies)
 
         Returns:
             A ``(messages, coverage)`` tuple. The first element is the
@@ -1045,6 +1179,10 @@ class LLMService:
             second element is ``{}``. Path C callers (``generateTextViaLLM``)
             ignore the second element.
         """
+        if sessionId is None and consumerId:
+            sessionId = buildSessionId("auto", consumerId)
+            logger.debug("condenseContext: sessionId not provided, using consumerId fallback")
+
         coverage: Dict[int, CondensingDict] = {}
         if not messages:
             return (messages, coverage)
@@ -1157,7 +1295,7 @@ class LLMService:
             mlRet: Optional[ModelRunResult] = None
             try:
                 logger.debug(f"LLM Request messages: {reqMessages}")
-                mlRet = await condensingModel.generateText(reqMessages)
+                mlRet = await condensingModel.generateText(reqMessages, consumerId=consumerId, sessionId=sessionId)
                 logger.debug(f"LLM Response: {mlRet}")
             except Exception as e:
                 logger.error(
@@ -1185,12 +1323,14 @@ class LLMService:
         self,
         prompt: Sequence[ModelMessage],
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         doDebugLogging: bool = True,
+        doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text via the configured chat model with fallback support.
 
@@ -1200,8 +1340,9 @@ class LLMService:
 
         Args:
             prompt: Sequence of ModelMessage objects representing the conversation history
-            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass None
-                to skip rate-limiting (e.g. internal/background calls)
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict used to resolve models and the rate
                 limiter name
             modelKey: Primary model selector - an AbstractModel instance, a
@@ -1212,17 +1353,30 @@ class LLMService:
             tools: Optional sequence of tools that the LLM can call during generation
             doDebugLogging: When True, emit DEBUG log entries before and after the
                 model call. Set to False for tight loops to reduce log noise
+            doRateLimit: When False, skip the per-chat rate limit (background /
+                system-initiated calls that must not consume the hot-path
+                budget). Stats attribution via ``chatId`` is NOT affected
+            sessionId: Optional conversation identifier (e.g.
+                ``gromozeka-<chatId>-<rootMessageId>``) forwarded to the model
+                call so providers can optimize prompt caching (OpenCode Go's
+                ``x-opencode-session`` header). When ``None``, a chat-level
+                fallback ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             ModelRunResult containing the generated text response, status, and any tool
             calls made during generation
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateText: sessionId not provided, using chat-level fallback")
+
         llmModel = self.resolveModel(modelKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL)
         fallbackModel = self.resolveModel(
             fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
         )
 
-        if chatId is not None:
+        if doRateLimit:
             await self.rateLimit(chatId, chatSettings)
         if doDebugLogging:
             logger.debug(
@@ -1238,7 +1392,8 @@ class LLMService:
             prompt,
             tools=tools,
             fallbackModels=[fallbackModel],
-            consumerId=str(chatId) if chatId is not None else None,
+            consumerId=str(chatId),
+            sessionId=sessionId,
         )
 
         if doDebugLogging:
@@ -1250,13 +1405,15 @@ class LLMService:
         prompt: Sequence[ModelMessage],
         schema: Dict[str, Any],
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         schemaName: str = "response",
         strict: bool = True,
         doDebugLogging: bool = True,
+        doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelStructuredResult:
         """Generate structured (JSON) output via the configured chat model.
 
@@ -1274,8 +1431,9 @@ class LLMService:
         Args:
             prompt: Sequence of ModelMessage objects representing the conversation history
             schema: A JSON Schema dict describing the expected response shape
-            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass None
-                to skip rate-limiting (e.g. internal/background calls)
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict used to resolve models and the rate
                 limiter name
             modelKey: Primary model selector - an AbstractModel instance, a
@@ -1289,6 +1447,14 @@ class LLMService:
                 strict: true). Some providers silently ignore this flag
             doDebugLogging: When True, emit DEBUG log entries before and after the
                 model call. Set to False for tight loops to reduce log noise
+            doRateLimit: When False, skip the per-chat rate limit (background /
+                system-initiated calls). Stats attribution via ``chatId`` is
+                NOT affected
+            sessionId: Optional conversation identifier forwarded to the model
+                call (OpenCode Go's ``x-opencode-session`` prompt-cache
+                affinity). When ``None``, a chat-level fallback
+                ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             ModelStructuredResult with data populated on success, or status=ERROR
@@ -1299,6 +1465,10 @@ class LLMService:
                 model has support_structured_output=True. No model call is made in
                 this case
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateStructured: sessionId not provided, using chat-level fallback")
+
         llmModel = self.resolveModel(modelKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL)
         fallbackModel = self.resolveModel(
             fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
@@ -1318,7 +1488,7 @@ class LLMService:
             )
             llmModel, fallbackModel = fallbackModel, llmModel
 
-        if chatId is not None:
+        if doRateLimit:
             await self.rateLimit(chatId, chatSettings)
 
         if doDebugLogging:
@@ -1333,7 +1503,8 @@ class LLMService:
             schemaName=schemaName,
             strict=strict,
             fallbackModels=[fallbackModel],
-            consumerId=str(chatId) if chatId is not None else None,
+            consumerId=str(chatId),
+            sessionId=sessionId,
         )
 
         if doDebugLogging:
@@ -1344,8 +1515,10 @@ class LLMService:
         self,
         prompt: str,
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
+        doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate image with given prompt and chat settings.
 
@@ -1355,13 +1528,27 @@ class LLMService:
 
         Args:
             prompt: The text prompt describing the image to generate
-            chatId: The Telegram/Max chat identifier used for rate-limiting
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict containing the image generation model
                 configuration
+            doRateLimit: When False, skip the per-chat rate limit (background /
+                system-initiated calls). Stats attribution via ``chatId`` is
+                NOT affected
+            sessionId: Optional conversation identifier forwarded to the model
+                call (OpenCode Go's ``x-opencode-session`` prompt-cache
+                affinity). When ``None``, a chat-level fallback
+                ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             ModelRunResult containing the generated image response and metadata
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateImage: sessionId not provided, using chat-level fallback")
+
         imageGenerationModel = self.resolveModel(
             ChatSettingsKey.IMAGE_GENERATION_MODEL,
             chatSettings=chatSettings,
@@ -1373,51 +1560,69 @@ class LLMService:
             defaultKey=ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL,
         )
 
-        if chatId is not None:
+        if doRateLimit:
             await self.rateLimit(chatId, chatSettings)
         return await imageGenerationModel.generateImage(
             [ModelMessage(content=prompt)],
             fallbackModels=[fallbackImageLLM],
-            consumerId=str(chatId) if chatId is not None else None,
+            consumerId=str(chatId),
+            sessionId=sessionId,
         )
 
     async def generateEmbedding(
         self,
         text: str,
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
+        doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> Optional[Tuple[str, List[float]]]:
         """Generate an embedding vector for ``text`` using the chat's embedding model.
 
         Resolves the embedding model from ``EMBEDDING_MODEL`` in chat settings,
-        applies the chat's rate limit when ``chatId`` is not ``None``, and asks
-        the model to embed the text. The returned model name is read back from
-        the resolved chat setting (not the model instance) so callers can
-        persist it alongside the vector for later stale-detection. Any failure
-        (bad model, rate-limit, provider error) is caught, logged, and surfaced
-        as ``None`` so the cron/tool path can skip the row without raising.
+        applies the chat's rate limit when ``doRateLimit`` is ``True``, and asks
+        the model to embed the text with ``consumerId=str(chatId)`` so the
+        ``llm_request`` stats row is attributed to the chat. The returned model
+        name is read back from the resolved chat setting (not the model
+        instance) so callers can persist it alongside the vector for later
+        stale-detection. Any failure (bad model, rate-limit, provider error) is
+        caught, logged, and surfaced as ``None`` so the cron/tool path can skip
+        the row without raising.
 
         Args:
             text: The text to embed.
-            chatId: Chat identifier used for rate limiting; pass ``None`` to
-                skip rate limiting (e.g. for a background regen tick).
+            chatId: Chat identifier. Always used for ``llm_request`` stats
+                attribution (``consumerId``); also used for rate-limiting
+                unless ``doRateLimit=False`` (e.g. for a background regen
+                tick).
             chatSettings: Chat-level settings dict — must contain a resolved
                 ``EMBEDDING_MODEL`` value.
+            doRateLimit: When False, skip the per-chat rate limit (background
+                regen / backfill batches that must not consume the hot-path
+                budget). Stats attribution via ``chatId`` is NOT affected.
+            sessionId: Optional conversation identifier forwarded to the model
+                call (OpenCode Go's ``x-opencode-session`` prompt-cache
+                affinity). When ``None``, a chat-level fallback
+                ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             A ``(modelName, embeddingVector)`` tuple on success, or ``None``
             when embedding failed (the exception is logged).
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateEmbedding: sessionId not provided, using chat-level fallback")
 
         try:
             embeddingModel = self.resolveModel(
                 ChatSettingsKey.EMBEDDING_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.EMBEDDING_MODEL
             )
 
-            if chatId is not None:
+            if doRateLimit:
                 await self.rateLimit(chatId, chatSettings)
-            embeddingVector = await embeddingModel.generateEmbeddings(text)
+            embeddingVector = await embeddingModel.generateEmbeddings(text, consumerId=str(chatId), sessionId=sessionId)
             return (chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr(), embeddingVector)
         except Exception:
             logger.exception("Failed to generate embeddings:")

@@ -3,10 +3,16 @@
 Covers:
 - ``runCommand`` shape with and without stdin redirection.
 - ``runCommand`` timeout value placement.
-- ``installCommand`` base shape, ``--upgrade`` flag, and package ordering.
+- ``reportRun`` / ``stageRun`` argv shapes (single argv, no shell, ``--``
+  before specs), the staging mount pair, and the staging container path
+  constants.
+- ``updateHelperHostPath`` derivation from the install Dockerfile
+  (``pool_pip_runner.py``).
 - ``listCommand`` exact output.
 - ``validatePackageSpec`` acceptance and rejection of package specs.
 """
+
+from pathlib import Path
 
 import pytest
 
@@ -107,45 +113,115 @@ class TestRunCommand:
 
 
 # ---------------------------------------------------------------------------
-# installCommand
+# updateHelperHostPath / staging container paths
 # ---------------------------------------------------------------------------
 
 
-class TestInstallCommand:
-    """Tests for :meth:`PythonRuntime.installCommand`."""
+class TestStagingContainerPath:
+    """Tests for the container-path constants (docs/plans/sandbox-update-v1.md §4.2)."""
 
-    def testBaseShape(self, runtime: PythonRuntime) -> None:
-        """Verify base install command prefix without --upgrade."""
-        cmd = runtime.installCommand(["numpy"], upgrade=False)
+    def testStagingContainerPathConstant(self) -> None:
+        """Verify the container-side staging directory constant."""
+        assert PythonRuntime.STAGING_CONTAINER_PATH == "/sandbox/staging"
 
-        assert cmd[:6] == [
+    def testHelperContainerPathConstant(self) -> None:
+        """Verify the container-side helper path points at pool_pip_runner.py."""
+        assert PythonRuntime.UPDATE_HELPER_CONTAINER_PATH == "/sandbox/pool_pip_runner.py"
+
+
+class TestReportRun:
+    """Tests for :meth:`PythonRuntime.reportRun`."""
+
+    def testArgvShape(self, runtime: PythonRuntime, tmp_path: Path) -> None:
+        """Verify the single-argv report-mode shape (no shell, -- before specs)."""
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.reportRun(ioDir, ["numpy>=2.0", "requests"])
+        cmd = stagingRun.command
+
+        assert cmd == [
             "python",
-            "-m",
-            "pip",
-            "install",
-            "--target",
-            runtime._config.libMountPath,
+            "/sandbox/pool_pip_runner.py",
+            "--report",
+            "/sandbox/staging/report.json",
+            "--",
+            "numpy>=2.0",
+            "requests",
         ]
-        assert "--no-cache-dir" in cmd
-        assert "--no-input" in cmd
-        assert "--upgrade" not in cmd
+        assert "sh" not in cmd
+        assert "-c" not in cmd
+        separatorIdx = cmd.index("--")
+        assert separatorIdx < len(cmd) - 1, "-- must precede the specs"
+        assert cmd[separatorIdx + 1 :] == ["numpy>=2.0", "requests"]
 
-    def testUpgradeFlag(self, runtime: PythonRuntime) -> None:
-        """Verify --upgrade flag is present when upgrade=True."""
-        cmd = runtime.installCommand(["numpy"], upgrade=True)
-        assert "--upgrade" in cmd
+    def testMounts(self, runtime: PythonRuntime, tmp_path: Path) -> None:
+        """Verify the mount pair: io subtree rw at the staging path, helper ro."""
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.reportRun(ioDir, ["numpy>=2.0", "requests"])
 
-    def testPackages(self, runtime: PythonRuntime) -> None:
-        """Verify package names appear at the end of the command."""
-        cmd = runtime.installCommand(["numpy", "pandas"], upgrade=False)
-        assert cmd[-2:] == ["numpy", "pandas"]
+        assert stagingRun.mounts == [
+            {
+                "hostPath": str(ioDir.absolute()),
+                "containerPath": PythonRuntime.STAGING_CONTAINER_PATH,
+                "mode": "rw",
+            },
+            {
+                "hostPath": str(runtime.updateHelperHostPath().absolute()),
+                "containerPath": PythonRuntime.UPDATE_HELPER_CONTAINER_PATH,
+                "mode": "ro",
+            },
+        ]
 
-    def testUpgradeAndPackages(self, runtime: PythonRuntime) -> None:
-        """Verify --upgrade appears before packages."""
-        cmd = runtime.installCommand(["requests"], upgrade=True)
-        upgradeIdx = cmd.index("--upgrade")
-        requestsIdx = cmd.index("requests")
-        assert upgradeIdx < requestsIdx
+
+class TestStageRun:
+    """Tests for :meth:`PythonRuntime.stageRun`."""
+
+    def testArgvShape(self, runtime: PythonRuntime, tmp_path: Path) -> None:
+        """Verify the single-argv install-mode shape (no shell, -- before specs)."""
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.stageRun(ioDir, ["numpy>=2.0"])
+        cmd = stagingRun.command
+
+        assert cmd == [
+            "python",
+            "/sandbox/pool_pip_runner.py",
+            "--install-into",
+            "/sandbox/staging/delta",
+            "--",
+            "numpy>=2.0",
+        ]
+        assert "sh" not in cmd
+        assert "-c" not in cmd
+        separatorIdx = cmd.index("--")
+        assert separatorIdx < len(cmd) - 1, "-- must precede the specs"
+        assert cmd[separatorIdx + 1 :] == ["numpy>=2.0"]
+
+    def testMounts(self, runtime: PythonRuntime, tmp_path: Path) -> None:
+        """Verify the mount pair: io subtree rw at the staging path, helper ro."""
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.stageRun(ioDir, ["numpy>=2.0"])
+
+        assert stagingRun.mounts == [
+            {
+                "hostPath": str(ioDir.absolute()),
+                "containerPath": PythonRuntime.STAGING_CONTAINER_PATH,
+                "mode": "rw",
+            },
+            {
+                "hostPath": str(runtime.updateHelperHostPath().absolute()),
+                "containerPath": PythonRuntime.UPDATE_HELPER_CONTAINER_PATH,
+                "mode": "ro",
+            },
+        ]
+
+
+class TestUpdateHelperHostPath:
+    """Tests for :meth:`PythonRuntime.updateHelperHostPath`."""
+
+    def testDerivedFromInstallDockerfileParent(self, runtime: PythonRuntime) -> None:
+        """Verify the helper path sits next to the install Dockerfile."""
+        expected = Path(runtime._config.installDockerfile).parent / "pool_pip_runner.py"
+        assert runtime.updateHelperHostPath() == expected
+        assert runtime.updateHelperHostPath().name == "pool_pip_runner.py"
 
 
 # ---------------------------------------------------------------------------

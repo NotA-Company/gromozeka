@@ -478,6 +478,109 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         stats = self.limiter.getStats("cleanup_test")
         self.assertLessEqual(stats["requestsInWindow"], 3)
 
+    async def testApplyLimitReturnsTrueWhenApplied(self) -> None:
+        """Test applyLimit returns True when the limit is applied.
+
+        Verifies that calls within the limit report True, both with and
+        without a timeout specified.
+
+        Raises:
+            AssertionError: If successful application does not return True.
+        """
+        self.assertTrue(await self.limiter.applyLimit("bool_test"))
+        self.assertTrue(await self.limiter.applyLimit("bool_test", timeout=5))
+
+    async def testApplyLimitTimeoutExpiryReturnsFalse(self) -> None:
+        """Test applyLimit returns False when the wait exceeds the timeout.
+
+        Fills the window (3 per 2s), then calls with timeout=1: the
+        required wait (~2s) exceeds it, so False must be returned without
+        sleeping.
+
+        Raises:
+            AssertionError: If timeout expiry does not return False.
+        """
+        for _ in range(3):
+            await self.limiter.applyLimit("timeout_test")
+
+        result = await self.limiter.applyLimit("timeout_test", timeout=1)
+
+        self.assertFalse(result)
+
+    async def testApplyLimitTimeoutDoesNotConsumeSlot(self) -> None:
+        """Test a timed-out request does not consume a rate limit slot.
+
+        After a timeout expiry the window must still hold exactly the
+        pre-timeout number of requests, and a later call with a
+        sufficient timeout must succeed.
+
+        Raises:
+            AssertionError: If a timed-out request is recorded in the window.
+        """
+        for _ in range(3):
+            await self.limiter.applyLimit("slot_test")
+
+        self.assertFalse(await self.limiter.applyLimit("slot_test", timeout=1))
+
+        stats = self.limiter.getStats("slot_test")
+        self.assertEqual(stats["requestsInWindow"], 3)
+
+        # With a sufficient timeout the call succeeds (fake clock fast-forwards)
+        self.assertTrue(await self.limiter.applyLimit("slot_test", timeout=5))
+
+    async def testApplyLimitTimeoutSufficientSucceeds(self) -> None:
+        """Test applyLimit with a timeout longer than the required wait.
+
+        Fills the window (3 per 2s), then calls with timeout=5: the
+        required wait (~2s) fits, so the call must sleep (fast-forwarded
+        by the fake clock) and return True.
+
+        Raises:
+            AssertionError: If a sufficient timeout still returns False.
+        """
+        for _ in range(3):
+            await self.limiter.applyLimit("sufficient_test")
+
+        result = await self.limiter.applyLimit("sufficient_test", timeout=5)
+
+        self.assertTrue(result)
+
+    async def testApplyLimitTimeoutZeroTryAcquireSemantics(self) -> None:
+        """Test timeout=0 acts as a try-acquire.
+
+        With a free slot the call must return True immediately; with a
+        full window it must return False without sleeping.
+
+        Raises:
+            AssertionError: If timeout=0 does not behave as try-acquire.
+        """
+        self.assertTrue(await self.limiter.applyLimit("try_test", timeout=0))
+
+        # Fill the remaining slots (limit is 3)
+        await self.limiter.applyLimit("try_test", timeout=0)
+        await self.limiter.applyLimit("try_test", timeout=0)
+
+        self.assertFalse(await self.limiter.applyLimit("try_test", timeout=0))
+
+    async def testApplyLimitWithoutTimeoutWaits(self) -> None:
+        """Test applyLimit without timeout keeps the old blocking behavior.
+
+        With no timeout a saturated window must still be waited out
+        (fake clock fast-forwards) and the call returns True.
+
+        Raises:
+            AssertionError: If the no-timeout path stops waiting or fails.
+        """
+        for _ in range(3):
+            await self.limiter.applyLimit("no_timeout_test")
+
+        startTime = time.time()
+        result = await self.limiter.applyLimit("no_timeout_test")
+
+        self.assertTrue(result)
+        # Fake-clock elapsed: the full ~2s window wait was applied
+        self.assertGreaterEqual(time.time() - startTime, 1.0)
+
     async def testDefaultQueue(self) -> None:
         """Test default queue behavior.
 

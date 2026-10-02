@@ -26,7 +26,9 @@ Schema notes (cross-RDBMS portability):
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
+from lib.max_webhook_receiver.schema import getForwardDDL
+
 from ..base import BaseMigration
 
 
@@ -50,30 +52,19 @@ class Migration019AddWebhookUpdatesTable(BaseMigration):
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Create the webhook_updates table and its unprocessed-rows index.
 
+        The DDL is delegated to lib.max_webhook_receiver.schema.getForwardDDL()
+        to keep the schema single-sourced across migration_019 (creation) and
+        migration_029 (rollback recreation), ensuring the bot's migration chain
+        and the receiver's canonical schema never drift.
+
         Args:
             sqlProvider: SQL provider abstraction; do NOT use raw sqlite3.
 
         Returns:
             None
         """
-        await sqlProvider.batchExecute(
-            [
-                ParametrizedQuery("""
-                    CREATE TABLE IF NOT EXISTS webhook_updates (
-                        id            TEXT      PRIMARY KEY NOT NULL,
-                        received_at   TIMESTAMP NOT NULL,
-                        update_type   TEXT      NOT NULL,
-                        raw_json      TEXT      NOT NULL,
-                        processed     INTEGER   NOT NULL DEFAULT 0,
-                        processed_at  TIMESTAMP
-                    )
-                    """),
-                ParametrizedQuery("""
-                    CREATE INDEX IF NOT EXISTS idx_webhook_updates_unprocessed
-                    ON webhook_updates (processed, received_at)
-                    """),
-            ]
-        )
+        ddlStatements = getForwardDDL()
+        await sqlProvider.batchExecute(ddlStatements)
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """Drop the unprocessed-rows index then the webhook_updates table.

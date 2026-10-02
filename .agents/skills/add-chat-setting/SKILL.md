@@ -79,17 +79,17 @@ Controls which `/settings` page surfaces the setting, and implicitly the minimum
 
 | `ChatSettingsPage` | Intent |
 |---|---|
-| `STANDART` *(sic)* | Basic, any tier |
+| `STANDARD` | Basic, any tier |
 | `EXTENDED` | Power-user settings |
 | `SPAM` | Spam/moderation |
-| `LLM_BASE` | Core LLM config (free tier) |
-| `LLM_PAID` | LLM fallbacks / premium |
+| `LLM_MODELS` | All non-embedding LLM model pickers |
+| `LLM_PROMPTS` | All LLM prompt strings |
+| `LLM_PAID` | LLM premium settings |
 | `PAID` | Paid features |
 | `FRIEND` | Friend-tier features |
 | `BOT_OWNER` | Owner-only |
 | `BOT_OWNER_SYSTEM` | System internals — "do not modify unless necessary" |
 
-Don't fix the `STANDART` spelling — it's baked into the codebase.
 
 ## Site 3 — Add the default value in the right TOML file
 
@@ -119,7 +119,7 @@ Without a default, `/settings` will show the setting but it will be empty, and t
 
 ## Site 4 — Consume the setting correctly
 
-Two gotchas live here. Both are in [`AGENTS.md`](../../../AGENTS.md) and [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) §3.
+Two gotchas live here. Both are in [`AGENTS.md`](../../../AGENTS.md) and [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) §3. Mechanism (conditional preference, never exclusive): `AGENTS.md` is manual `read` only — it sits at the repo root, outside the markdown-mcp docs root, so no `doc_*` tool reaches it. For `tasks.md`, when the markdown-mcp tools are available, use `doc_outline("llm/tasks.md")` first to resolve the slug, then targeted `doc_read(file_path="llm/tasks.md", section_slug=…)` — never hard-code slugs; plain `read` is the exact substitute without MCP.
 
 ### Gotcha A — `getChatSettings()` return shape depends on the layer
 
@@ -166,6 +166,8 @@ If any of these misbehave, you missed a site.
 - If the setting has non-trivial parsing/validation logic, add a focused unit test for that logic.
 
 ## Step 7 — Documentation
+
+All targets below sit inside the markdown-mcp docs root: when the MCP tools are available, update them via `doc_section_edit` — `doc_read` the target section first for the CAS token, resolve the slug from `doc_outline` at use time, and check `reindex.status` after the edit. Without MCP, plain `read` + `edit` is the exact substitute.
 
 - `docs/llm/configuration.md` — if the new setting introduces a category or pattern worth documenting, add it. For a single routine setting, the file-level `_chatSettingsInfo` docstring and the TOML default often suffice.
 - `docs/llm/tasks.md` §4.1 — keep the example reference list current if your setting illustrates a new category.

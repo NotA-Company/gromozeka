@@ -109,13 +109,13 @@ def initLogging(config: Dict[str, Any]) -> None:
     logLevel = rootLogger.getEffectiveLevel()
 
     # Set some defaults to prevent spamming in logs
-    # Set higher logging level for httpx to avoid all GET and POST requests being logged
+    # Set higher logging level for httpx2 to avoid all GET and POST requests being logged
     if logLevel < logging.WARNING:
-        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpx2").setLevel(logging.WARNING)
 
     # Set higher logging level for external components
     if logLevel < logging.WARNING:
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logging.getLogger("httpcore2").setLevel(logging.WARNING)
     if logLevel < logging.INFO:
         logging.getLogger("telegram").setLevel(logging.INFO)
 

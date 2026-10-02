@@ -1,0 +1,75 @@
+---
+category: reference
+---
+
+# Full /docs Audit (2026-07-18, COMPLETED)
+
+Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-08-08). See the live compact memory there for cross-cutting rules and workflow lessons.
+
+End-to-end audit of all 85 files under `/docs/` (excluding `docs/archive/`): 36 memories + 12 `docs/llm/` non-memory + 8 `docs/` root + 29 plans/designs/examples/templates/other. Outcomes: ~78 FIX, ~6 KEEP, 13 ARCHIVE moves (12 in Phase 2 + 1 in Phase 3d Wave 9 `condensing-prompt-tool-param.md` + 1 in Phase 3d Wave 11 `max-bot-client-generation-brief.md`). Gate 2 review closed cleanly. `make check-docs` green (106 files / 1615 links / 0 broken). Process: 1 inventory agent → 1 bulk-archive agent → 5 waves of 8 memory audits (Phase 3a) → 2 waves of 6 `docs/llm/` non-memory (Phase 3b) → 1 wave of 8 `docs/` root (Phase 3c) → 2 waves of 11+18 plans/examples/templates/other (Phase 3d) → 3 parallel reconciliation agents (Phase 4) → 1 whole-work review + 1 fix dispatch + 1 re-review (Phase 5). 8 files/wave was the right batch size; 2 of 6 high-drift `docs/llm/` files needed re-dispatch (libraries.md, configuration.md — step limit). Per-file agents were strict one-file-only; cross-file consistency was the explicit Phase 4+5 gap to close.
+
+### Recurring drift patterns (for future audits — apply repo-wide grep verification)
+
+1. **`_persistMemoryEntry` → `_runSingleRefinement` inlined cursor-persist** — method removed (inlined into `_runSingleRefinement` at `user_memories.py:1356-1374` under `cache.chatUserMetadataLock()`); class `UserDataHandler` → `UserMemoriesHandler`; file `user_data.py` deleted (now `user_memories.py`). Historical-pointer convention: *"`_runSingleRefinement`'s inlined cursor-persist (formerly `_persistMemoryEntry`)"*.
+2. **`chatMessages.searchChatMessages` → `chatSearch.searchChatMessages`** — repository split; `chat_search.py` is a separate repo, accessed as `db.chatSearch`. Test: `grep -rn 'chatMessages.searchChatMessages' docs/` (outside `docs/archive/`) must return 0.
+3. **`excludeMemoryIds` is OPTIONAL, not REQUIRED** — only `cache` is required keyword-only; `excludeMemoryIds: Optional[Set[str]] = None` at `ensured_message.py:1073, 1203, 1275` (3 sites). The "pyright enforces both" claim is false — pyright does NOT enforce optional-with-default.
+4. **`handleRandomAnswer` → `handleRandomMessage`** — method at `llm_messages.py:790`.
+5. **Repository class merges**: `DivinationLayoutsRepository` → `DivinationsRepository` (layout CRUD was merged in; `db.divinations` accessor); `CommonRepository` → `CommonFunctionsRepository`. Test: `grep -rn -E '(CommonRepository|DivinationRepository|DivinationLayoutsRepository)\b' docs/` (outside `docs/archive/` + clarifying-mention narrative) must return ~0.
+6. **`[database.sources.*]` → `[database.providers.*]`** — config schema rename; `DatabaseManagerConfig.providers` is the live shape (`configs/00-defaults/00-config.toml`).
+7. **SQLink is a REMOTE-DB HTTP client, NOT SQLite with async** — required kwargs are `url`/`user`/`password`/`database`. The `dbPath` kwarg belongs to `SQLite3Provider` only. Don't conflate them in multi-source examples. SQLink's `readOnly` is server-controlled (`db.access == "ro"`), not a client-side flag.
+8. **Handler chain ordering** — full list (verified `manager.py:478-612`): 9 always-on + 3 Telegram-only (`DeleteFromUserMessageHandler` at position 10, `ReactOnUserMessageHandler`, `TopicManagerHandler`) + 6 config-gated (`MessagePreprocessorHandler`, `SpamHandler`, `ChatSearchHandler`, `ResenderHandler`, `SandboxHandler`, `DivinationHandler`) + custom-loader + `LLMMessageHandler` (MUST BE LAST — appended after conditional/custom handlers). Don't forget `DeleteFromUserMessageHandler` (registered before `ReactOnUserMessageHandler`).
+
+#### Renames, return types, and wiring (items 9-13)
+
+9. **Method renames** — `saveChatUser`→`updateChatUser`, `saveChatInfo`→`updateChatInfo`, `saveChatTopic`→`updateChatTopicInfo`, `getMessages`→`getChatMessagesSince`, `addMessage`→`saveChatMessage`, `saveMediaAttachment`→`addMediaAttachment`, `saveSpamMessage`→`addSpamMessage`, `saveHamMessage`→`addHamMessage`, `saveDelayedTask`→`addDelayedTask`, `getCache`/`setCache`→`getCacheEntry`/`setCacheEntry`, `getChatSummarizationCache`/`setChatSummarizationCache`→`getChatSummarization`/`addChatSummarization`, `markDelayedTaskDone(taskId)`→`updateDelayedTask(id, isDone)`. Pattern: `save*`/`get*` (legacy) → `update*`/`add*`/descriptive (current). Always grep current code before trusting doc method names.
+10. **`HandlersManager.injectBot` was renamed to `initialize`** — `BaseBotHandler.injectBot` (`base.py:178`) is now the narrower method that just sets `self._bot`. Don't conflate them in refactor proposals.
+11. **`_sendLLMChatMessage` returns `LLMReplyOutcome` StrEnum** (3 members: SENT/ERROR/SKIPPED_BY_MODEL), not `bool`. Span `llm_messages.py:221-443`. `SKIPPED_BY_MODEL` returned by handler-level empty-guard at L394 (Option B handler-half of `llm-empty-truncated-final` fix).
+12. **`ModelResultStatus` has 8 values**: UNSPECIFIED, PARTIAL, TRUNCATED_FINAL, FINAL, CONTENT_FILTER, TOOL_CALLS, UNKNOWN, ERROR (`lib/ai/models.py:923-950`). `ERROR_STATUSES = {UNSPECIFIED, CONTENT_FILTER, UNKNOWN, ERROR}` (excludes TRUNCATED_FINAL, PARTIAL, FINAL, TOOL_CALLS). Older docs fabricated `TIMEOUT`/`EMPTY` — they don't exist.
+13. **`RANDOM_ANSWER_PROMPT` wiring** — `ChatSettingsKey` at `chat_settings.py:334`; entry at `:701-707` (page `BOT_OWNER_SYSTEM`); TOML default at `bot-defaults.toml:227-237`; used in `handleRandomMessage` at `llm_messages.py:865-874` (thread path, slice-rebuild) and `:878-887` (non-thread path).
+
+#### Line-drift, counts, and verified pins (items 14-19)
+
+14. **`HandlersManager` line refs drifted massively (~200+ lines)** since early 2026: class 177→382, `__init__` 185→416, `self.handlers` list 249→478, `awaitStepDone` 110→236, `messageProcessed` 149→330, `injectBot`/`initialize` 389→703, `shutdown` 430→738. **Always re-locate by symbol before trusting line numbers.**
+15. **`lib/ext_modules/grabliarium/tests/` is sanctioned-collocated** — vendored subpackage with its own `pyproject.toml`/tests. **AGENTS.md L127 carve-out added 2026-07-18** (Phase 10 follow-up); `docs/llm/testing.md` also documents it.
+16. **Counts as of 2026-07-18**: 36 memories + `memories/index.md` = 37; ADR count = 19 (ADR-001..019); `ToolName` StrEnum = 22 members; `registerTool` call sites = 22; migrations = 24 (`migration_001..024`); `Database` repos = 15; tests ≈ 3392 collected. These drift monotonically — re-verify before relying on absolute counts.
+17. **YC SDK docs fully re-captured against pinned v0.22.0** (2026-07-18, Phase 12 wave of 7 parallel agents + Gate 2 fix dispatch + serial verification): all 7 files in `docs/other/yc-ai-sdk/` now have H1 stamp `(verified against pinned v0.22.0, 2026-07-18)` and a banner stating verification scope. ~30 newly-discovered drifts fixed across the bundle (most critical: `embeddings-and-other.md` had 13 — nonexistent `as_batch()`/`query()` methods, invalid `"BM25"`/`"TextGeneration"` enums, etc.; `chat-openai-compat.md` had wrong `ChatModelResult` dataclass fields; `speech.md`/`completions.md`/`chat-openai-compat.md` had `await run_stream()` bugs that would raise `TypeError` — async generator, not coroutine). `⚠` convention: server-side facts only (model catalogues, context sizes, required scopes). `make check-docs` green.
+18. **Max Messenger host lineage**: `botapi.max.ru` (legacy, retired 2026-07-19) → `platform-api.max.ru` (deprecated, also retired 2026-07-19) → `platform-api2.max.ru` (current production host, `lib/max_bot/constants.py:18`). Migration COMPLETE per `memories/max-api-migration.md`. Schema snapshots in `docs/other/Max-Messenger/` carry deprecation banners.
+19. **Dependency pins (verified 2026-07-18)**: `aiodocker==0.27.0` (was 0.26.0); `sqlite-vec==0.1.9` (was 0.1.10a4); `httpx-socks[asyncio]==0.11.0` (was `>=0.10.0`); `numpy==2.5.1` (was 2.4.6); `pillow==12.3.0` (new direct dep at `lib/ai/models.py:48`, **zero dep-usage coverage — candidate for future round**); `aiohttp==3.14.1`.
+
+### Cross-cutting code-side follow-ups (ALL RESOLVED 2026-07-18 in Phase 8-9 follow-up pass)
+
+All items below were flagged as out-of-`/docs`-scope during the initial audit; the user requested them resolved. Status: every item landed, `make format lint` clean, `make test` green (3389 passed).
+
+- ✅ **`internal/database/database.py`** class docstring (removed `divinationLayouts`; added `userMemories`/`chatEmbeddings`/`chatSearch`) + module/class example `getMessages`→`getChatMessagesSince` (×2).
+- ✅ **`internal/services/cache/service.py:1137`** + **`internal/bot/common/handlers/base.py:1174`** docstrings → `_runSingleRefinement`'s inlined cursor-persist (with "formerly `_persistMemoryEntry`" historical pointer).
+- ✅ **`internal/services/llm/service.py:78-80`** `generateCondensingDict` docstring → `messageCount += 1` is unconditional; only metadata extraction skipped in None branch.
+- ✅ **`internal/bot/models/message_metadata.py:289`** `mergeCondensingDicts` docstring → "set-unique (unsorted)" for participants; "plain extend (NO de-dup)" for messageIds.
+- ✅ **`internal/bot/common/handlers/chat_search.py:974-978`** comment → `extra=` is commented out; runtime `str(mid).strip()` + `MessageId(midStr)` coercion is the actual safety net.
+- ✅ **`internal/bot/common/handlers/dev_commands.py:842`** docstring → `reconstructMessages` replaced with `ModelMessage.fromDictList` (the actual consumer at `lib/ai/models.py:676`).
+- ✅ **`internal/bot/max/application.py:127`** `unregister-webhook` code default `True` → `False` (RUNTIME change; aligns with config default `false`; doc-sync rippled to 4 docs).
+- ✅ **`internal/bot/common/handlers/manager.py:491-492`** comment → corrected handler-ordering misattribution.
+- ✅ **`internal/bot/constants.py:65,168`** stale paths → `docs/archive/plans/...`.
+- ✅ **`lib/markdown/__init__.py:17`** docstring → camelCase `markdownToMarkdownV2` (was snake_case).
+- ✅ **`lib/geocode_maps/client.py:14`** docstring → "TypedDict models" (was "Pydantic models"; file path was `client.py` not `__init__.py` as initially flagged).
+- ✅ **Test-side stale comments**: `test_user_memories.py:819,855,28,1214,1729`; `test_user_memories_memory_regen.py:4`; `test_yandex_search.py:4`; `test_user_info.py:449` — all updated.
+- ✅ **`.agents/skills/add-llm-tool/SKILL.md:353`** stale `~line 1306` ref → symbol-only reference.
+- ✅ **17 stale `docs/plans/` paths in code/tests** all → `docs/archive/plans/...` (8 in `user_memories.py`, 2 in `constants.py`, 1 each in `migration_020/021`, `llm/models.py`, 5 across 4 test files).
+- ✅ **Regression tests for `llm_messages.py:394` empty-guard** — `TestLLMEmptyResponseGuard` class (5 tests) added to `tests/bot/common/handlers/test_llm_messages.py`; `testPostStopUnregisterWebhookKeyAbsentDefaultsToFalse` added to `tests/bot/max/test_webhook_mode.py`. Test count: 3381 → 3389.
+
+### Open documentation decisions (status as of 2026-07-18 end-of-day)
+
+- ✅ **`docs/database-README.md`**: FREEZE-and-link framing removed (Phase 11); file is now a normal maintained overview with positive "Canonical sources" navigation pointer. All 27 Phase 3c drift fixes intact.
+- ✅ **`docs/plans/llm-empty-truncated-final-handling-v1.md`**: Test Plan implemented (Phase 9, 5 tests); status remains `PARTIALLY IMPLEMENTED` (Option A provider downgrade + `bot.py` empty-string guard still pending — those are product decisions, not doc drift).
+- ✅ **AGENTS.md L124-127**: `lib/ext_modules/*/tests/` sanctioned-exception carve-out added (Phase 10).
+- ✅ **YC SDK version drift** (`docs/other/yc-ai-sdk/`): **FULLY RE-CAPTURED 2026-07-18 (Phase 12)**. All 7 files re-verified against installed v0.22.0 SDK source. ~30 newly-discovered drifts fixed. H1 + banners consistent across the bundle. `⚠` markers discipline: server-side facts only. See "Recurring drift patterns" item 17 above.
+- ⚠ **`docs/archive/design/` count** = 23 archived + 1 README = 24 total (decremented from 24+1=25 after `custom-modules-design.md` was restored to `docs/design/` in Phase 7).
+- ℹ **Per-section archive READMEs** enumerate files without explicit count statements; parent `docs/archive/README.md` carries the canonical counts. Intentional — enumeration suffices.
+
+### Process lessons reinforced
+
+- **Per-file agents need explicit cross-file-flag instructions.** When a drift is found, the agent should be told which sibling files might carry the same drift and instructed to flag (not fix — that would violate one-file-only scope) for Phase 4 reconciliation. This worked well; only 4 of ~85 files had residual cross-file drift after Phase 3.
+- **Gate 2 (whole-work review) is non-optional for multi-file audits.** Caught 3 HIGH-severity cross-file inconsistencies (Pattern-1 incomplete in `user-memory-refinement.md`; Pattern-5 missed in `architecture.md` + `database-schema.md`) that per-file agents couldn't see.
+- **Re-dispatch is normal for high-drift files.** 2 of 6 `docs/llm/` non-memory files hit the ~60 step budget on first pass; the brief was tightened and re-dispatched successfully. Don't fight it — just re-dispatch with the remaining scope made explicit.
+- **Count methodology in archive indexes**: "content-only + `+ 1 README` suffix" is now the convention. `docs/archive/plans/` = 66 archived + 1 README = 67 total; `docs/archive/design/` = 23 archived + 1 README = 24 total (was 24+1=25 before `custom-modules-design.md` was restored to `docs/design/` in Phase 7).
+- **Strict one-subagent-per-file + Phase 4 reconciliation**: worked well at 85 files; the alternative (parallel multi-file agents) would have caused more merge conflicts and harder review.
+- **Archive-vs-live decision principle (learned from user feedback 2026-07-18)**: a doc referenced as **current operational guidance** by a live skill/code-path is NOT a historical-only candidate, regardless of its "Status: Implemented" header. Phase 2 incorrectly archived `custom-modules-design.md` because it looked like a "shipped-feature design doc"; the user pointed out that `.agents/skills/add-handler/SKILL.md` references it as routing/decision guidance under "When NOT to use" — so it's a living reference. Restoration to `docs/design/` (not original `docs/` root — that would re-create clutter) + revert of inbound links to current-guidance framing was the correct fix. Apply this principle to future archive decisions: grep for **operational** references (skills, "see this for how to X"), not just historical-plan-of-record references.

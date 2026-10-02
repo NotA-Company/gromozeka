@@ -1,3 +1,8 @@
+---
+category: guide
+description: Product overview of Gromozeka for end users.
+---
+
 # Gromozeka
 
 ### Your AI, everywhere. One bot, every platform.

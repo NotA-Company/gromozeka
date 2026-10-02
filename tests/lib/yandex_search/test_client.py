@@ -13,7 +13,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2 as httpx
 
 from lib.cache import DictCache
 from lib.yandex_search.cache_utils import SearchRequestKeyGenerator

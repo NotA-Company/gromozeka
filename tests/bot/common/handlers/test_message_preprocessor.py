@@ -47,12 +47,12 @@ from internal.bot.models import (
 )
 from internal.bot.models.ensured_message import MediaContent
 from internal.database.models import MemoryType, UserMemoryDict
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
 from internal.services.llm.service import LLMService
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
+from lib.db.utils import DEFAULT_THREAD_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -134,8 +134,15 @@ def handler(
         (``saveChatMessage``, ``processTelegramMedia``, ``getChatSettings``)
         stubbed at the instance level so each test can configure them.
     """
+    # Build a cache stub with the chat-accessibility-tracking methods mocked.
+    # isChatInaccessible defaults to False (no recovery branch entry in most tests).
+    # markChatActive is async and must be awaitable.
+    mockCache = Mock(spec=CacheService)
+    mockCache.isChatInaccessible = AsyncMock(return_value=False)  # Async
+    mockCache.markChatActive = AsyncMock(return_value=True)  # Async
+
     with (
-        patch.object(CacheService, "getInstance", return_value=Mock()),
+        patch.object(CacheService, "getInstance", return_value=mockCache),
         patch.object(QueueService, "getInstance", return_value=mockQueue),
         patch.object(StorageService, "getInstance", return_value=Mock()),
     ):
@@ -242,6 +249,8 @@ def _makeEnsuredMessage(
     # detect Telegram "is_automatic_forward" (channel forwards). A non-Message
     # return value is the simplest way to skip that branch in unit tests.
     msg.getBaseMessage = Mock(return_value=Mock())
+    # formatForLLM is awaited in newMessageHandler, so it must be an AsyncMock.
+    msg.formatForLLM = AsyncMock(return_value=messageText)
     return msg
 
 
@@ -623,15 +632,18 @@ class TestSearchEnabledCaching:
 
         with (
             patch.object(LLMService, "getInstance", return_value=Mock()),
-            patch.object(CacheService, "getInstance", return_value=Mock()),
             patch.object(QueueService, "getInstance", return_value=AsyncMock()),
             patch.object(StorageService, "getInstance", return_value=Mock()),
         ):
-            h = MessagePreprocessorHandler(  # type: ignore[call-arg]
-                configManager=mockConfig,
-                database=Mock(),
-                botProvider=BotProvider.TELEGRAM,
-            )
+            mockCache = Mock(spec=CacheService)
+            mockCache.isChatInaccessible = AsyncMock(return_value=False)
+            mockCache.markChatActive = AsyncMock(return_value=True)
+            with patch.object(CacheService, "getInstance", return_value=mockCache):
+                h = MessagePreprocessorHandler(  # type: ignore[call-arg]
+                    configManager=mockConfig,
+                    database=Mock(),
+                    botProvider=BotProvider.TELEGRAM,
+                )
             h.saveChatMessage = AsyncMock(return_value=True)  # type: ignore[method-assign]
             h.processTelegramMedia = AsyncMock(return_value=None)  # type: ignore[method-assign]
             h.getChatSettings = AsyncMock(return_value=_defaultChatSettings())  # type: ignore[method-assign]
@@ -971,3 +983,182 @@ class TestInjectMemoriesCompactFormat:
         stored = msg.metadata.get("memories")
         assert stored is not None
         assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
+
+    async def test_injectMemories_semanticMode_writesScores(self, handler: MessagePreprocessorHandler) -> None:
+        """Semantic mode writes ``shortTermScores`` mapping memory IDs to search scores.
+
+        When ``queryEmbedding`` is non-None (semantic mode), ``injectMemories`` extracts
+        the ``score`` field from each short-term memory returned by ``searchMemories``
+        and writes a ``shortTermScores`` map keyed by ``memory_id`` into
+        ``metadata["memories"]``. The scores are preserved as floats.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        # Wire the semantic search path instead of latest retrieval.
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_chatSettingsWithMemoryInjection()
+        )
+        cache = cast(Any, handler.cache)
+        cache.getChatUserPermanentMemories = AsyncMock(return_value=[])
+        # Semantic search returns UserMemoryDict entries with ``score`` keys.
+        semanticResults = [
+            cast(
+                UserMemoryDict,
+                {
+                    "memory_id": "short-1",
+                    "type": MemoryType.PREFERENCE,
+                    "content": "likes coffee",
+                    "tags": ["recent"],
+                    "score": 0.95,
+                },
+            ),
+            cast(
+                UserMemoryDict,
+                {
+                    "memory_id": "short-2",
+                    "type": MemoryType.EVENT,
+                    "content": "just woke up",
+                    "tags": [],
+                    "score": 0.87,
+                },
+            ),
+        ]
+        handler.db.userMemories.searchMemories = AsyncMock(return_value=semanticResults)  # type: ignore[attr-defined]
+
+        msg = _realEnsuredMessage()
+
+        # Call injectMemories with a non-None queryEmbedding to trigger semantic mode.
+        await handler.injectMemories(msg, "test-model", queryEmbedding=[0.1, 0.2])
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert "shortTermScores" in stored  # type: ignore[operator]
+        assert stored["shortTermScores"] == {  # type: ignore[index]
+            "short-1": 0.95,
+            "short-2": 0.87,
+        }
+
+    async def test_injectMemories_latestMode_noScores(self, handler: MessagePreprocessorHandler) -> None:
+        """Latest mode (fallback path) omits ``shortTermScores`` from metadata.
+
+        When ``queryEmbedding`` is ``None`` (latest-retrieval fallback), short-term
+        memories are fetched via ``getLatestMemories`` which does not provide scores.
+        The ``shortTermScores`` key must NOT appear in ``metadata["memories"]``.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[],
+            dbMemories=[_dbUserMemory("short-1", "real")],
+        )
+
+        # Call injectMemories with queryEmbedding=None to trigger latest mode.
+        await handler.injectMemories(msg, None, None)
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert "shortTermScores" not in stored  # type: ignore[operator]
+
+
+# ---------------------------------------------------------------------------
+# Tests: chat accessibility recovery (P4 ACTIVE-recovery hook)
+# ---------------------------------------------------------------------------
+
+
+class TestChatAccessibilityRecovery:
+    """Tests for the ACTIVE-recovery hook in :meth:`newMessageHandler`.
+
+    P4 added a recovery hook (~lines 163-169) that fires when an inbound message
+    arrives for a chat marked INACCESSIBLE: the chat is recovered to ACTIVE by
+    calling ``cache.markChatActive(chatId)``. The gate checks the cache-aside
+    ``isChatInaccessible`` check to avoid DB writes for active chats — only
+    inaccessible chats incur the DB write.
+
+    These tests prove the recovery logic fires correctly, idempotently, and
+    does NOT incur DB overhead for active chats (the no-per-message-DB-write
+    guarantee).
+    """
+
+    async def test_recovery_inaccessibleChat_marksActive(self, handler: MessagePreprocessorHandler) -> None:
+        """Chat marked INACCESSIBLE → ``markChatActive`` awaited exactly once.
+
+        Configures the cache mock so ``isChatInaccessible(chatId)`` returns ``True``,
+        drives ``newMessageHandler`` with a message for that chatId, and asserts
+        ``markChatActive`` was awaited exactly once with that chatId. This proves
+        the recovery branch fires for inaccessible chats.
+
+        Args:
+            handler: Preprocessor fixture (cache mocked at construction time).
+        """
+        chatId = 100
+        cache = cast(Any, handler.cache)
+
+        # Mark the chat as inaccessible so the recovery branch is entered.
+        cache.isChatInaccessible = AsyncMock(return_value=True)
+
+        ensured = _makeEnsuredMessage(chatId=chatId, messageText="hello")
+        result = await handler.newMessageHandler(ensured, updateObj=Mock())
+
+        assert result is HandlerResultStatus.NEXT
+        cache.markChatActive.assert_awaited_once_with(chatId)
+
+    async def test_recovery_activeChat_skipsMarkActive(self, handler: MessagePreprocessorHandler) -> None:
+        """Chat marked ACTIVE → ``markChatActive`` NOT called (no-per-message-DB-write guarantee).
+
+        Configures the cache mock so ``isChatInaccessible(chatId)`` returns ``False``,
+        drives ``newMessageHandler``, and asserts ``markChatActive`` was NOT called.
+        This proves active chats incur zero DB overhead — only the cheap cache-aside
+        ``isChatInaccessible`` check runs.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        chatId = 200
+        cache = cast(Any, handler.cache)
+
+        # Default fixture already sets isChatInaccessible to False, but be explicit.
+        cache.isChatInaccessible = AsyncMock(return_value=False)
+
+        ensured = _makeEnsuredMessage(chatId=chatId, messageText="hello")
+        result = await handler.newMessageHandler(ensured, updateObj=Mock())
+
+        assert result is HandlerResultStatus.NEXT
+        cache.markChatActive.assert_not_called()
+
+    async def test_recovery_idempotentAcrossMessages(self, handler: MessagePreprocessorHandler) -> None:
+        """Recovery is idempotent: ``markChatActive`` called exactly once across two messages.
+
+        Drives ``newMessageHandler`` twice for the same chatId. Configures the cache
+        mock so the FIRST ``isChatInaccessible`` returns ``True`` (and ``markChatActive``,
+        when called, simulates eviction by making subsequent ``isChatInaccessible``
+        return ``False``). Asserts ``markChatActive`` was called exactly ONCE total
+        across both messages, proving recovery is idempotent — after the first
+        recovery evicts the chat from the set, the second message's gate is False.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        chatId = 300
+        cache = cast(Any, handler.cache)
+
+        # First call returns True (chat is inaccessible), second returns False
+        # (chat was marked active, so it's no longer in the set).
+        cache.isChatInaccessible = AsyncMock(side_effect=[True, False])
+
+        ensured = _makeEnsuredMessage(chatId=chatId, messageText="message 1")
+        result1 = await handler.newMessageHandler(ensured, updateObj=Mock())
+
+        assert result1 is HandlerResultStatus.NEXT
+        # First message triggered recovery.
+        cache.markChatActive.assert_awaited_once_with(chatId)
+
+        # Second message for the same chat.
+        ensured2 = _makeEnsuredMessage(chatId=chatId, messageText="message 2")
+        result2 = await handler.newMessageHandler(ensured2, updateObj=Mock())
+
+        assert result2 is HandlerResultStatus.NEXT
+        # Still called exactly once total — idempotent.
+        assert cache.markChatActive.await_count == 1  # type: ignore[attr-defined]

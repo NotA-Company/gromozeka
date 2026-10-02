@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # SQL Portability Guide: Cross-RDBMS Compatibility Analysis
 
 ## Executive Summary
@@ -40,9 +44,9 @@ The database layer currently uses SQLite-specific syntax that is not directly co
 **Severity**: Critical  
 **Files Affected**: 8 files  
 **Impact**: All upsert operations will fail  
-**Status**: ✅ **RESOLVED** - Portable `upsert()` method implemented on `BaseSQLProvider` (and every concrete provider). All repositories route through `provider.upsert(...)` instead of hand-written `ON CONFLICT`.
+**Status**: **RESOLVED** - Portable `upsert()` method implemented on `BaseSQLProvider` (and every concrete provider). All repositories route through `provider.upsert(...)` instead of hand-written `ON CONFLICT`.
 
-#### Problem Description
+#### Problem Description: ON CONFLICT Syntax Incompatibility
 
 SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs significantly between RDBMS:
 
@@ -50,7 +54,7 @@ SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs signific
 - **MySQL**: `ON DUPLICATE KEY UPDATE ...` (requires UNIQUE/PRIMARY key)
 - **PostgreSQL**: `ON CONFLICT(column) DO UPDATE SET ...` (similar to SQLite but with different conflict target syntax)
 
-#### Affected Locations
+#### Affected Locations: ON CONFLICT Upserts
 
 | File | Line | Query Type |
 |------|------|------------|
@@ -63,7 +67,9 @@ SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs signific
 | [`internal/database/repositories/chat_info.py`](/internal/database/repositories/chat_info.py:71) | 71 | Chat info upsert |
 | [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:61) | 61 | Media group upsert |
 
-#### Example Code
+#### Example Code: ON CONFLICT Upserts
+
+##### Current Upsert Syntax and the ExcludedValue Marker
 
 **Current (SQLite)**:
 ```sql
@@ -83,7 +89,7 @@ Add an `upsert` method to each provider implementation that receives table, dict
 To handle the DB-specific syntax for referencing excluded values (e.g., `excluded.column` in PostgreSQL/SQLite, `VALUES(column)` in MySQL), introduce a special constant that providers can recognize and translate appropriately:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 class ExcludedValue:
     """Special marker to indicate a column should be set to the excluded value.
     
@@ -109,12 +115,14 @@ class ExcludedValue:
         return f"ExcludedValue({self.column})"
 ```
 
+##### Provider Implementation: SQLite
+
 **Provider Implementations** (illustrative — see
-[`internal/database/providers/`](/internal/database/providers/) for the real
+[`lib/db/providers/`](/lib/db/providers/) for the real
 code; parameter names match the `BaseSQLProvider.upsert` camelCase signature):
 
 ```python
-# internal/database/providers/sqlite3.py
+# lib/db/providers/sqlite3.py
 async def upsert(
     self,
     table: str,
@@ -161,8 +169,12 @@ async def upsert(
     """
     
     return await self.execute(query, values)
+```
 
-# internal/database/providers/mysql.py
+##### Provider Implementation: MySQL
+
+```python
+# lib/db/providers/mysql.py
 async def upsert(
     self,
     table: str,
@@ -208,8 +220,12 @@ async def upsert(
     """
     
     return await self.execute(query, values)
+```
 
-# internal/database/providers/postgresql.py
+##### Provider Implementation: PostgreSQL
+
+```python
+# lib/db/providers/postgresql.py
 async def upsert(
     self,
     table: str,
@@ -258,10 +274,12 @@ async def upsert(
     return await self.execute(query, values)
 ```
 
+##### Usage Examples and Benefits
+
 **Usage Examples**:
 
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # Simple upsert - update all non-conflict columns with excluded values
 # NOTE: kwargs are camelCase (conflictColumns / updateExpressions) to match
@@ -330,7 +348,7 @@ await sqlProvider.upsert(
 **Files Affected**: 10 files  
 **Impact**: Query execution failures, parameter binding errors
 
-#### Problem Description
+#### Problem Description: Mixed Parameter Binding
 
 The codebase inconsistently uses both positional (`?`) and named (`:name`) parameter binding:
 
@@ -339,7 +357,7 @@ The codebase inconsistently uses both positional (`?`) and named (`:name`) param
 
 While both styles work in SQLite, MySQL and PostgreSQL have different preferences and limitations.
 
-#### Affected Locations
+#### Affected Locations: Mixed Parameter Binding
 
 | File | Line | Binding Style |
 |------|------|---------------|
@@ -352,7 +370,7 @@ While both styles work in SQLite, MySQL and PostgreSQL have different preference
 | [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:84) | 84 | Named (`:name`) |
 | [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:174) | 174 | Named (`:name`) |
 
-#### Example Code
+#### Example Code: Mixed Parameter Binding
 
 **Current (Mixed)**:
 ```python
@@ -418,9 +436,9 @@ await sqlProvider.execute(
 **Files Affected**: 12 files
 **Impact**: Incorrect timestamp values, timezone issues
 
-**Status**: ✅ **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
+**Status**: **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
 
-#### Problem Description
+#### Problem Description: CURRENT_TIMESTAMP Behavior
 
 `CURRENT_TIMESTAMP` behaves differently across RDBMS:
 
@@ -430,7 +448,7 @@ await sqlProvider.execute(
 
 This can cause inconsistencies in timestamp comparisons and data integrity issues.
 
-#### Solution Implemented
+#### Solution Implemented: CURRENT_TIMESTAMP Removal
 
 **Migration 013**: Removed all `DEFAULT CURRENT_TIMESTAMP` from schema definitions
 - All timestamp columns are now `TIMESTAMP NOT NULL` without defaults
@@ -452,7 +470,7 @@ This can cause inconsistencies in timestamp comparisons and data integrity issue
 | [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:73) | 73 | Chat user insert |
 | [`internal/database/repositories/chat_settings.py`](/internal/database/repositories/chat_settings.py:64) | 64 | Chat settings insert |
 
-#### Example Code
+#### Example Code: CURRENT_TIMESTAMP Handling
 
 **Before (Problematic)**:
 ```sql
@@ -503,9 +521,9 @@ await sqlProvider.execute(
 **Severity**: Medium
 **Files Affected**: 3 files
 **Impact**: Case-sensitive comparisons may fail unexpectedly
-**Status**: ✅ **RESOLVED** - Portable `getCaseInsensitiveComparison()` and `getLikeComparison()` methods implemented
+**Status**: **RESOLVED** - Portable `getCaseInsensitiveComparison()` and `getLikeComparison()` methods implemented
 
-#### Problem Description
+#### Problem Description: Case Sensitivity in WHERE Clauses
 
 String comparisons behave differently across RDBMS:
 
@@ -515,14 +533,14 @@ String comparisons behave differently across RDBMS:
 
 This affects username lookups and other string-based queries.
 
-#### Affected Locations
+#### Affected Locations: Case-Sensitive Lookups
 
 | File | Line | Query |
 |------|------|-------|
 | [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:182) | 182 | Username lookup |
 | [`internal/database/repositories/spam.py`](/internal/database/repositories/spam.py:149) | 149 | Spam text search |
 
-#### Example Code
+#### Example Code: Case-Insensitive Comparison
 
 **Current**:
 ```sql
@@ -534,7 +552,7 @@ WHERE
 
 **Recommended Solution**:
 
-**Status**: ✅ Implemented — Use `getCaseInsensitiveComparison()` from provider
+**Status**: Implemented — Use `getCaseInsensitiveComparison()` from provider
 
 Use the provider's `getCaseInsensitiveComparison()` method for explicit case-insensitive equality comparisons:
 
@@ -572,9 +590,9 @@ query = f"""
 **Severity**: Medium
 **Files Affected**: Base provider abstract method, MySQL/PostgreSQL implementations
 **Impact**: Pattern matching queries may fail to match across cases
-**Status**: ✅ **RESOLVED** - Portable `getLikeComparison()` method implemented
+**Status**: **RESOLVED** - Portable `getLikeComparison()` method implemented
 
-#### Problem Description
+#### Problem Description: LIKE Case Sensitivity
 
 LIKE pattern matching with case-insensitive matching behaves differently across RDBMS:
 - **SQLite**: `LIKE` is case-insensitive for ASCII by default, case-sensitive for Unicode
@@ -583,12 +601,12 @@ LIKE pattern matching with case-insensitive matching behaves differently across 
 
 This affects text search queries where you want to match patterns regardless of case (e.g., searching for layout names).
 
-#### Solution Implemented
+#### Solution Implemented: LIKE Case-Insensitive Matching
 
 **Base Provider Abstract Method**: Added `getLikeComparison()` to `BaseSQLProvider` to abstract RDBMS-specific syntax:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 @abstractmethod
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get RDBMS-specific case-insensitive LIKE comparison.
@@ -609,7 +627,7 @@ def getLikeComparison(self, column: str, param: str) -> str:
 **Provider Implementations**:
 
 ```python
-# internal/database/providers/mysql.py
+# lib/db/providers/mysql.py
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get MySQL-specific case-insensitive LIKE comparison expression.
 
@@ -633,7 +651,7 @@ def getLikeComparison(self, column: str, param: str) -> str:
     """
     return f"LOWER({column}) LIKE LOWER(:{param})"
 
-# internal/database/providers/postgresql.py
+# lib/db/providers/postgresql.py
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get PostgreSQL-specific case-insensitive LIKE comparison expression.
 
@@ -650,7 +668,7 @@ def getLikeComparison(self, column: str, param: str) -> str:
     """
     return f"LOWER({column}) LIKE LOWER(:{param})"
 
-# internal/database/providers/sqlink.py (SQLite)
+# lib/db/providers/sqlink.py (SQLite)
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get SQLite-specific case-insensitive LIKE comparison expression.
 
@@ -707,7 +725,7 @@ The portable implementation prioritizes consistency across RDBMS and configurabi
 **Files Affected**: 5 files  
 **Impact**: Query syntax errors in some RDBMS
 
-#### Problem Description
+#### Problem Description: LIMIT Clause Placement
 
 While all three RDBMS support `LIMIT`, the placement and combination with `OFFSET` can vary:
 
@@ -716,14 +734,14 @@ While all three RDBMS support `LIMIT`, the placement and combination with `OFFSE
 
 The current code uses `LIMIT n` which is compatible, but future pagination may need attention.
 
-#### Affected Locations
+#### Affected Locations: LIMIT Clause Placement
 
 | File | Line | Context |
 |------|------|---------|
 | [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:225) | 225 | User list limit |
 | [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:233) | 233 | Message list limit |
 
-#### Example Code
+#### Example Code: LIMIT Pagination
 
 **Current**:
 ```python
@@ -740,7 +758,7 @@ query = f"""
 Create a pagination helper for consistent LIMIT/OFFSET handling:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 def applyPagination(self, query: str, limit: Optional[int], 
                     offset: Optional[int] = 0) -> str:
     """Apply RDBMS-specific pagination to query."""
@@ -773,7 +791,7 @@ query = sqlProvider.applyPagination(query, limit=10, offset=0)
 **Files Affected**: 4 files  
 **Impact**: Type conversion errors, incorrect boolean comparisons
 
-#### Problem Description
+#### Problem Description: Boolean Type Handling
 
 Boolean types are handled differently:
 
@@ -783,14 +801,14 @@ Boolean types are handled differently:
 
 This affects queries that use boolean literals or comparisons.
 
-#### Affected Locations
+#### Affected Locations: Boolean Type Handling
 
 | File | Line | Context |
 |------|------|---------|
 | [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:211) | 211 | Message category filter |
 | [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:287) | 287 | Cache type filter |
 
-#### Example Code
+#### Example Code: Boolean Type Handling
 
 **Current**:
 ```python
@@ -825,7 +843,7 @@ def toDbBoolean(value: Optional[bool]) -> Optional[int]:
 **Files Affected**: 3 files  
 **Impact**: Limited JSON functionality, performance degradation
 
-#### Problem Description
+#### Problem Description: JSON Data Type Support
 
 JSON handling varies significantly:
 
@@ -835,14 +853,14 @@ JSON handling varies significantly:
 
 Current implementation stores JSON as TEXT strings.
 
-#### Affected Locations
+#### Affected Locations: JSON Data Type Support
 
 | File | Line | Context |
 |------|------|---------|
 | [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:60) | 60 | Message metadata |
 | [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:81) | 81 | Media metadata |
 
-#### Example Code
+#### Example Code: JSON Storage
 
 **Current**:
 ```python
@@ -854,7 +872,7 @@ metadata: str = ""  # JSON as string
 Create a JSON abstraction layer:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 import json
 
 def serializeJson(self, data: Any) -> str:
@@ -886,9 +904,9 @@ def getJsonExtractFunction(self, column: str, path: str) -> str:
 **Severity**: High  
 **Files Affected**: Migration files  
 **Impact**: Schema creation failures  
-**Status**: ✅ **RESOLVED** - No migration in the current tree uses `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`. Every primary key is either a composite natural key, a single natural key, or an app-generated UUID/ULID stored as `TEXT PRIMARY KEY NOT NULL`.
+**Status**: **RESOLVED** - No migration in the current tree uses `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`. Every primary key is either a composite natural key, a single natural key, or an app-generated UUID/ULID stored as `TEXT PRIMARY KEY NOT NULL`.
 
-#### Problem Description
+#### Problem Description: AUTO_INCREMENT vs SERIAL
 
 Auto-incrementing primary keys use different syntax:
 
@@ -898,11 +916,11 @@ Auto-incrementing primary keys use different syntax:
 
 Because all three dialects spell it differently, `AUTOINCREMENT` is **forbidden** in Gromozeka migrations.
 
-#### Affected Locations
+#### Affected Locations: AUTO_INCREMENT vs SERIAL
 
 All migration files under [`internal/database/migrations/versions/`](/internal/database/migrations/versions/) were audited. The current `migration_001_initial_schema.py` defines every table with one of the portable PK shapes below — no `AUTOINCREMENT` appears anywhere in the migration tree.
 
-#### Example Code
+#### Example Code: Primary Key Strategies
 
 **Forbidden (SQLite-only, breaks MySQL/PostgreSQL)**:
 ```sql
@@ -924,7 +942,7 @@ CREATE TABLE chat_users (
 )
 ```
 
-#### Recommended Solution
+#### Recommended Solution: Portable Primary Keys
 
 No `getAutoIncrementType()` helper is provided on `BaseSQLProvider` — by design. Pick a portable PK strategy instead (in order of preference):
 
@@ -946,7 +964,7 @@ No `getAutoIncrementType()` helper is provided on `BaseSQLProvider` — by desig
 **Files Affected**: Migration files  
 **Impact**: Data truncation in some RDBMS
 
-#### Problem Description
+#### Problem Description: TEXT Type Length Limits
 
 TEXT type behavior differs:
 
@@ -954,12 +972,12 @@ TEXT type behavior differs:
 - **MySQL**: TEXT (65,535 bytes), MEDIUMTEXT (16MB), LONGTEXT (4GB)
 - **PostgreSQL**: TEXT unlimited
 
-#### Recommended Solution**:
+#### Recommended Solution: TEXT Type Selection
 
 Use appropriate TEXT types based on expected data size:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 def getTextType(self, max_length: Optional[int] = None) -> str:
     """Get RDBMS-specific TEXT type."""
     provider_type = self.getProviderType()
@@ -987,14 +1005,14 @@ def getTextType(self, max_length: Optional[int] = None) -> str:
 **Files Affected**: Migration files  
 **Impact**: Index creation failures
 
-#### Problem Description**
+#### Problem Description: Index Creation Syntax
 
 Index creation syntax varies slightly:
 
 - **SQLite/PostgreSQL**: `CREATE INDEX idx_name ON table(column)`
 - **MySQL**: Same syntax, but index name length limited to 64 characters
 
-#### Recommended Solution**:
+#### Recommended Solution: Standard Index Syntax
 
 Skip index creation syntax handling for now.
 
@@ -1019,7 +1037,7 @@ CREATE UNIQUE INDEX idx_table_column ON table(column)
 **Files Affected**: Database manager  
 **Impact**: Concurrency issues, data inconsistency
 
-#### Problem Description**
+#### Problem Description: Transaction Isolation Levels
 
 Transaction isolation levels differ:
 
@@ -1027,7 +1045,7 @@ Transaction isolation levels differ:
 - **MySQL**: READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE
 - **PostgreSQL**: READ COMMITTED, REPEATABLE READ, SERIALIZABLE
 
-#### Recommended Solution**:
+#### Recommended Solution: Transaction Isolation Levels
 
 Skip transaction isolation level handling for now.
 
@@ -1049,9 +1067,10 @@ Use default transaction isolation levels provided by each RDBMS:
 
 **Severity**: High  
 **Files Affected**: Database initialization  
-**Impact**: Data integrity issues
+**Impact**: Data integrity issues  
+**Status**: **RESOLVED** - Shipped. `SQLite3Provider` takes a keyword-only `enableForeignKeys` constructor parameter (camelCase, like every provider parameter) and emits `PRAGMA foreign_keys = ON` on every connect. It defaults to `True` — foreign-key enforcement is ON unless a source explicitly opts out.
 
-#### Problem Description**
+#### Problem Description: Foreign Key Enforcement
 
 Foreign key enforcement differs:
 
@@ -1059,62 +1078,49 @@ Foreign key enforcement differs:
 - **MySQL**: Enabled by default
 - **PostgreSQL**: Enabled by default
 
-#### Recommended Solution**:
+#### Implemented Solution: Foreign Key Enforcement
 
-Add a parameter to all SQLite-based providers to enable foreign key constraints, off by default for backward compatibility.
+`SQLite3Provider` accepts `enableForeignKeys: bool = True` and applies the pragma at connect time:
 
 ```python
-# internal/database/providers/sqlite3.py
+# lib/db/providers/sqlite3.py (shipped signature)
 class SQLite3Provider(BaseSQLProvider):
-    def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
-        """Initialize SQLite3 provider.
-        
-        Args:
-            connection_string: Database connection string
-            enable_foreign_keys: Enable foreign key constraints (default: False for backward compatibility)
-        """
-        super().__init__(connection_string)
-        self.enableForeignKeys = enable_foreign_keys
-    
-    async def initialize(self) -> None:
-        """Initialize database connection and settings."""
-        await super().initialize()
-        
+    def __init__(
+        self,
+        dbPath: str,
+        *,
+        readOnly: bool = False,
+        useWal: bool = False,
+        timeout: int = 30,
+        enableForeignKeys: bool = True,
+        keepConnection: Optional[bool] = None,
+        vectorExtensionPath: Optional[str] = None,
+    ) -> None:
+        ...
+        # In connect():
         if self.enableForeignKeys:
-            await self.execute("PRAGMA foreign_keys = ON")
+            await connection.execute("PRAGMA foreign_keys = ON")
+```
 
-# internal/database/providers/sqlink.py
-class SqlinkProvider(BaseSQLProvider):
-    def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
-        """Initialize Sqlink provider.
-        
-        Args:
-            connection_string: Database connection string
-            enable_foreign_keys: Enable foreign key constraints (default: False for backward compatibility)
-        """
-        super().__init__(connection_string)
-        self.enableForeignKeys = enable_foreign_keys
-    
-    async def initialize(self) -> None:
-        """Initialize database connection and settings."""
-        await super().initialize()
-        
-        if self.enableForeignKeys:
-            await self.execute("PRAGMA foreign_keys = ON")
+`SQLinkProvider` has no `enableForeignKeys` parameter — FK pragmas are a SQLite concern; the remote SQLink server owns its own enforcement.
 
-# Usage in configuration
-# configs/00-defaults/providers.toml
-[[sources]]
-name = "source1"
-type = "sqlite3"
-connection_string = "file:./storage/source1.db"
-enable_foreign_keys = true  # Enable foreign keys for this source
+**Configuration** — the live `[database]` TOML dialect: each provider is declared as `[database.providers.<name>]` with a `parameters` sub-table whose entries are passed to the provider constructor as keyword arguments (see [`configs/00-defaults/00-config.toml`](../configs/00-defaults/00-config.toml)):
+
+```toml
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+# Optional: disable FK enforcement for this source only (default is true)
+# enableForeignKeys = false
 ```
 
 **Benefits**:
-- Backward compatible (disabled by default)
-- Explicit opt-in for foreign key enforcement
-- Consistent behavior across SQLite-based providers
+- On by default (data-integrity safe); per-source opt-out via `parameters.enableForeignKeys = false`
+- The pragma is re-applied on every connect, so the setting is consistent across connections
 - MySQL and PostgreSQL already have foreign keys enabled by default
 
 ---
@@ -1125,7 +1131,7 @@ enable_foreign_keys = true  # Enable foreign keys for this source
 **Files Affected**: All database providers
 **Impact**: Resource usage, performance, data integrity
 
-#### Problem Description
+#### Problem Description: Connection Management Strategy
 
 Different database providers have different optimal connection management strategies:
 
@@ -1134,7 +1140,7 @@ Different database providers have different optimal connection management strate
 - **PostgreSQL**: Connection pooling is built-in, but establishing connections has overhead
 - **SQLink**: Lightweight async client, can connect on demand
 
-#### Recommended Solution
+#### Recommended Solution: Connection Management Strategy
 
 Add a `keepConnection` parameter to all database providers to control when connections are established.
 
@@ -1152,7 +1158,7 @@ Add a `keepConnection` parameter to all database providers to control when conne
 **Implementation:**
 
 ```python
-# internal/database/providers/sqlite3.py
+# lib/db/providers/sqlite3.py
 class SQLite3Provider(BaseSQLProvider):
     def __init__(self, dbPath: str, keepConnection: Optional[bool] = None, ...):
         """Initialize SQLite3 provider.
@@ -1164,7 +1170,7 @@ class SQLite3Provider(BaseSQLProvider):
         # Special handling for in-memory databases to prevent data loss
         self.keepConnection: bool = dbPath == ":memory:" if keepConnection is None else keepConnection
 
-# internal/database/providers/sqlink.py
+# lib/db/providers/sqlink.py
 class SQLinkProvider(BaseSQLProvider):
     def __init__(self, dbPath: str, keepConnection: Optional[bool] = None, ...):
         """Initialize SQLink provider.
@@ -1175,7 +1181,7 @@ class SQLinkProvider(BaseSQLProvider):
         """
         self.keepConnection: bool = keepConnection if keepConnection is not None else False
 
-# internal/database/providers/mysql.py
+# lib/db/providers/mysql.py
 class MySQLProvider(BaseSQLProvider):
     def __init__(self, host: str, port: int, user: str, password: str, database: str,
                  keepConnection: Optional[bool] = None, ...):
@@ -1191,7 +1197,7 @@ class MySQLProvider(BaseSQLProvider):
         """
         self.keepConnection: bool = keepConnection if keepConnection is not None else False
 
-# internal/database/providers/postgresql.py
+# lib/db/providers/postgresql.py
 class PostgreSQLProvider(BaseSQLProvider):
     def __init__(self, host: str, port: int, user: str, password: str, database: str,
                  keepConnection: Optional[bool] = None, ...):
@@ -1244,17 +1250,17 @@ The migration system now relies on the provider's `keepConnection` parameter for
 
 ## Native Vector Search Portability
 
-**Status**: ✅ Implemented on `BaseSQLProvider` (default implementations raise `NotImplementedError`; providers with vector extensions override)
+**Status**: Implemented on `BaseSQLProvider` (default implementations raise `NotImplementedError`; providers with vector extensions override)
 
 Native vector similarity search is exposed through four hooks on
-[`BaseSQLProvider`](/internal/database/providers/base.py) plus a small type
+[`BaseSQLProvider`](/lib/db/providers/base.py) plus a small type
 surface. Providers that load a vector extension (e.g. sqlite-vec, pgvector)
 override these; providers without vector support inherit the default
 `NotImplementedError`-raising implementations.
 
 ### API Surface
 
-All of the following live in `internal/database/providers/base.py`:
+All of the following live in `lib/db/providers/base.py`:
 
 | Member | Kind | Notes |
 |--------|------|-------|
@@ -1287,7 +1293,7 @@ All of the following live in `internal/database/providers/base.py`:
 ### Usage Example
 
 ```python
-from internal.database.providers.base import VectorDistanceMetric
+from lib.db.providers.base import VectorDistanceMetric
 
 if not await sqlProvider.isVectorSearchSupported():
     raise RuntimeError("Provider does not support native vector search")
@@ -1337,17 +1343,17 @@ the higher-level design and the chat-embeddings consumer that drives this API.
    - Add `upsert()` method to each provider (sqlite3, sqlink, mysql, postgresql)
    - Add `applyPagination()` method to each provider
    - Add `getTextType()` method to each provider
-   - Add `enable_foreign_keys` parameter to SQLite-based providers
+   - Add `enableForeignKeys` parameter to SQLite-based providers (done — default `True`)
 
 2. **Create Utility Functions**
-   - Add `getCurrentTimestamp()` helper in [`internal/database/utils.py`](/internal/database/utils.py)
+   - Add `getCurrentTimestamp()` helper in [`lib/db/utils.py`](../lib/db/utils.py)
    - Review and update `convertToSQLite()` function for cross-RDBMS compatibility
 
 3. **Update Provider Implementations**
-   - Extend [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-   - Extend [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-   - Create [`internal/database/providers/mysql.py`](/internal/database/providers/mysql.py)
-   - Create [`internal/database/providers/postgresql.py`](/internal/database/providers/postgresql.py)
+  - Extend [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - Extend [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - Create [`lib/db/providers/mysql.py`](/lib/db/providers/mysql.py)
+  - Create [`lib/db/providers/postgresql.py`](/lib/db/providers/postgresql.py)
 
 ### Phase 2: Migration (Week 3-4)
 
@@ -1368,11 +1374,11 @@ the higher-level design and the chat-embeddings consumer that drives this API.
    - Update 12 affected files
    - Ensure timezone consistency
 
- 4. **Address String Comparisons** ✅ **DONE**
-    - ✅ Add case-insensitive comparison helpers (`getCaseInsensitiveComparison()`)
-    - ✅ Add case-insensitive LIKE helpers (`getLikeComparison()`)
-    - ℹ️ Implementation in base provider, MySQL, PostgreSQL, SQLite providers
-    - ℹ️ Used in divinations repository for layout name searches
+ 4. **Address String Comparisons** **DONE**
+    - Add case-insensitive comparison helpers (`getCaseInsensitiveComparison()`)
+    - Add case-insensitive LIKE helpers (`getLikeComparison()`)
+    - Implementation in base provider, MySQL, PostgreSQL, SQLite providers
+    - Used in divinations repository for layout name searches
 
 ### Phase 3: Schema Migration (Week 5-6)
 
@@ -1440,21 +1446,20 @@ The following items have been intentionally skipped for now:
 ### Code Changes
 
 - [ ] **Add utility functions**
-  - [ ] Add `getCurrentTimestamp()` in [`internal/database/utils.py`](/internal/database/utils.py)
+  - [ ] Add `getCurrentTimestamp()` in [`lib/db/utils.py`](../lib/db/utils.py)
   - [ ] Review and update `convertToSQLite()` for cross-RDBMS compatibility
 
 - [ ] **Update SQLite providers**
-  - [ ] Add `upsert()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `upsert()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
+  - [ ] Add `upsert()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `applyPagination()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `getTextType()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `enableForeignKeys` parameter to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py) (done — default `True`)
+  - [ ] Add `upsert()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - [ ] Add `applyPagination()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - [ ] Add `getTextType()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
 
 - [ ] **Implement MySQL provider**
-  - [ ] Create `internal/database/providers/mysql.py`
+  - [ ] Create `lib/db/providers/mysql.py`
   - [ ] Implement `upsert()` method
   - [ ] Implement `applyPagination()` method
   - [ ] Implement `getTextType()` method
@@ -1464,7 +1469,7 @@ The following items have been intentionally skipped for now:
   - [ ] Add MySQL-specific optimizations
 
 - [ ] **Implement PostgreSQL provider**
-  - [ ] Create `internal/database/providers/postgresql.py`
+  - [ ] Create `lib/db/providers/postgresql.py`
   - [ ] Implement `upsert()` method
   - [ ] Implement `applyPagination()` method
   - [ ] Implement `getTextType()` method
@@ -1539,15 +1544,18 @@ async def test_set_cache_storage(db_manager):
 @pytest.mark.asyncio
 async def test_cache_entry_ttl(db_manager):
     """Test cache entry with TTL."""
-    repo = CacheRepository(db_manager)
-    await repo.setCacheEntry("key1", "data1", CacheType.WEATHER)
-    
+    from lib.cache import GenericDatabaseCache
+    from internal.database.models import CacheType
+
+    cache = GenericDatabaseCache(db_manager, namespace=CacheType.WEATHER)
+    await cache.set("key1", "data1")
+
     # Should return entry
-    entry = await repo.getCacheEntry("key1", CacheType.WEATHER, ttl=3600)
+    entry = await cache.get("key1", ttl=3600)
     assert entry is not None
-    
+
     # Should not return entry (TTL expired)
-    entry = await repo.getCacheEntry("key1", CacheType.WEATHER, ttl=-1)
+    entry = await cache.get("key1", ttl=-1)
     assert entry is None
 ```
 
@@ -1556,8 +1564,8 @@ async def test_cache_entry_ttl(db_manager):
 ```python
 # tests/database/providers/test_sqlite3_provider.py
 # NOTE: asyncio_mode = "auto" in pyproject.toml — no @pytest.mark.asyncio needed.
-from internal.database.providers.base import BaseSQLProvider, ExcludedValue
-from internal.database.providers.sqlite3 import SQLite3Provider
+from lib.db.providers.base import BaseSQLProvider, ExcludedValue
+from lib.db.providers.sqlite3 import SQLite3Provider
 
 
 async def test_execute_upsert(testDatabase):
@@ -1592,7 +1600,7 @@ async def test_case_insensitive_comparison(testDatabase):
 ```
 
 **Note on `getCurrentTimestamp()`**: it is a **module-level function** in
-[`internal/database/utils.py`](/internal/database/utils.py), not a method on
+[`lib/db/utils.py`](../lib/db/utils.py), not a method on
 the provider, and returns a `datetime.datetime` (UTC) — not a SQL expression.
 Use it to populate bind parameters, never to inline into a query string:
 
@@ -1617,7 +1625,7 @@ await sqlProvider.execute(
 ```python
 # tests/database/integration/test_multi_source_routing.py
 import pytest
-from internal.database.manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 @pytest.mark.asyncio
 async def test_chat_routing(db_manager):
@@ -1659,25 +1667,28 @@ async def test_aggregation_across_sources(db_manager):
 # tests/database/performance/benchmark_queries.py
 import pytest
 import time
-from internal.database.manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 @pytest.mark.asyncio
 async def test_cache_performance(db_manager):
     """Test cache query performance."""
-    repo = CacheRepository(db_manager)
-    
+    from lib.cache import GenericDatabaseCache
+    from internal.database.models import CacheType
+
+    cache = GenericDatabaseCache(db_manager, namespace=CacheType.WEATHER)
+
     # Insert 1000 cache entries
     start = time.time()
     for i in range(1000):
-        await repo.setCacheEntry(f"key{i}", f"data{i}", CacheType.WEATHER)
+        await cache.set(f"key{i}", f"data{i}")
     insert_time = time.time() - start
-    
+
     # Query 1000 cache entries
     start = time.time()
     for i in range(1000):
-        await repo.getCacheEntry(f"key{i}", CacheType.WEATHER)
+        await cache.get(f"key{i}")
     query_time = time.time() - start
-    
+
     print(f"Insert: {insert_time:.3f}s, Query: {query_time:.3f}s")
     assert insert_time < 10.0  # Should complete in under 10 seconds
     assert query_time < 5.0    # Should complete in under 5 seconds
@@ -1689,7 +1700,7 @@ async def test_cache_performance(db_manager):
 
 ### 1. Use Named Parameters
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 await sqlProvider.execute(
     "SELECT * FROM users WHERE id = ? AND name = ?",
@@ -1697,7 +1708,7 @@ await sqlProvider.execute(
 )
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 await sqlProvider.execute(
     "SELECT * FROM users WHERE id = :userId AND name = :userName",
@@ -1707,7 +1718,7 @@ await sqlProvider.execute(
 
 ### 2. Avoid RDBMS-Specific Functions
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # SQLite-specific
 "SELECT datetime('now') as current_time"
@@ -1719,10 +1730,10 @@ await sqlProvider.execute(
 "SELECT CURRENT_TIMESTAMP as current_time"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use helper function for consistent timestamps
-from internal.database.utils import getCurrentTimestamp
+from lib.db.utils import getCurrentTimestamp
 
 current_time = getCurrentTimestamp()
 await sqlProvider.execute(
@@ -1733,7 +1744,7 @@ await sqlProvider.execute(
 
 ### 3. Use Provider-Specific Methods for Complex Operations
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Direct upsert with RDBMS-specific syntax
 await sqlProvider.execute(
@@ -1745,10 +1756,10 @@ await sqlProvider.execute(
 )
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use provider-specific upsert method. Kwargs are camelCase.
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 await sqlProvider.upsert(
     table="users",
@@ -1775,13 +1786,13 @@ await sqlProvider.upsert(
 
 ### 4. Handle Timezones Consistently
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Rely on database timezone settings
 "SELECT CURRENT_TIMESTAMP"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use explicit UTC timestamps
 current_time = datetime.datetime.now(datetime.UTC)
@@ -1793,13 +1804,13 @@ await sqlProvider.execute(
 
 ### 5. Use Portable SQL Types
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # RDBMS-specific types
 "TINYINT", "MEDIUMTEXT", "JSONB"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Portable types
 "INTEGER", "TEXT"
@@ -1812,13 +1823,13 @@ text_type = sqlProvider.getTextType(max_length=100000)
 
 ### 6. Avoid Implicit Type Conversions
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Implicit boolean conversion
 "SELECT * FROM users WHERE is_active = 1"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Explicit type conversion
 is_active = 1 if user_is_active else 0
@@ -1830,13 +1841,13 @@ await sqlProvider.execute(
 
 ### 7. Use Explicit Column Lists
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Implicit column list
 "INSERT INTO users VALUES (:id, :name, :email)"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Explicit column list
 "INSERT INTO users (id, name, email) VALUES (:id, :name, :email)"
@@ -1844,13 +1855,13 @@ await sqlProvider.execute(
 
 ### 8. Limit String Lengths
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Unlimited string length
 username = user_input  # Could be very long
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Explicit length limits
 username = user_input[:255]  # Limit to 255 characters
@@ -1858,7 +1869,7 @@ username = user_input[:255]  # Limit to 255 characters
 
 ### 9. Use Transactions for Multi-Step Operations
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Multiple operations without transaction
 await sqlProvider.execute("INSERT INTO orders ...")
@@ -1866,7 +1877,7 @@ await sqlProvider.execute("UPDATE inventory ...")
 await sqlProvider.execute("UPDATE users ...")
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use transaction
 async with sqlProvider:
@@ -1877,13 +1888,13 @@ async with sqlProvider:
 
 ### 10. Test with SQLite
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Skip testing entirely
 # No tests written
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Test with SQLite to ensure code portability
 @pytest.mark.asyncio
@@ -1925,4 +1936,4 @@ For questions or clarifications regarding this portability guide, please contact
 **Document Version**: 1.1  
 **Last Updated**: 2026-07-11  
 **Author**: Database Team  
-**Status**: Audited — provider API claims re-verified against `internal/database/providers/base.py`; vector search section added; upsert examples corrected to actual camelCase signature.
+**Status**: Audited — provider API claims re-verified against `lib/db/providers/base.py`; vector search section added; upsert examples corrected to actual camelCase signature.

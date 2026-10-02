@@ -106,7 +106,7 @@ def ycOpenaiModel(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mock) -> 
         provider=ycOpenaiProvider,
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
@@ -247,7 +247,7 @@ def testAddYcOpenaiModel(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mo
         name="yandexgpt",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": False},
@@ -257,7 +257,7 @@ def testAddYcOpenaiModel(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mo
     assert isinstance(model, YcOpenaiModel)
     assert "yandexgpt" in ycOpenaiProvider.models
     assert model.modelId == "yandexgpt"
-    assert model.temperature == 0.6
+    assert model._customParams["temperature"] == 0.6
     assert model.contextSize == 8192
     assert model._folderId == "b1g2abc3def4ghi5jklm"
 
@@ -281,7 +281,7 @@ def testAddMultipleYcOpenaiModels(ycOpenaiProvider: YcOpenaiProvider, mockAsyncO
         name="yandexgpt",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
     )
@@ -290,7 +290,7 @@ def testAddMultipleYcOpenaiModels(ycOpenaiProvider: YcOpenaiProvider, mockAsyncO
         name="yandexgpt-lite",
         modelId="yandexgpt-lite",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
     )
@@ -322,7 +322,7 @@ def testAddYcOpenaiModelWithoutClient() -> None:
             "test",
             modelId="model",
             modelVersion="1.0",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=4096,
             statsStorage=NullStatsStorage(),
         )
@@ -347,7 +347,7 @@ def testCreateModelInstance(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI:
         name="test-model",
         modelId="yandexgpt",
         modelVersion="rc",
-        temperature=0.8,
+        customParams={"temperature": 0.8},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": False},
@@ -381,7 +381,7 @@ def testYcOpenaiModelInitialization(ycOpenaiProvider: YcOpenaiProvider, mockAsyn
         provider=ycOpenaiProvider,
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
@@ -392,7 +392,7 @@ def testYcOpenaiModelInitialization(ycOpenaiProvider: YcOpenaiProvider, mockAsyn
     assert model.provider == ycOpenaiProvider
     assert model.modelId == "yandexgpt"
     assert model.modelVersion == "latest"
-    assert model.temperature == 0.6
+    assert model._customParams["temperature"] == 0.6
     assert model.contextSize == 8192
     assert model._client == mockAsyncOpenAI
     assert model._folderId == "b1g2abc3def4ghi5jklm"
@@ -432,7 +432,7 @@ def testYcOpenaiModelGetModelIdFormat() -> None:
             provider=provider,
             modelId="test-model",
             modelVersion="v1",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=4096,
             statsStorage=NullStatsStorage(),
             openAiClient=Mock(spec=AsyncOpenAI),
@@ -463,7 +463,7 @@ def testYcOpenaiModelGetModelIdWithoutFolderId() -> None:
             provider=provider,
             modelId="yandexgpt",
             modelVersion="latest",
-            temperature=0.6,
+            customParams={"temperature": 0.6},
             contextSize=8192,
             statsStorage=NullStatsStorage(),
             openAiClient=Mock(spec=AsyncOpenAI),
@@ -671,7 +671,7 @@ async def testYcOpenaiGenerateTextWithDifferentVersions(
         name="yandexgpt-latest",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
     )
@@ -681,7 +681,7 @@ async def testYcOpenaiGenerateTextWithDifferentVersions(
         name="yandexgpt-rc",
         modelId="yandexgpt",
         modelVersion="rc",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
     )
@@ -827,7 +827,7 @@ async def testYcOpenaiFullWorkflow(ycOpenaiProvider: YcOpenaiProvider, mockAsync
         name="test-model",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
     )
@@ -887,7 +887,7 @@ def testYcOpenaiProviderModelManagement(ycOpenaiProvider: YcOpenaiProvider, mock
         "yandexgpt",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.6,
+        customParams={"temperature": 0.6},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
     )
@@ -895,7 +895,7 @@ def testYcOpenaiProviderModelManagement(ycOpenaiProvider: YcOpenaiProvider, mock
         "yandexgpt-lite",
         modelId="yandexgpt-lite",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
     )
@@ -915,7 +915,7 @@ def testYcOpenaiProviderModelManagement(ycOpenaiProvider: YcOpenaiProvider, mock
     info = ycOpenaiProvider.getModelInfo("yandexgpt")
     assert info is not None
     assert info["model_id"] == "yandexgpt"
-    assert info["temperature"] == 0.6
+    assert info["customParams"]["temperature"] == 0.6
     assert info["context_size"] == 8192
 
     # Test deleteModel
@@ -980,7 +980,7 @@ def testYcOpenaiModelWithCustomExtraConfig(ycOpenaiProvider: YcOpenaiProvider, m
         name="custom-model",
         modelId="yandexgpt",
         modelVersion="latest",
-        temperature=0.8,
+        customParams={"temperature": 0.8},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         extraConfig=extraConfig,
@@ -1133,7 +1133,7 @@ def testYcOpenaiModelIdWithDifferentFolderIds() -> None:
                 provider=provider,
                 modelId="yandexgpt",
                 modelVersion="latest",
-                temperature=0.6,
+                customParams={"temperature": 0.6},
                 contextSize=8192,
                 statsStorage=NullStatsStorage(),
                 openAiClient=Mock(spec=AsyncOpenAI),
@@ -1270,7 +1270,7 @@ def testGetImageModelIdNoFolder() -> None:
             provider=provider,
             modelId="yandexgpt",
             modelVersion="latest",
-            temperature=0.6,
+            customParams={"temperature": 0.6},
             contextSize=8192,
             statsStorage=NullStatsStorage(),
             openAiClient=Mock(spec=AsyncOpenAI),

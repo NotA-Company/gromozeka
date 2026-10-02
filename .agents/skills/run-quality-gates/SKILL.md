@@ -129,3 +129,4 @@ If anything fails, fix it or explain why it's pre-existing and unrelated to your
 - Running the bot itself (`./run.sh` or `./venv/bin/python3 main.py --config-dir configs/...`) — that's a separate concern; quality gates come first.
 - `make coverage` — useful but not mandatory; run when you specifically need a coverage report.
 - `git commit` — commit hooks, if any, are downstream of these gates.
+- Docs-tree structural linting — `doc_lint()` (when the markdown-mcp MCP tools are available) or CLI `markdown-mcp lint` is a separate gate from `make lint`, which covers Python only; the docs lint checks markdown structure (duplicate slugs, front matter), not code.

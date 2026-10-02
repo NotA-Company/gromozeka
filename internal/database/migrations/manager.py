@@ -13,7 +13,7 @@ Usage Example:
     .. code-block:: python
 
         from internal.database.migrations.manager import MigrationManager
-        from internal.database.providers import PostgreSQLProvider
+        from lib.db.providers import PostgreSQLProvider
 
         # Create migration manager
         manager = MigrationManager()
@@ -34,9 +34,10 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Type
 
-from ..providers import BaseSQLProvider
-from ..providers.base import ExcludedValue
-from ..utils import getCurrentTimestamp
+from lib.db import utils as dbUtils
+from lib.db.providers import BaseSQLProvider
+from lib.db.providers.base import ExcludedValue
+
 from .base import BaseMigration
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ class MigrationManager:
         Raises:
             Exception: If the database operation fails.
         """
-        currentTimestamp: datetime = getCurrentTimestamp()
+        currentTimestamp: datetime = dbUtils.getCurrentTimestamp()
         await sqlProvider.upsert(
             table=SETTINGS_TABLE,
             values={
@@ -208,7 +209,9 @@ class MigrationManager:
             Exception: If the database operation fails.
         """
         await self.setSetting(MIGRATION_VERSION_KEY, str(version), sqlProvider=sqlProvider)
-        await self.setSetting(MIGRATION_LAST_RUN_KEY, getCurrentTimestamp().isoformat(), sqlProvider=sqlProvider)
+        await self.setSetting(
+            MIGRATION_LAST_RUN_KEY, dbUtils.getCurrentTimestamp().isoformat(), sqlProvider=sqlProvider
+        )
         logger.info(f"Updated migration in {sqlProvider} version to {version}")
 
     def getAvailableMigrations(self) -> List[Type[BaseMigration]]:
@@ -288,9 +291,9 @@ class MigrationManager:
             logger.info(f"Applying migration {migration.version}: {migration.description}")
 
             try:
-                startTime: datetime = getCurrentTimestamp()
+                startTime: datetime = dbUtils.getCurrentTimestamp()
                 await migration.up(sqlProvider)
-                duration: float = (getCurrentTimestamp() - startTime).total_seconds()
+                duration: float = (dbUtils.getCurrentTimestamp() - startTime).total_seconds()
 
                 await self._setVersion(migration.version, sqlProvider=sqlProvider)
                 logger.info(f"Migration {migration.version} completed in {duration:.2f}s")
@@ -309,30 +312,68 @@ class MigrationManager:
         version is updated after each successful rollback. If a rollback fails,
         the process stops and raises an exception.
 
+        The number of steps is resolved against the current version, so this is
+        equivalent to ``rollbackTo(currentVersion - steps)``. Prefer
+        :meth:`rollbackTo` in callers (especially tests) that need a stable
+        target version independent of how many migrations exist above it.
+
         Args:
-            steps: Number of migrations to rollback. Defaults to 1.
+            steps: Number of migrations to rollback. Must be >= 0. Defaults to 1.
             sqlProvider: SQL provider instance for database operations.
 
         Raises:
-            MigrationError: If rollback fails.
+            MigrationError: If ``steps`` is negative or a rollback fails.
             Exception: If database operations fail during rollback execution.
         """
+        if steps < 0:
+            raise MigrationError(f"Cannot roll back a negative number of steps: {steps}")
+
+        currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
+        targetVersion: int = max(0, currentVersion - steps)
+        await self.rollbackTo(targetVersion, sqlProvider=sqlProvider)
+
+    async def rollbackTo(self, targetVersion: int, *, sqlProvider: BaseSQLProvider) -> None:
+        """Rollback migrations down to a specific target version.
+
+        Rolls back every registered migration whose version is greater than
+        ``targetVersion`` (and at most the current version), in reverse order.
+        After this returns the database is at ``targetVersion``. If the current
+        version is already at or below ``targetVersion`` this is a no-op.
+
+        Unlike :meth:`rollback` (which counts steps from the current version
+        and therefore drifts whenever a new migration is added on top), this
+        method targets a fixed version number, so callers that need a stable
+        pre-N baseline are insulated from unrelated migrations being added
+        above ``N``.
+
+        Args:
+            targetVersion: Version to roll back to. Must be >= 0.
+            sqlProvider: SQL provider instance for database operations.
+
+        Raises:
+            MigrationError: If ``targetVersion`` is negative or a rollback fails.
+            Exception: If database operations fail during rollback execution.
+        """
+        if targetVersion < 0:
+            raise MigrationError(f"Target version {targetVersion} is negative")
+
         currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
 
-        if currentVersion == 0:
-            logger.info("No migrations to rollback")
+        if targetVersion >= currentVersion:
+            logger.info(f"Already at or below target version {targetVersion}; nothing to roll back")
             return
 
-        # Get migrations to rollback
+        # Get migrations to rollback: those strictly above the target and at or
+        # below the current version, in reverse (descending) order.
         migrationsToRollback: List[Type[BaseMigration]] = [
-            m for m in reversed(self.migrations) if m.version <= currentVersion
-        ][:steps]
+            m for m in reversed(self.migrations) if targetVersion < m.version <= currentVersion
+        ]
 
         if not migrationsToRollback:
             logger.info("No migrations to rollback")
             return
 
-        logger.info(f"Rolling back {len(migrationsToRollback)} migrations")
+        logger.info(f"Rolling back {len(migrationsToRollback)} migrations to reach version {targetVersion}")
 
         # Rollback each migration
         for migrationClass in migrationsToRollback:
@@ -340,9 +381,9 @@ class MigrationManager:
             logger.info(f"Rolling back migration {migration.version}: {migration.description}")
 
             try:
-                startTime: datetime = getCurrentTimestamp()
+                startTime: datetime = dbUtils.getCurrentTimestamp()
                 await migration.down(sqlProvider)
-                duration: float = (getCurrentTimestamp() - startTime).total_seconds()
+                duration: float = (dbUtils.getCurrentTimestamp() - startTime).total_seconds()
 
                 # Set version to previous migration
                 newVersion: int = migration.version - 1

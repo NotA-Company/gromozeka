@@ -79,11 +79,35 @@ type = "SlidingWindow"
 windowSeconds = 1
 maxRequests = 1
 
+[ratelimiter.ratelimiters.stt-chat]
+type = "SlidingWindow"
+
+[ratelimiter.ratelimiters.stt-chat.config]
+windowSeconds = 60
+maxRequests = 3
+
+[ratelimiter.ratelimiters.stt-global]
+type = "SlidingWindow"
+
+[ratelimiter.ratelimiters.stt-global.config]
+windowSeconds = 60
+maxRequests = 10
+
+[ratelimiter.ratelimiters.stats-pages]
+type = "SlidingWindow"
+
+[ratelimiter.ratelimiters.stats-pages.config]
+windowSeconds = 600
+maxRequests = 3
+
 [ratelimiter.queues]
 yandex-search = "default"
 openweathermap = "default"
 geocode-maps = "one-per-second"
 chat-default = "default"
+stt-chat = "stt-chat"
+stt-global = "stt-global"
+stats-pages = "stats-pages"
 
 [models.json-logging]
 # Log LLM request:responce into JSON format for debugging purposes

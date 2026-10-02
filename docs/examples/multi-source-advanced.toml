@@ -57,6 +57,7 @@ password = "archive_reader_password"
 database = "archive_2024"
 timeout = 10
 keepConnection = true  # Connect immediately (good for readonly replicas)
+use-proxy = true  # Opt in — without this the proxy table is ignored (fromDict(useProxy=False) forces ProxyType.NONE)
 
 [database.providers.archive_2024.parameters.proxy]
 enabled = true

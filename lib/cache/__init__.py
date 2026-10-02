@@ -34,6 +34,7 @@ from .interface import CacheInterface
 # Export key generators
 from .key_generator import HashKeyGenerator, JsonKeyGenerator, StringKeyGenerator
 from .null_cache import NullCache
+from .sql_cache import GenericDatabaseCache
 
 # Export core types and interfaces
 from .types import K, KeyGenerator, T, V, ValueConverter
@@ -54,6 +55,7 @@ __all__ = [
     # Implementations
     "DictCache",
     "NullCache",
+    "GenericDatabaseCache",
     # Key generators
     "StringKeyGenerator",
     "HashKeyGenerator",

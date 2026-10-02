@@ -24,6 +24,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -43,14 +44,31 @@ if _REPO_ROOT not in sys.path:
 # Silence noisy libraries before importing project code.
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 logging.getLogger("openai._base_client").setLevel(logging.ERROR)
 
+import httpx2  # noqa: E402
+
+# Process-wide: make `import httpx` resolve to `httpx2` so third-party clients
+# used by project code (sqlink's transport via lib.db.providers, the openai SDK
+# via lib.ai providers) share the bot's httpx2 stack. MUST run before the
+# first project import below: internal.* / lib.* modules transitively perform
+# a real `import httpx`, after which scripts._lib.bootstrap's module-level
+# alias_httpx() would raise RuntimeError. The call is idempotent, so
+# bootstrap's later repeat invocation is a no-op. House pattern: main.py:16-37;
+# background: docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
+
 from internal.config.manager import ConfigManager  # noqa: E402
 from lib.ai import AbstractModel, LLMManager, ModelMessage, ModelResultStatus  # noqa: E402
+from lib.ai.session import buildSessionId, hashSessionIdComponent  # noqa: E402
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Per-run session bucket for opencode-go prompt-cache affinity (see lib/ai/session.py).
+_SESSION_TS = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 # ---------------------------------------------------------------------------
 # ANSI colour helpers (used only when stdout is a TTY)
@@ -266,6 +284,7 @@ async def runQueryWithResult(
     model: AbstractModel,
     modelName: str,
     messages: List[ModelMessage],
+    sessionId: str,
 ) -> tuple[ModelResultStatus, str]:
     """Run the LLM query and print results.
 
@@ -273,6 +292,7 @@ async def runQueryWithResult(
         model: The AbstractModel instance to query.
         modelName: The name of the model (for display).
         messages: List of ModelMessage objects to send.
+        sessionId: Session id for opencode-go prompt-cache affinity.
 
     Returns:
         Tuple of (status, resultText).
@@ -292,7 +312,7 @@ async def runQueryWithResult(
 
     # Run the query
     startTime = time.time()
-    result: ModelRunResult = await model.generateText(messages)
+    result: ModelRunResult = await model.generateText(messages, sessionId=sessionId)
     elapsedTime = time.time() - startTime
 
     # Store resultText before potentially printing
@@ -401,6 +421,12 @@ async def main() -> int:
         dotEnvFile=args.dotenv_file,
     )
 
+    # Initialise the global ProxyHelper singleton before constructing
+    # LLMManager: each BasicOpenAIProvider._initClient() resolves proxy via
+    # ProxyConfig.getCombined() and raises TypeError if the singleton has
+    # not been initialised. See scripts/_lib/bootstrap.py for the rationale.
+    bootstrapProxy(configManager)
+
     # Initialize LLM manager
     llmManager = LLMManager(configManager.getModelsConfig())
 
@@ -441,7 +467,11 @@ async def main() -> int:
 
     # Run the query
     try:
-        status, newResponse = await runQueryWithResult(model, modelName, messages)
+        # Per-input session bucket: hashed input-file basename keeps the id reproducible within a run.
+        sessionId = buildSessionId(
+            "script", "debug-query", hashSessionIdComponent(Path(args.inputFile).name), _SESSION_TS
+        )
+        status, newResponse = await runQueryWithResult(model, modelName, messages, sessionId)
     except Exception as e:
         print(f"Error running query: {_col(str(e), _ANSI_RED)}", file=sys.stderr)
         logger.exception("Query failed")

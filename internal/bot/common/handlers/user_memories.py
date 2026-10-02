@@ -54,7 +54,6 @@ from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MemoryType, MessageCategory, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoryDict
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
@@ -66,6 +65,8 @@ from lib.ai import (
     ModelMessage,
 )
 from lib.ai.models import ModelRunResult
+from lib.ai.session import buildSessionId
+from lib.db.utils import DEFAULT_THREAD_ID
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -749,7 +750,7 @@ class UserMemoriesHandler(BaseBotHandler):
     #   message cursor (no summary) to
     #   chat_users.metadata.memoryRefinement[threadId]. The embedding-regen
     #   cron (_runMemoryEmbeddingRegen, outside _refineLock) re-embeds stale
-    #   memories whose embedding_model / dimensions drifted.
+    #   memories whose ``model_id`` drifted.
 
     async def _runMemoryEmbeddingRegen(self) -> None:
         """Process one batch of memory-embedding regeneration per CRON tick.
@@ -757,9 +758,9 @@ class UserMemoriesHandler(BaseBotHandler):
         Mirrors ``ChatSearchHandler._dtCronJob``
         (``chat_search.py:284-445``) one-to-one, adapted for the
         ``user_memories`` store. Because there is no BLOB table, model /
-        dimension tracking lives on ``user_memories`` itself
-        (``embedding_model`` / ``embedding_dimensions``), so stale detection
-        is a single-table query (no vec0 JOIN). Per tick:
+        dimension tracking lives on ``user_memories.model_id`` (the
+        ``models`` lookup-table FK), so stale detection is a single-table
+        query (no vec0 JOIN). Per tick:
 
         1. **Chat discovery (in-memory)**: round-robin over
            ``self._trackedChats``, a ``MutableSet[int]`` populated by
@@ -860,7 +861,7 @@ class UserMemoriesHandler(BaseBotHandler):
         # exception yields 0, indistinguishable from "no stale rows". The
         # tracker is therefore advanced unconditionally after the call so
         # cleanup does not re-fire every tick for the same model. A silent
-        # cleanup failure leaves stale rows with their old ``embedding_model``,
+        # cleanup failure leaves stale rows with their old ``model_id``,
         # which ``getMemoriesWithoutEmbeddings`` still surfaces for
         # re-embedding below — so the embed path self-heals even when the
         # vec0 cleanup did not (the only residual is orphaned old-dim vec0
@@ -880,7 +881,7 @@ class UserMemoriesHandler(BaseBotHandler):
 
         # 6. Stale detection. ``modelName`` and ``dimensions`` are forwarded
         # so rows embedded under a different model or dimensionality (e.g.
-        # after a model swap) are re-surfaced. A NULL ``embedding_model``
+        # after a model swap) are re-surfaced. A NULL ``model_id``
         # (never-embedded memory) surfaces here too, so this same query
         # serves the initial backfill.
         staleMemories: List[UserMemoryDict] = []
@@ -1298,7 +1299,11 @@ class UserMemoriesHandler(BaseBotHandler):
                     ModelMessage(role="system", content=systemPrompt),
                     ModelMessage(role="user", content=userPrompt),
                 ],
-                chatId=None,  # skip rate-limiting for the background call
+                # Skip the per-chat hot-path rate budget for the background
+                # call, but keep the real chatId so llm_request stats (and the
+                # condensing requests inside) stay attributed to this chat.
+                chatId=chatId,
+                doRateLimit=False,
                 chatSettings=chatSettings,
                 callback=intermediateCallback,
                 modelKey=ChatSettingsKey.MEMORY_REFINE_MODEL,
@@ -1315,6 +1320,12 @@ class UserMemoriesHandler(BaseBotHandler):
                     "typingManager": None,
                     "isRefinement": True,
                 },
+                # D4: the per-user memory store is a slowly evolving context —
+                # consecutive refinement runs for the same (chat, user, thread)
+                # share most of the prompt prefix, and the multi-round tool loop
+                # inherits the session automatically (opencode-go
+                # x-opencode-session prompt-cache affinity).
+                sessionId=buildSessionId("memory", str(chatId), str(userId), str(threadId)),
             )
 
             logger.debug(f"Result of refining memory for {chatId}:{userId}, thread:{threadId}: {result}")

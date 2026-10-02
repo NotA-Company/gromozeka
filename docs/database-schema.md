@@ -1,3 +1,6 @@
+---
+category: reference
+---
 
 # Database Schema Documentation
 
@@ -15,8 +18,6 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [chat_topics](#chat_topics)
   - [chat_settings](#chat_settings)
 - [Statistics Tables](#statistics-tables)
-  - [chat_stats](#chat_stats)
-  - [chat_user_stats](#chat_user_stats)
 - [Media Tables](#media-tables)
   - [media_attachments](#media_attachments)
 - [Spam Detection Tables](#spam-detection-tables)
@@ -33,8 +34,8 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
 - [Divination Tables](#divination-tables)
   - [divinations](#divinations)
   - [divination_layouts](#divination_layouts)
-- [Webhook Tables](#webhook-tables)
-  - [webhook_updates](#webhook_updates)
+- [Embedding Lookup Tables](#embedding-lookup-tables)
+  - [models](#models)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -58,7 +59,7 @@ The database stores chat messages, user information, settings, media attachments
 
 ## Multi-Source Architecture
 
-### Overview
+### Multi-Source Overview
 
 The database supports routing different chats to different SQLite database files. This enables:
 
@@ -69,49 +70,11 @@ The database supports routing different chats to different SQLite database files
 
 ### Configuration
 
-Multi-source configuration is defined in the bot's config file:
-
-```toml
-[database]
-default = "default"  # Default provider name
-
-[database.providers.default]
-provider = "sqlite3"
-
-[database.providers.default.parameters]
-dbPath = "data/bot.db"
-readOnly = false
-timeout = 30
-useWal = true
-
-[database.providers.archive]
-provider = "sqlite3"
-
-[database.providers.archive.parameters]
-dbPath = "data/archive.db"
-readOnly = true
-timeout = 10
-```
+Multi-source configuration lives in the `[database]` TOML section: each provider is declared as `[database.providers.<name>]` with a `provider` type and a `[database.providers.<name>.parameters]` sub-table of constructor kwargs, `[database] default` names the fallback source, and `[database.chatMapping]` pins individual chats to named sources. The full parameter reference and worked configuration examples are owned by the [Multi-Source Database Configuration Guide](database-multi-source.md#configuration-structure).
 
 ### Routing Logic
 
-The database implements 3-tier routing through the repository pattern:
-
-1. **Tier 1 (Highest Priority)**: Explicit `dataSource` parameter
-2. **Tier 2 (Medium Priority)**: Chat ID mapping lookup
-3. **Tier 3 (Lowest Priority)**: Default source fallback
-
-Example:
-```python
-# Explicit source routing (Tier 1)
-db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
-
-# Chat mapping routing (Tier 2)
-db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to "archive" via mapping
-
-# Default routing (Tier 3)
-db.chatMessages.getChatMessages(chatId=456)  # Routes to "default" source
-```
+Routing is a 3-tier chain: an explicit `dataSource` parameter wins (Tier 1), then the chat-mapping lookup (Tier 2), then the default source (Tier 3). The operator narrative and examples are owned by the [Multi-Source Database Configuration Guide](database-multi-source.md#routing-priority); the agent-facing `dataSource` convention (MUST-level rule for repository methods) lives in [the agent guide §3](llm/database.md#3-multi-source-database-routing).
 
 ### Read-Only Sources
 
@@ -124,7 +87,7 @@ Sources marked as `readonly = true` will:
 
 ## Migration System
 
-### Overview
+### Migration Manager Overview
 
 The migration system ([`MigrationManager`](../internal/database/migrations/manager.py:25)) provides version-controlled database schema changes with:
 
@@ -137,6 +100,8 @@ The migration system ([`MigrationManager`](../internal/database/migrations/manag
 ### Migration Files
 
 Migrations are located in [`internal/database/migrations/versions/`](../internal/database/migrations/versions/):
+
+#### Foundational Schema (Migrations 1-13)
 
 | Version | File | Description |
 |---------|------|-------------|
@@ -153,53 +118,50 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
 | 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
 | 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
+
+#### Feature Tables (Migrations 14-18)
+
+| Version | File | Description |
+|---------|------|-------------|
 | 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
 | 15 | [`migration_015_add_divination_layouts_table.py`](../internal/database/migrations/versions/migration_015_add_divination_layouts_table.py:1) | Creates [`divination_layouts`](#divination_layouts) table and `idx_divination_layouts_system` index |
 | 16 | [`migration_016_add_stat_tables.py`](../internal/database/migrations/versions/migration_016_add_stat_tables.py:1) | Creates [`stat_events`](#stat_events) and [`stat_aggregates`](#stat_aggregates) tables |
 | 17 | [`migration_017_message_embeddings.py`](../internal/database/migrations/versions/migration_017_message_embeddings.py:1) | Creates [`message_embeddings`](#message_embeddings) table for semantic search |
 | 18 | [`migration_018_message_embeddings_index.py`](../internal/database/migrations/versions/migration_018_message_embeddings_index.py:1) | Adds secondary index on `message_embeddings` (chat_id, model) |
-| 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates [`webhook_updates`](#webhook_updates) table for Max webhook ingestion |
+
+#### User Memory and Webhook (Migrations 19-22)
+
+| Version | File | Description |
+|---------|------|-------------|
+| 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates `webhook_updates` table for Max webhook ingestion; `up()` delegates its DDL to the lib-owned schema (`getForwardDDL()`). Table + index subsequently DROPPED from the bot's database by migration_029 — moved to the webhook receiver's own database (ADR-025) |
 | 20 | [`migration_020_user_memories.py`](../internal/database/migrations/versions/migration_020_user_memories.py:1) | Creates [`user_memories`](#user_memories) table (unified per-user memory store) with backfills from `user_data` + rolling-bio |
 | 21 | [`migration_021_user_memories_soft_delete.py`](../internal/database/migrations/versions/migration_021_user_memories_soft_delete.py:1) | Adds nullable `deleted_at` to [`user_memories`](#user_memories) for soft-delete semantics (`down()` is a no-op — portable `DROP COLUMN` unavailable) |
 | 22 | [`migration_022_drop_user_data.py`](../internal/database/migrations/versions/migration_022_drop_user_data.py:1) | DROP TABLE `user_data` (superseded by `user_memories`; backfilled in migration_020). No-op downgrade is intentional — re-creating the table would orphan the backfilled rows |
+
+#### Settings, Bayes Index, and Model Lookup (Migrations 23-25)
+
+| Version | File | Description |
+|---------|------|-------------|
 | 23 | [`migration_023_rename_memory_injection_enabled_to_memory_enabled.py`](../internal/database/migrations/versions/migration_023_rename_memory_injection_enabled_to_memory_enabled.py:1) | Idempotent data migration: `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'` (companion to the `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` enum rename) |
 | 24 | [`migration_024_add_bayes_tokens_updated_at_index.py`](../internal/database/migrations/versions/migration_024_add_bayes_tokens_updated_at_index.py:1) | Adds secondary index on `bayes_tokens` (`updated_at`) to optimize the age-based `cleanupOldTokens` DELETE |
+| 25 | [`migration_025_embedding_model_lookup.py`](../internal/database/migrations/versions/migration_025_embedding_model_lookup.py:1) | Normalises embedding provenance into a new [`models`](#models) lookup table (`model_id` integer PK, `UNIQUE(model, dimensions)`); swaps `chat_messages` and `user_memories` to carry `model_id` instead of the legacy `(model, dimensions)` / `(embedding_model, embedding_dimensions)` pairs; DROPS the [`message_embeddings`](#message_embeddings-dropped) BLOB side table + `idx_message_embeddings_chat_model` index; DROPS both vec0 virtual-table families (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) — they are lazily recreated at runtime with `model_id INTEGER PARTITION KEY`. `down()` is schema-correct but data-lossy for vectors (the dropped BLOBs cannot be regenerated from `model_id`; vec0 tables are not re-created by `down()` — they re-populate via the normal backfill cron). |
+
+#### Chat Accessibility, Stats, and Webhook Cutover (Migrations 26-29)
+
+| Version | File | Description |
+|---------|------|-------------|
+| 26 | [`migration_026_chat_accessibility_bot_status.py`](../internal/database/migrations/versions/migration_026_chat_accessibility_bot_status.py:1) | Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](#chat_info) (column only — no supporting index). Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` runs `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md). |
+| 27 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop chat_stats/chat_user_stats; tables: chat_stats, chat_user_stats, stat_aggregates |
+| 28 | [`migration_028_add_stat_events_retention_index.py`](../internal/database/migrations/versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) to support efficient deletion of processed events older than the retention window |
+| 29 | [`migration_029_drop_webhook_updates.py`](../internal/database/migrations/versions/migration_029_drop_webhook_updates.py:1) | Drops `webhook_updates` + `idx_webhook_updates_unprocessed` from the bot's database — the table moved to the webhook receiver's own database (ADR-025; `lib/max_webhook_receiver/` self-heals both objects at startup over `webhook_receiver_data.db`). `down()` recreates both from the same lib-owned DDL |
 
 ### Creating New Migrations
 
-To create a new migration:
+1. Create `internal/database/migrations/versions/migration_XXX_description.py` with the next sequential version number
+2. Implement a `BaseMigration` subclass (`version`, `description`, `up()`, `down()`) plus a `getMigration()` function
+3. The migration is auto-discovered on next startup
 
-1. Create file: `internal/database/migrations/versions/migration_XXX_description.py`
-2. Implement [`BaseMigration`](../internal/database/migrations/base.py:7) class with `version`, `description`, `up()`, and `down()` methods
-3. Add `getMigration()` function returning the migration class
-4. The migration will be auto-discovered on next startup
-
-Example:
-```python
-from typing import Type
-
-from ...providers import BaseSQLProvider, ParametrizedQuery
-from ..base import BaseMigration
-
-class Migration008AddNewColumn(BaseMigration):
-    version = 8
-    description = "Add new_column to some_table"
-
-    async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        await sqlProvider.execute("""
-            ALTER TABLE some_table
-            ADD COLUMN new_column TEXT
-        """)
-
-    async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        await sqlProvider.execute("""
-            ALTER TABLE some_table
-            DROP COLUMN new_column
-        """)
-
-def getMigration() -> Type[BaseMigration]:
-    return Migration008AddNewColumn
-```
+The full recipe — worked example, portable-SQL requirements, and primary-key strategies — is owned by [Adding a Database Migration](llm/database.md#4-adding-a-database-migration) in the agent guide.
 
 ---
 
@@ -210,6 +172,8 @@ def getMigration() -> Type[BaseMigration]:
 Stores all chat messages with detailed metadata.
 
 **Primary Key**: `(chat_id, message_id)`
+
+#### Columns, Relationships, and TypedDict
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -229,6 +193,7 @@ Stores all chat messages with detailed metadata.
 | `markup` | TEXT | No | "" | JSON-serialized keyboard markup |
 | `metadata` | TEXT | No | "" | JSON-serialized additional metadata |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `model_id` | INTEGER | Yes | NULL | Embedding model lookup key (FK to [`models.model_id`](#models)); `NULL` when the message has not been embedded yet. Added by `migration_025` (the legacy `message_embeddings` BLOB side table was dropped in the same migration — chat-history embeddings now live in vec0 only, with `model_id` carrying the provenance). |
 
 **Relationships**:
 - References [`chat_users`](#chat_users) via `(chat_id, user_id)`
@@ -236,7 +201,9 @@ Stores all chat messages with detailed metadata.
 - References [`media_groups`](#media_groups) via `media_group_id`
 - Self-references via `reply_id` and `root_message_id`
 
-**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
+**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:129)
+
+#### Metadata JSON Convention
 
 **`metadata` JSON convention:** the column holds a JSON object (`internal/bot/models/message_metadata.py` → `MetadataDict`, `total=False`) with optional keys. The keys relevant to the condensed-context-retrieval feature (ADR-019) are:
 
@@ -288,7 +255,7 @@ Stores per-chat user information and statistics.
 
 **`metadata` JSON convention:** the column holds a JSON object (`internal/bot/models/user_metadata.py` → `UserMetadataDict`, `total=False`) with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`) plus an optional `memoryRefinement` sub-dict keyed by `str(threadId)` (e.g. `"0"` for the main thread). Each `memoryRefinement[threadId]` entry (`UserMemoryThreadDict`) carries: `summary` (rolling short bio), `lastProcessedMessageId` + `lastProcessedMessageDate` (message cursor for `getChatMessagesSince`). The `lastRefinedTS` (unix timestamp of the last refinement run) is NO LONGER persisted here — it is tracked in-memory on `UserMemoriesHandler._lastRefinedTS` (lost on restart; absent → 0 → treated as due). Read via `CacheService.getUserMetadata()`; the nested `memoryRefinement` sub-dict must be written via read-modify-write through `CacheService.updateUserMetadata()` (full-dict replace, NO merge — see [`docs/llm/tasks.md`](llm/tasks.md) §3: `setUserMetadata(isUpdate=True)` shallow-merges at the top level and would wipe sibling threads). Single-row `(chatId, userId)` reads/writes are cached via `CacheService` (ADR-015; the cached `messages_count` is best-effort stale — incremented by raw SQL in `saveChatMessage`, bypassing the cache).
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:187)
 
 **Example Query**:
 ```python
@@ -314,10 +281,11 @@ Stores chat metadata and configuration.
 | `username` | TEXT | Yes | NULL | Chat @username (for public chats) |
 | `type` | TEXT | No | - | Chat type (private/group/supergroup/channel) |
 | `is_forum` | BOOLEAN | No | FALSE | Whether chat has forum topics enabled |
+| `bot_status` | TEXT | No | 'active' | Accessibility state of the bot for this chat — values of the [`ChatBotStatus`](#chatbotstatus) StrEnum (`'active'` / `'inaccessible'`). Owned by the accessibility subsystem: written through `ChatInfoRepository.updateChatInfo(..., *, botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE)` (default `ACTIVE`; `bot_status` is unconditionally included in BOTH the `values` and the `updateExpressions` of the provider upsert via `ExcludedValue`), reached via `CacheService.setChatInfo`, which forwards `info["bot_status"]` (direct subscript). Added by `migration_026` (column only — no supporting index). The string-literal `DEFAULT 'active'` is portable across SQLite/PostgreSQL/MySQL and backfills every existing row to `'active'` as part of the `ALTER TABLE` (no separate backfill statement; satisfies the optimistic-default binding decision). Application code manages the value — there is no `DEFAULT CURRENT_TIMESTAMP`-style auto-management (per the migration-013 portability rule). **Self-heal consequence:** `TheBot.getChatInfo` hardcodes `"bot_status": ChatBotStatus.ACTIVE` in both platform return dicts, and `updateChatInfo`'s default is `ACTIVE`, so the every-message refresh path (`BaseBotHandler.updateChatInfo` → `TheBot.getChatInfo` → `CacheService.setChatInfo` → repo `updateChatInfo`) ALWAYS writes `ACTIVE`. A transient `INACCESSIBLE` set by `markChatInaccessible` (when a `getChatAdmins` probe fails) therefore self-heals to `ACTIVE` the next time the bot receives a message from that chat — which is correct, because successfully receiving a message proves the chat is accessible. `bot_status` is a short-lived "getChatAdmins probe failed" flag, not a permanent state; `markChatInaccessible` / `markChatActive` still work for explicit flips (they mutate `chatInfo["bot_status"]` then call `setChatInfo`). |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:215)
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:213) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
 
 **Example Query**:
 ```python
@@ -348,7 +316,7 @@ Stores forum topic information for chats with topics enabled.
 **Relationships**:
 - References [`chat_info`](#chat_info) via `chat_id`
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:234)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:241)
 
 ---
 
@@ -403,7 +371,7 @@ Append-only event log for raw statistics events. Used by the statistics collecti
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `event_id` | TEXT | No | - | App-generated UUID primary key |
-| `event_type` | TEXT | No | - | Type of statistics event (e.g., 'llm_request', 'message_received') |
+| `event_type` | TEXT | No | - | Type of statistics event (e.g., 'llm_request', 'message') |
 | `event_time` | TIMESTAMP | No | - | Timestamp when the event occurred |
 | `data` | TEXT | No | - | JSON-encoded event payload (metric key -> value) |
 | `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs (e.g., consumer, model, provider) |
@@ -415,8 +383,9 @@ Append-only event log for raw statistics events. Used by the statistics collecti
 **Indexes:**
 - `idx_stat_events_unprocessed` on `(processed, processed_id, claimed_at)` — for fast lookup of unprocessed/orphaned events
 - `idx_stat_events_lookup` on `(event_type, event_time)` — for event lookup by type and time
+- `idx_stat_events_retention` on `(processed, created_at)` — for efficient deletion of processed events older than the retention window
 
-**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for `DatabaseStatsStorage` implementation.
+**Note:** Created by `migration_016` (tables + unprocessed/lookup indexes) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). See [`lib/stats/sql_storage.py`](../lib/stats/sql_storage.py) for `DatabaseStatsStorage` implementation.
 
 ---
 
@@ -430,7 +399,7 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 |--------|------|----------|---------|-------------|
 | `event_type` | TEXT | No | - | Type of statistics event |
 | `period_start` | TEXT | No | - | Start of the aggregation period (ISO-8601 formatted string) |
-| `period_type` | TEXT | No | - | Period length ('hour', 'day', 'month', 'total') |
+| `period_type` | TEXT | No | - | Period length ('hourly', 'daily', 'monthly', 'total') |
 | `labels_hash` | TEXT | No | - | MD5 hex digest from labels |
 | `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs |
 | `metric_key` | TEXT | No | - | Name of the metric (e.g., 'request_count', 'input_tokens') |
@@ -438,9 +407,9 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp |
 
 **Period types:**
-- `hour` — Hourly aggregation (period_start rounded to hour)
-- `day` — Daily aggregation (period_start rounded to day)
-- `month` — Monthly aggregation (period_start rounded to month)
+- `hourly` — Hourly aggregation (period_start rounded to hour)
+- `daily` — Daily aggregation (period_start rounded to day)
+- `monthly` — Monthly aggregation (period_start rounded to month)
 - `total` — All-time aggregation (period_start = epoch)
 
 **Labels include:**
@@ -450,44 +419,7 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 - `provider` — LLM provider name
 - `generationType` — Type of generation ('text', 'structured', 'image')
 
-**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for implementation details.
-
----
-
-### chat_stats
-
-Aggregated daily statistics per chat.
-
-**Primary Key**: `(chat_id, date)`
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `chat_id` | INTEGER | No | - | Telegram chat identifier |
-| `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
-| `messages_count` | INTEGER | No | 0 | Total messages sent on this date |
-| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
-
-**Note**: Automatically updated when messages are saved via repository methods.
-
----
-
-### chat_user_stats
-
-Aggregated daily statistics per user per chat.
-
-**Primary Key**: `(chat_id, user_id, date)`
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `chat_id` | INTEGER | No | - | Telegram chat identifier |
-| `user_id` | INTEGER | No | - | Telegram user identifier |
-| `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
-| `messages_count` | INTEGER | No | 0 | Messages sent by user on this date |
-| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
-
-**Note**: Automatically updated when messages are saved via repository methods.
+**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`lib/stats/sql_storage.py`](../lib/stats/sql_storage.py) for implementation details.
 
 ---
 
@@ -530,14 +462,16 @@ Stores information about media attachments (images, documents, etc.).
 | `mime_type` | TEXT | Yes | NULL | MIME type of the file |
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
-| `description` | TEXT | Yes | NULL | AI-generated description of media |
+| `description` | TEXT | Yes | NULL | AI-generated description of media; also carries the STT transcript — see STT semantics below. |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262)
+
+**STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 ---
 
@@ -569,7 +503,7 @@ Stores messages identified as spam for training and analysis.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:325)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:310)
 
 ---
 
@@ -659,7 +593,7 @@ Caches chat message summaries to avoid regenerating them.
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:348)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:333)
 
 **Cache Key Generation**: Implemented in the chatMessages repository
 
@@ -681,7 +615,7 @@ Generic key-value cache storage with namespace support.
 **Indexes**:
 - `idx_cache_namespace` on `namespace` — for faster lookups by namespace (created by `migration_004`)
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:386)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:358)
 
 ---
 
@@ -703,7 +637,7 @@ Unified cache table for all cache types (replaces separate cache tables from mig
 - `idx_cache_namespace_key` on `(namespace, key)`
 - `idx_cache_updated_at` on `updated_at` (for TTL cleanup)
 
-**TypedDict**: [`CacheDict`](../internal/database/models.py:373)
+**Access**: [`GenericDatabaseCache`](../lib/cache/sql_cache.py) (`lib/cache`) owns all `cache`-table SQL inline — get/set/clear + the `clearOld(ttl)` TTL sweep (ADR-024). The former `CacheDict` TypedDict was deleted with the repository quartet; rows now decode via the private `_CacheRowDict` local to the lib module.
 
 **Available Namespaces**: See [`CacheType`](#cachetype) enum for all available cache namespaces including:
 - `WEATHER` - Weather API responses
@@ -735,7 +669,7 @@ Stores tasks scheduled for delayed execution.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
+**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:291)
 
 ---
 
@@ -834,49 +768,46 @@ await repo.saveLayout(
 
 ---
 
-## Chat Search Tables
+## Embedding Lookup Tables
 
-### message_embeddings
+### models
 
-Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows; backfill runs whenever the per-chat `EMBEDDINGS_ENABLED` setting is on — there is no separate one-shot regen trigger); consumed by `ChatSearchRepository.searchChatMessages` (accessed as `db.chatSearch.searchChatMessages`) for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+Lookup table that normalises embedding provenance into one row per distinct `(model, dimensions)` pair seen by the system. The small app-generated sequential integer `model_id` is the FK-like key stored on every embedding-bearing row (`chat_messages.model_id`, `user_memories.model_id`, and the vec0 partition keys) so the `(model, dimensions)` pair itself is stored exactly once. Created by `migration_025` (Phase 2 of the embedding-model-lookup refactor; see [`docs/plans/embedding-model-lookup-refactor-v1.md`](archive/plans/embedding-model-lookup-refactor-v1.md)).
 
-**Primary Key**: `(chat_id, message_id)`
+**Primary Key**: `model_id` (app-generated sequential integer — Decision D7 of the refactor: small ints are cheaper as vec0 partition keys than UUID strings; the DB does not generate IDs, no `AUTOINCREMENT`/`SERIAL`).
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| `chat_id` | INTEGER | No | - | Chat identifier (matches `chat_messages.chat_id`) |
-| `message_id` | TEXT | No | - | Message identifier (Telegram `int` → `MessageId.asStr()`; Max `str` verbatim) |
-| `embedding` | BLOB | No | - | `array.array('f', vec).tobytes()` — raw little-endian float32 vector |
-| `dimensions` | INTEGER | No | - | `len(embedding)`, derived in `saveMessageEmbedding` (not a separate arg) |
-| `model` | TEXT | No | - | Name of the model that produced the vector (matches the resolved `EMBEDDING_MODEL` chat setting: per-chat → hard-coded `"local-embedding"`) |
-| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+| `model_id` | INTEGER | No | - | App-generated sequential integer primary key (allocated by `EmbeddingModelsRepository.getOrCreateModelId` via `COALESCE(MAX(model_id), 0) + 1` + probe-then-insert) |
+| `model` | TEXT | No | - | Embedding model name string (e.g. the resolved value of the `EMBEDDING_MODEL` chat setting) |
+| `dimensions` | INTEGER | No | - | Vector dimensionality (e.g. 384, 1024) |
+| `created_at` | TIMESTAMP | No | - | Row creation timestamp (set application-side; no DB default) |
 
-**Indexes**:
-- `idx_message_embeddings_chat_model` on `(chat_id, model)` — speeds up `_loadEmbeddingsFromDb` (filters by both chat and model name). Created by `migration_018`.
-- The composite PK covers per-chat enumeration (`WHERE chat_id = ?`) via its leftmost prefix.
+**Unique constraint**: `UNIQUE(model, dimensions)` — defensive second guard alongside the runtime probe-then-insert in `EmbeddingModelsRepository.getOrCreateModelId`.
 
-**Cross-RDBMS portability:**
-- `BLOB` type is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).
-- `dimensions` is stored per row so a chat that switches `EMBEDDING_MODEL` can detect stale rows without joining the LLM registry at SQL time.
-- No `AUTOINCREMENT` / `SERIAL` — composite natural key follows the project convention (see [`docs/sql-portability-guide.md`](sql-portability-guide.md)).
-- `created_at` / `updated_at` are set by application code (no DB default — matches `migration_013` rules).
+**TypedDict**: [`ModelDict`](../internal/database/models.py) — `model_id` / `model` / `dimensions` / `created_at`.
 
-**Note**: Created by `migration_017`. Only populated when `[search-history] enabled = true`. The embedding dispatch in `MessagePreprocessorHandler.newMessageHandler` calls `db.chatEmbeddings.saveMessageEmbedding` for messages saved in chats with `EMBEDDINGS_ENABLED = true` (the dispatch runs whenever both `[search-history].enabled` and `EMBEDDINGS_ENABLED` are on — `_searchEnabled` is cached at construction time); the `ChatSearchHandler._dtCronJob` `CRON_JOB` handler closes the gap for messages that were saved before the feature was turned on or for chats that enabled the feature with no prior embeddings (round-robin, one chat per tick, batch `BACKFILL_DEFAULT_BATCH_SIZE` messages). There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+**Repository** (`EmbeddingModelsRepository`, accessed as `db.embeddingModels`) — holds a process-local cache `{(model, dimensions): model_id}` so the common path (a hot model that's already been allocated) is a single dict hit. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as the `modelIdResolver` kwarg into the three embedding-touching repos (`chatEmbeddings`, `chatSearch`, `userMemories` — Decision D10). All SQL goes through `BaseSQLProvider` via `provider.upsert(..., updateExpressions={})` for the portable `ON CONFLICT DO NOTHING` shape. Methods: `getOrCreateModelId(model, dimensions) -> int`, `getModelById(modelId) -> Optional[ModelDict]` (diagnostic), `listModels() -> List[ModelDict]` (diagnostic).
+
+---
+
+### message_embeddings (DROPPED)
+
+**Dropped in `migration_025`** (along with its `idx_message_embeddings_chat_model` index). Chat-history embeddings now live in vec0 only, with `chat_messages.model_id` (FK to [`models`](#models)) carrying the provenance; the in-process numpy cosine fallback was retired in the same refactor and `searchChatMessages` returns `[]` when vec0 is unavailable. The legacy `(chat_id, message_id)` → float32-BLOB store is gone; vectors cannot be regenerated from `model_id` alone, so `down()` re-creates the table EMPTY (vectors are irrecoverable — see `migration_025`'s `down()` docstring). `migration_025` adds `chat_messages.model_id` via `ALTER TABLE ADD COLUMN`; the column starts NULL and embeddings are re-allocated lazily on first embed call via `EmbeddingModelsRepository.getOrCreateModelId`.
 
 ---
 
 ### vec_message_embeddings_N (virtual table)
 
-Ephemeral `vec0` virtual tables (one per embedding dimension in use, e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`) that mirror `message_embeddings` rows for native cosine-similarity KNN search via the `sqlite-vec` extension. Created lazily at runtime by `SQLite3Provider.createVectorTable()` on the first write of a given dimension (in `ChatEmbeddingsRepository.saveMessageEmbedding`); no migration creates them. **Authoritative data lives in [`message_embeddings`](#message_embeddings)** — vec0 tables are rebuildable sidecar indexes and carry nothing the app cannot reconstruct.
+Ephemeral `vec0` virtual tables (one per embedding dimension in use, e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`) that hold chat-message embedding vectors for native cosine-similarity KNN search via the `sqlite-vec` extension. Created lazily at runtime by `SQLite3Provider.createVectorTable()` on the first write of a given dimension (in `ChatEmbeddingsRepository.saveMessageEmbedding`); no migration creates them — `migration_025` deliberately DROPPED every `vec_message_embeddings_{N}` table (vec0 DDL is not `ALTER`-able; the partition-key change from `model TEXT` to `model_id INTEGER` required a full drop + lazy recreate). Recreated on the next embed call after `migration_025` runs. **Authoritative storage is now `chat_messages.model_id` + vec0 only** — there is no BLOB side table any more; vec0 carries the float vectors themselves and `chat_messages.model_id` carries the provenance.
 
-Not present when `sqlite-vec` is not installed; the numpy search path is used instead.
+Not present when `sqlite-vec` is not installed; `searchChatMessages` returns `[]` (no numpy fallback — the numpy cosine path was retired alongside the `message_embeddings` BLOB table).
 
 ```sql
 CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
     message_id TEXT,
     chat_id INTEGER PARTITION KEY,
-    model TEXT PARTITION KEY,
+    model_id INTEGER PARTITION KEY,
     date TEXT,                            -- ISO-8601 from chat_messages; enables maxMessages pre-filter
     embedding FLOAT[384] distance_metric=cosine
 );
@@ -884,39 +815,13 @@ CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
-| `message_id` | TEXT | No | Message identifier (matches `message_embeddings.message_id`) |
+| `message_id` | TEXT | No | Message identifier (matches `chat_messages.message_id`) |
 | `chat_id` | INTEGER | No | Chat identifier; `PARTITION KEY` — `WHERE chat_id = ?` prunes the search |
-| `model` | TEXT | No | Embedding model name; `PARTITION KEY` — `WHERE model = ?` prunes the search |
+| `model_id` | INTEGER | No | Embedding model lookup key (matches `chat_messages.model_id` / `models.model_id`); `PARTITION KEY` — `WHERE model_id = ?` prunes the search. Replaces the legacy `model TEXT PARTITION KEY` (post-`migration_025`) |
 | `date` | TEXT | No | ISO-8601 timestamp from `chat_messages.date`; enables `maxMessages` pre-filter via `date >= :minDate` |
 | `embedding` | FLOAT[N] | No | float32 vector, `N` = embedding dimension (matches table-name suffix). `distance_metric=cosine` |
 
-**Lifecycle:** written by `saveMessageEmbedding()` (dual-write: `message_embeddings` + vec0). Stale rows from a previous embedding model are cleaned up statelessly by `ChatSearchHandler._dtCronJob`, which lists all `vec_message_embeddings_%` tables via `listTables()` and runs `DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel` on each. No `AUTOINCREMENT`, no `DEFAULT CURRENT_TIMESTAMP` — vec0 is not a standard table and the standard portability rules do not apply to its DDL.
-
----
-
-## Webhook Tables
-
-### webhook_updates
-
-Stores raw incoming Max Messenger webhook payloads awaiting consumption by the bot. Written by the standalone webhook receiver process (`internal/max_webhook_receiver/`) on every webhook POST; the bot's normal long-poll loop reads and marks rows processed. See [`docs/llm/architecture.md`](llm/architecture.md) for the two-process webhook model.
-
-**Primary Key**: `id` (application-generated UUID)
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | TEXT | No | - | Application-generated UUID identifying the update (no `AUTOINCREMENT`) |
-| `received_at` | TIMESTAMP | No | - | When the webhook payload was received and stored (set by application code) |
-| `update_type` | TEXT | No | - | Coarse `update_type` tag extracted from the Max payload, used for routing |
-| `raw_json` | TEXT | No | - | Full webhook request body serialized as a JSON string |
-| `processed` | INTEGER | No | 0 | Whether the update has been consumed (0 = pending, 1 = processed) |
-| `processed_at` | TIMESTAMP | Yes | NULL | When the update was marked processed, or NULL if still pending |
-
-**Indexes**:
-- `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs the unprocessed-updates query (`WHERE processed = 0 ORDER BY received_at ASC`)
-
-**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:303)
-
-**Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL` and no `DEFAULT CURRENT_TIMESTAMP` — `id` is a caller-generated UUID and both timestamps are set by application code, mirroring the repo-wide portability rules. Processed rows are reaped by the receiver's background cleanup task (default TTL 1 hour). The bot only writes to this table when webhook mode is on; the receiver process always writes here regardless of the bot's `enabled` flag.
+**Lifecycle:** written by `saveMessageEmbedding()` (single-write to vec0 + `UPDATE chat_messages.model_id`; the previous dual-write to `message_embeddings` + vec0 is retired). Stale rows from a previous model are cleaned up statelessly by `ChatSearchHandler._dtCronJob`, which lists all `vec_message_embeddings_%` tables via `listTables()` and runs `DELETE FROM {table} WHERE chat_id = :chatId AND model_id != :currentModelId` on each. No `AUTOINCREMENT`, no `DEFAULT CURRENT_TIMESTAMP` — vec0 is not a standard table and the standard portability rules do not apply to its DDL.
 
 ---
 
@@ -926,9 +831,11 @@ Stores raw incoming Max Messenger webhook payloads awaiting consumption by the b
 
 Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table (dropped in `migration_022`) and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both were backfilled into this table by `migration_020`. See [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) (canonical durable summary) and [`docs/archive/plans/user-memories-v1.md`](archive/plans/user-memories-v1.md).
 
-Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings` / `vec_message_embeddings_{dim}`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
+Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `vec_message_embeddings_{dim}`). Embedding provenance is normalised into the [`models`](#models) lookup table (Phase 2 of the embedding-model-lookup refactor, `migration_025`): the legacy `embedding_model` / `embedding_dimensions` column pair on `user_memories` was swapped for a single `model_id` FK. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
 
 **Primary Key**: `(chat_id, user_id, memory_id)` — composite natural key (no `AUTOINCREMENT`).
+
+#### Columns, Indexes, and TypedDict
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -941,8 +848,7 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 | `tags` | TEXT | No | `'[]'` | JSON array of freeform tag strings |
 | `permanent` | INTEGER | No | 0 | Boolean 0/1 — permanent memories are always injected |
 | `source` | TEXT | No | `'refinement'` | Provenance: refinement\|chat\|migration\|user |
-| `embedding_model` | TEXT | Yes | NULL | Model that produced the vec0 embedding (NULL = not yet embedded) |
-| `embedding_dimensions` | INTEGER | Yes | NULL | Embedding dimension count (NULL = not yet embedded) |
+| `model_id` | INTEGER | Yes | NULL | Embedding model lookup key (FK to [`models.model_id`](#models)); `NULL` = not yet embedded. Replaces the legacy `embedding_model` / `embedding_dimensions` pair (swapped by `migration_025`). |
 | `created_at` | TIMESTAMP | No | - | Creation timestamp (application-set) |
 | `updated_at` | TIMESTAMP | No | - | Last-update timestamp (application-set) |
 | `deleted_at` | TIMESTAMP | Yes | NULL | Soft-delete timestamp (`migration_021`); `NULL` = live. Set application-side in `deleteMemory` via `dbUtils.getCurrentTimestamp()` (no DB default). Live reads filter `AND deleted_at IS NULL`; `getMemoriesByIds` is the one read that skips the filter (historical reconstruction). |
@@ -952,21 +858,27 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:551) (snake_case keys; `score: NotRequired[float]` populated by semantic search).
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:523) (snake_case keys; `score: NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair (see [`ModelDict`](#typeddict-models)).
 
-**Enum**: [`MemoryType`](../internal/database/models.py:473) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:515) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
+**Enum**: [`MemoryType`](../internal/database/models.py:445) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:487) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
-**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
+#### UserMemoriesRepository Methods
+
+**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 12 public methods; all SQL goes through `BaseSQLProvider`:
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
-- `deleteMemory(chatId, userId, memoryId) -> bool` — SOFT DELETE: sets `deleted_at` + bumps `updated_at`, drops the vec0 row, nulls `embedding_model`/`embedding_dimensions` (via `deleteMemoryEmbedding(..., vecOnly=False)`). Unrestricted (may target permanent). The row survives so `getMemoriesByIds` can still resolve it; never raises (returns `False` on error or already-deleted).
+- `deleteMemory(chatId, userId, memoryId) -> bool` — SOFT DELETE: sets `deleted_at` + bumps `updated_at`, drops the vec0 row, nulls `model_id` (via `deleteMemoryEmbedding(..., vecOnly=False)`). Unrestricted (may target permanent). The row survives so `getMemoriesByIds` can still resolve it; never raises (returns `False` on error or already-deleted).
 - `getPermanentMemories(chatId, userId, threadId, *, limit=10) -> List[UserMemoryDict]` — merges cross-thread permanent (`thread_id IS NULL`) AND this-thread permanent (`thread_id = :threadId`); bio is thread-scoped so a thread's permanent block includes its own bio. Filters `deleted_at IS NULL`.
 - `getLatestMemories(chatId, userId, threadId, *, limit=5) -> List[UserMemoryDict]` — thread-scoped newest-first, **ephemeral-only** (`permanent = 0`); permanent memories are served by `getPermanentMemories`. Filters `deleted_at IS NULL`.
+- `getMemory(chatId, userId, memoryId, *, dataSource=None) -> Optional[UserMemoryDict]` — single-row read by the full PK `(chatId, userId, memoryId)`; backs the `/memory_config` wizard's per-memory detail view. Unrestricted by `permanent`/`thread_id`. Filters `deleted_at IS NULL`.
 - `getMemoriesByIds(memoryIds: List[str], *, chatId: Optional[int] = None, dataSource: Optional[str] = None) -> List[UserMemoryDict]` — the single read that does NOT filter `deleted_at`: resolves UUIDs to content for historical message reconstruction (compact-ID storage — see [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) "By-id resolution cache"). No `chatId`/`userId` scoping in the WHERE clause (UUIDs globally unique); `chatId`/`dataSource` are routing-only (forwarded to `getProvider(..., readonly=True)`); default `None` → default DB.
-- `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (vec0 KNN, `score = 1.0 - distance`). `queryEmbedding` is `Optional[List[float]]`; `embeddingModel` (required, pass `None` for filter-only) replaces the old `dimensions` arg and is part of the vec0 `model` partition filter. Always scoped to one `(chat_id, user_id)`; `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter (ANY-match) against the JSON-TEXT `tags` column. Both modes filter `deleted_at IS NULL`.
-- `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel) -> bool` — lazy-create `vec_user_memories_{dim}` + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set `embedding_model`/`embedding_dimensions` (vec0 write must succeed before provenance is set). Its internal row SELECT also filters `deleted_at IS NULL` (defense-in-depth — a deleted memory is never re-embedded).
+- `getDistinctTags(chatId, userId, memoryType=None, *, dataSource=None) -> List[str]` — sorted distinct tag strings across the user's (live) memories; backs the wizard's tag-filter picker. Optional `memoryType` filter.
+- `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (vec0 KNN, `score = 1.0 - distance`). `queryEmbedding` is `Optional[List[float]]`; `embeddingModel` (required, pass `None` for filter-only) is resolved to `model_id` internally via the injected `modelIdResolver` (Decision D6 — handler-facing signatures unchanged; D10 — `model_id` resolution happens inside the repo). Always scoped to one `(chat_id, user_id)`; `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter (ANY-match) against the JSON-TEXT `tags` column. Both modes filter `deleted_at IS NULL`.
+- `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel) -> bool` — lazy-create `vec_user_memories_{dim}` + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set `model_id` (resolved via `modelIdResolver`; vec0 write must succeed before provenance is set). Its internal row SELECT also filters `deleted_at IS NULL` (defense-in-depth — a deleted memory is never re-embedded).
 - `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE across every `vec_user_memories_{N}` table; never raises.
-- `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None) -> List[UserMemoryDict]` — single-table stale detection (NULL `embedding_model`/`embedding_dimensions`, or either differing from the active value); backs the regen cron and the initial backfill.
-- `deleteObsoleteMemoryEmbeddings(chatId, currentModel, currentDimensions) -> int` — model-drift cleanup: resets stale rows' provenance to NULL and drops their vec0 rows.
+- `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None) -> List[UserMemoryDict]` — single-table stale detection (NULL `model_id`, or `model_id` differing from the resolved active `(model, dimensions)` pair); backs the regen cron and the initial backfill.
+- `deleteObsoleteMemoryEmbeddings(chatId, currentModel, currentDimensions) -> int` — model-drift cleanup: resets stale rows' `model_id` to NULL and drops their vec0 rows.
+
+#### Backfills and Migration Notes
 
 **Backfills** (`migration_020.up()`):
 - `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.
@@ -1057,7 +969,7 @@ Indicates why a message was marked as spam.
 
 Defines available cache types for dynamic cache tables.
 
-**Defined in**: [`internal/database/models.py:399`](../internal/database/models.py:399)
+**Defined in**: [`internal/database/models.py:371`](../internal/database/models.py:371)
 
 | Value | Description |
 |-------|-------------|
@@ -1072,24 +984,36 @@ Defines available cache types for dynamic cache tables.
 
 ---
 
+### ChatBotStatus
+
+Durable accessibility state of the bot for a chat. Backs the `chat_info.bot_status` column (added by `migration_026`; column only — no supporting index).
+
+**Defined in**: [`internal/database/models.py:108`](../internal/database/models.py:108)
+
+| Value | Description |
+|-------|-------------|
+| `ACTIVE` | Bot is present / assumed present in the chat — optimistic default (backfilled by `migration_026`'s `DEFAULT 'active'`; re-written by the every-message refresh path, so a transient `INACCESSIBLE` self-heals on the next inbound message) |
+| `INACCESSIBLE` | Bot was kicked / restricted / lost admin rights (lazily marked when a `getChatAdmins` probe fails; excluded from chat listings by default) |
+
+---
+
 ## TypedDict Models
 
 All database queries return strongly-typed dictionaries defined in [`internal/database/models.py`](../internal/database/models.py:1):
 
 | TypedDict | Description | Definition |
 |-----------|-------------|------------|
-| [`ChatMessageDict`](../internal/database/models.py:108) | Chat message with user and media info | Lines 108-160 |
-| [`ChatUserDict`](../internal/database/models.py:163) | Chat user information | Lines 163-186 |
-| [`ChatInfoDict`](../internal/database/models.py:215) | Chat metadata | Lines 215-231 |
-| [`ChatTopicInfoDict`](../internal/database/models.py:234) | Forum topic information | Lines 234-252 |
-| [`MediaAttachmentDict`](../internal/database/models.py:255) | Media attachment details | Lines 255-281 |
-| [`DelayedTaskDict`](../internal/database/models.py:284) | Delayed task information | Lines 284-300 |
-| [`SpamMessageDict`](../internal/database/models.py:325) | Spam message details | Lines 325-347 |
-| [`WebhookUpdatesRow`](../internal/database/models.py:303) | Max webhook payload awaiting consumption | Lines 303-324 |
-| [`ChatSummarizationCacheDict`](../internal/database/models.py:348) | Cached summary information | Lines 348-372 |
-| [`CacheDict`](../internal/database/models.py:373) | Generic cache entry | Lines 373-385 |
-| [`CacheStorageDict`](../internal/database/models.py:386) | Cache storage entry | Lines 386-398 |
-| [`UserMemoryDict`](../internal/database/models.py:551) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 551-599 |
+| [`ChatMessageDict`](../internal/database/models.py:129) | Chat message with user and media info | Lines 129-184 |
+| [`ChatUserDict`](../internal/database/models.py:187) | Chat user information | Lines 187-210 |
+| [`ChatInfoDict`](../internal/database/models.py:213) | Chat metadata | Lines 213-238 |
+| [`ChatTopicInfoDict`](../internal/database/models.py:241) | Forum topic information | Lines 241-259 |
+| [`MediaAttachmentDict`](../internal/database/models.py:262) | Media attachment details | Lines 262-288 |
+| [`DelayedTaskDict`](../internal/database/models.py:291) | Delayed task information | Lines 291-307 |
+| [`SpamMessageDict`](../internal/database/models.py:310) | Spam message details | Lines 310-330 |
+| [`ChatSummarizationCacheDict`](../internal/database/models.py:333) | Cached summary information | Lines 333-355 |
+| [`CacheStorageDict`](../internal/database/models.py:358) | Cache storage entry | Lines 358-368 |
+| [`UserMemoryDict`](../internal/database/models.py:523) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 523-571 |
+| [`ModelDict`](../internal/database/models.py:574) | Row in the `models` embedding-provenance lookup table (created by `migration_025`) | Lines 574-606 |
 
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking
@@ -1116,9 +1040,11 @@ The database uses a repository pattern with 15 specialized repositories, each ha
 | `delayedTasks` | [`delayed_tasks.py`](../internal/database/repositories/delayed_tasks.py) | Task scheduling |
 | `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
 | `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
+| `embeddingModels` | [`embedding_models.py`](../internal/database/repositories/embedding_models.py) | Embedding-provenance lookup table (`migration_025`); process-local cache + portable upsert-as-DO-NOTHING. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as `modelIdResolver` into `chatEmbeddings` / `chatSearch` / `userMemories` (Decision D10) |
 | `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
 | `userMemories` | [`user_memories.py`](../internal/database/repositories/user_memories.py) | Unified per-(chat, user, thread) structured memory store (`migration_020`; vec0-backed semantic search) |
-| `webhookUpdates` | [`webhook_updates.py`](../internal/database/repositories/webhook_updates.py) | Max webhook payload storage and consumption |
+
+The webhook-receiver repository (`WebhookUpdatesRepository`, formerly `db.webhookUpdates`) left the internal `Database` wrapper with ADR-025 — it lives at [`lib/max_webhook_receiver/repository.py`](../lib/max_webhook_receiver/repository.py) over the webhook receiver's own database.
 
 ### Accessing Repositories
 

@@ -67,10 +67,15 @@ reference). No shared mutable state exists between concurrent requests.
 ```python
 # Current implementation
 def _getModel(self, **configOverrides):
-    kwargs = {"temperature": self.temperature}
+    kwargs: Dict[str, Any] = dict(self._customParams)
     kwargs.update(configOverrides)
     return self.ycSDK.models.completions(self.modelId, ...).configure(**kwargs)
 ```
+
+`_customParams` is the provider's per-instance dict of YC SDK parameters
+(temperature, max_tokens, reasoning_mode, etc.), seeded from the `[models]`
+config block. Per-request `configOverrides` layer on top, so each call still
+gets its own immutable `.configure()` snapshot without mutating shared state.
 
 ## Auth: Current vs Available — RESOLVED
 

@@ -3,7 +3,8 @@
 > **Verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from
 > `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). Production
 > consumers: `lib/ai/providers/yc_sdk_provider.py::_generateImage` (YC SDK
-> direct, `yandex-art`); `lib/ai/providers/basic_openai_provider.py::_generateImageViaImagesApi`
+> direct -- no configured model since the 2026-09-25 `yandex-art` removal);
+> `lib/ai/providers/basic_openai_provider.py::_generateImageViaImagesApi`
 > (OpenAI-compat Images API, `aliceai-image-art`). Claims marked with ⚠ are
 > server-side facts not checkable from the SDK source.
 
@@ -346,37 +347,37 @@ describes the SDK surface consumed by the first one only.
 
 | Path | Provider class | Configured model(s) | Transport |
 |---|---|---|---|
-| **YC SDK direct** | `YcAIModel` ([`yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)) | `yandex-art` ([`yc-sdk-models.toml`](../../../configs/00-defaults/yc-sdk-models.toml) line 2: `[models.models."yandex-art"]`, `model_id = "yandex-art"`, `support_images = true`) | gRPC `ImageGenerationAsyncServiceStub` via this SDK |
-| **OpenAI-compat Images API** | `BasicOpenAIModel._generateImageViaImagesApi` ([`basic_openai_provider.py`](../../../lib/ai/providers/basic_openai_provider.py)) | `aliceai-image-art` ([`yc-openai-models.toml`](../../../configs/00-defaults/yc-openai-models.toml) line 128: `[models.models."aliceai-image-art"]`, `model_id = "aliceai-image-art-3.0"`, `image_generation_api = "openai-images"`) | `client.images.generate(...)` -- does **not** use this SDK at all |
+| **YC SDK direct** | `YcAIModel` ([`yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)) | none since 2026-09-25 -- `yandex-art` was removed from [`yc-sdk-models.toml`](../../../configs/00-defaults/yc-sdk-models.toml) after its 2026-09-07 EOL (its URI now returns 400); the gRPC SDK path itself stays wired in `yc_sdk_provider.py` for re-enablement | gRPC `ImageGenerationAsyncServiceStub` via this SDK |
+| **OpenAI-compat Images API** | `BasicOpenAIModel._generateImageViaImagesApi` ([`basic_openai_provider.py`](../../../lib/ai/providers/basic_openai_provider.py)) | `aliceai-image-art` ([`yc-openai-models.toml`](../../../configs/00-defaults/yc-openai-models.toml): `[models.models."aliceai-image-art"]`, `model_id = "aliceai-image-art-3.0"`, `image_generation_api = "openai-images"`) | `client.images.generate(...)` -- does **not** use this SDK at all |
 
-### YC SDK direct path (`YcAIModel._generateImage`, `yc_sdk_provider.py:497`)
+### YC SDK direct path (`YcAIModel._generateImage`, `yc_sdk_provider.py:507`)
 
 Already correctly uses (verified against the v0.22.0 source):
 
-- `run_deferred()` for async image generation (line 528), called with
+- `run_deferred()` for async image generation (line 538), called with
   `messages` only -- the `timeout=60` default applies.
-- `await operation.wait()` for the deferred result (line 531), again with
+- `await operation.wait()` for the deferred result (line 541), again with
   defaults -- `poll_interval=10s`, `poll_timeout=3600s`.
-- `isinstance(result, ImageGenerationModelResult)` guard (line 532) before
+- `isinstance(result, ImageGenerationModelResult)` guard (line 542) before
   reading fields.
 - `message.toDict("text", skipRole=True)` for role-stripped messages
-  (line 529), producing `{"text": ...}` dicts that match `ImageMessageDict`.
-- `AioRpcError` detection via `_handleSDKError()` (line 535 → 390-425),
+  (line 539), producing `{"text": ...}` dicts that match `ImageMessageDict`.
+- `AioRpcError` detection via `_handleSDKError()` (line 545 → 399-430),
   matching `str(error.details())` against the `ETHIC_DETAILS` list
   (lines 90-92) and returning `ModelResultStatus.CONTENT_FILTER` on a match.
 - `mediaMimeType=IMAGE_MIME_TYPE` (= `"image/jpeg"`, line 84) and
-  `mediaData=result.image_bytes` (line 542) on success.
+  `mediaData=result.image_bytes` (line 552) on success.
 
 Not yet used but available in the SDK:
 
 - **`attach_deferred()`** -- not called anywhere in production. Could resume
   an interrupted generation if we ever chose to persist operation IDs.
 - **Message `weight` field** -- not supported by the provider path; the
-  `_generateImage` docstring at line 515 explicitly notes
+  `_generateImage` docstring at line 525 explicitly notes
   *"Message weights are not currently supported but may be added in the
   future."* `ModelMessage.toDict("text", skipRole=True)` does not emit
   `weight`.
-- **`result.model_version`** -- not read by the provider. Lines 538-543
+- **`result.model_version`** -- not read by the provider. Lines 548-553
   consume only `result.image_bytes` (for `mediaData`) and the truthiness of
   `result.image_bytes` (for the `FINAL` vs `UNKNOWN` status). The model
   version that produced the image is discarded.

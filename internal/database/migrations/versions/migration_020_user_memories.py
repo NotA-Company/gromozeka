@@ -37,8 +37,8 @@ import uuid
 from typing import Type
 
 import lib.utils as libUtils
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 logger = logging.getLogger(__name__)

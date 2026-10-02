@@ -19,7 +19,7 @@ Usage Example:
     .. code-block:: python
 
         from internal.database.migrations import MigrationManager, BaseMigration
-        from internal.database.providers import BaseSQLProvider
+        from lib.db.providers import BaseSQLProvider
 
         # Create a custom migration
         class CreateUsersTable(BaseMigration):

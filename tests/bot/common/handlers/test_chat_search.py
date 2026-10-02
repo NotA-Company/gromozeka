@@ -45,7 +45,35 @@ from internal.bot.models import (
 from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
 from internal.services.llm.models import ExtraDataDict
+from internal.services.queue_service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
+
+# ---------------------------------------------------------------------------
+# Singleton hygiene
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _resetQueueServiceSingleton() -> Generator[None, None, None]:
+    """Reset the ``QueueService`` singleton around every test in this module.
+
+    Every ``_makeHandler`` call constructs a real ``ChatSearchHandler`` whose
+    constructor registers the embedding-backfill ``CRON_JOB`` callback on the
+    process-wide ``QueueService`` singleton. Neither ``tests/conftest.py`` nor
+    the local fixtures reset it (resetting ``LLMService`` does not remove
+    registrations), so those callbacks — bound to handlers wired to closed
+    per-test mocks — persist across the session and leak into other test
+    modules that run afterwards. Resetting before *and* after each test keeps
+    every test hermetic (same pattern as
+    ``tests/bot/common/handlers/test_user_memories.py``).
+
+    Yields:
+        None.
+    """
+    QueueService._instance = None
+    yield
+    QueueService._instance = None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -870,146 +898,176 @@ class TestResolveTargetChatId:
 # ---------------------------------------------------------------------------
 
 
-def _stubEmbeddingModel(handler: ChatSearchHandler, model: Mock) -> Mock:
-    """Wire a mock embedding model into the handler's LLM service.
+def _stubGenerateEmbedding(handler: ChatSearchHandler, returnValue: Optional[Tuple[str, List[float]]]) -> AsyncMock:
+    """Replace ``handler.llmService.generateEmbedding`` with an ``AsyncMock``.
 
-    Replaces ``handler.llmService.getLLMManager`` with a ``Mock`` that
-    returns a mock manager whose ``getModel`` returns *model* for any
-    name. Used by :class:`TestSemanticSearch` to control the
-    `getModel` / `supportsEmbedding` / `generateEmbeddings` surface
-    that the handler consults when ``EMBEDDING_MODEL`` is configured
-    for the chat.
+    The ``/search`` command routes its query-embedding call through the
+    ``LLMService.generateEmbedding`` boundary (which owns model resolution,
+    validation, and consumerId stats attribution) instead of touching the
+    model directly. Used by :class:`TestSemanticSearch` to control what the
+    boundary returns (``(modelName, vector)`` tuple or ``None``).
 
     Args:
         handler: Handler under test.
-        model: Mock model instance (caller configures
-            ``supportsEmbedding`` and ``generateEmbeddings`` as needed).
+        returnValue: Value the mock returns — a ``(modelName, vector)``
+            tuple on success, ``None`` for the internal-failure path.
 
     Returns:
-        The mock manager (returned for tests that want to assert on
-        ``getModel`` call args).
+        The installed ``AsyncMock`` for call assertions.
     """
-    mockManager = Mock()
-    mockManager.getModel = Mock(return_value=model)
-    cast(Any, handler).llmService.getLLMManager = Mock(return_value=mockManager)
-    return mockManager
+    generateMock = AsyncMock(return_value=returnValue)
+    cast(Any, handler).llmService.generateEmbedding = generateMock  # type: ignore[method-assign]
+    return generateMock
 
 
 class TestSemanticSearch:
     """Tests for the semantic-search wiring in the ``/search`` command.
 
-    The handler resolves the chat's ``EMBEDDING_MODEL`` setting, looks
-    the model up in the LLM manager, and (when the model supports
-    embeddings) generates a query vector for the keyword. The vector is
-    then passed to ``chatSearch.searchChatMessages`` so the repository
-    can do a semantic ranking pass on top of the SQL filter.
+    The handler routes the query embedding through
+    ``llmService.generateEmbedding`` (keyword-only ``chatId`` /
+    ``chatSettings`` / ``doRateLimit=False`` — the command rate-limits
+    itself BEFORE any DB work and must not double-charge) and unpacks the
+    returned ``(modelName, vector)`` tuple into the
+    ``chatSearch.searchChatMessages`` call so the repository can do a
+    semantic ranking pass.
 
     These tests pin the contract down so a future refactor cannot
     silently drop the query-embedding step (which would break semantic
-    search for every chat that has the feature enabled) or
-    accidentally leak embedding failures into the user-visible reply.
+    search for every chat that has the feature enabled), reintroduce a
+    direct model-manager bypass, or accidentally leak embedding failures
+    into the user-visible reply (both the ``None`` return and an
+    unexpected exception must degrade to filter-only mode).
     """
 
-    async def test_semantic_search_generates_query_embedding(self) -> None:
-        """``/search keywords: ...`` calls ``generateEmbeddings`` and forwards the vector.
+    async def test_semantic_search_routes_through_generateEmbedding(self) -> None:
+        """``/search keywords: ...`` calls ``llmService.generateEmbedding`` and forwards the tuple.
 
         The handler must:
-        1. Read the chat's ``EMBEDDING_MODEL`` setting and resolve it
-           via ``llmService.getLLMManager().getModel(name)``.
-        2. Skip embedding when ``model is None`` or
-           ``model.supportsEmbedding`` is ``False`` (covered by the
-           sibling tests).
-        3. Call ``model.generateEmbeddings(keywords)`` and pass the
-           returned vector to ``searchChatMessages`` as
-           ``queryEmbedding``, plus the model name as ``modelName`` so
-           the repository can load the matching stored vectors for
-           cosine comparison.
+        1. Call ``llmService.generateEmbedding(keywords, chatId=...,
+           chatSettings=..., doRateLimit=False)`` — NOT resolve the model
+           via ``getLLMManager().getModel`` (the old bypass lost
+           consumerId stats attribution).
+        2. Unpack the returned ``(modelName, vector)`` tuple and pass the
+           vector to ``searchChatMessages`` as ``queryEmbedding``, plus
+           the model name as ``modelName`` so the repository can load the
+           matching stored vectors for cosine comparison.
         """
-        handler, mocks = _makeHandler(
-            chatSettings=_makeChatSettings(embeddingModel="text-embedding-3-small"),
-        )
-        mockModel = Mock()
-        mockModel.supportsEmbedding = True
-        mockModel.generateEmbeddings = AsyncMock(return_value=[0.1, 0.2, 0.3])
-        mockManager = _stubEmbeddingModel(handler, mockModel)
+        chatSettings = _makeChatSettings(embeddingModel="text-embedding-3-small")
+        handler, mocks = _makeHandler(chatSettings=chatSettings)
+        generateMock = _stubGenerateEmbedding(handler, ("text-embedding-3-small", [0.1, 0.2, 0.3]))
         mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=[])
 
-        await _callSearch(handler, _makeEnsuredMessage(), "keywords: meeting")
+        em = _makeEnsuredMessage()
+        await _callSearch(handler, em, "keywords: meeting")
 
-        # The model name was resolved via the LLM manager.
-        mockManager.getModel.assert_called_with("text-embedding-3-small")
-        # The query embedding was generated from the raw keywords.
-        mockModel.generateEmbeddings.assert_awaited_once()
-        assert mockModel.generateEmbeddings.await_args.args[0] == "meeting"
+        # The query embedding was generated via the service boundary,
+        # from the raw keywords, for the target chat, without
+        # double-charging the rate limiter.
+        generateMock.assert_awaited_once()
+        assert generateMock.await_args is not None
+        assert generateMock.await_args.args[0] == "meeting"
+        callKwargs = generateMock.await_args.kwargs
+        assert callKwargs["chatId"] == em.recipient.id
+        assert callKwargs["chatSettings"] is chatSettings
+        assert callKwargs["doRateLimit"] is False
         # The embedding vector + model name were forwarded to the repository.
-        callKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
-        assert callKwargs["queryEmbedding"] == [0.1, 0.2, 0.3]
-        assert callKwargs["modelName"] == "text-embedding-3-small"
+        repoKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
+        assert repoKwargs["queryEmbedding"] == [0.1, 0.2, 0.3]
+        assert repoKwargs["modelName"] == "text-embedding-3-small"
 
-    async def test_semantic_search_falls_back_on_embedding_failure(self) -> None:
-        """When ``generateEmbeddings`` raises, ``queryEmbedding`` falls back to ``None``.
+    async def test_semantic_search_uses_target_chat_settings_for_cross_chat_search(self) -> None:
+        """A `chat:`-targeted search embeds with the TARGET chat's id + settings.
 
-        A flaky embedding API must not break ``/search`` — the
-        handler logs the failure and falls back to filter-only mode
-        (the same path used when no keywords are present or when the
-        chat has no ``EMBEDDING_MODEL`` configured). The
-        ``modelName`` is still forwarded to the repository so it can
-        load any stored embeddings the chat has for ranking, but the
-        ``queryEmbedding`` is ``None`` so no semantic comparison runs.
+        The embedding model is resolved against the target chat's
+        settings — a search in chat A should use A's embedding model and
+        attribute the ``llm_request`` stats row to A (``chatId``), not to
+        the requesting chat.
+        """
+        currentChatId = 100
+        targetChatId = -1009876543210
+        currentSettings = _makeChatSettings(embeddingModel="current-chat-model")
+        targetSettings = _makeChatSettings(embeddingModel="target-chat-model")
+        handler, mocks = _makeHandler(chatSettings=currentSettings)
+
+        async def fakeResolveTargetChatId(*, ensuredMessage: EnsuredMessage, chatArg: str) -> Optional[int]:
+            return targetChatId
+
+        async def fakeGetChatSettings(*, chatId: int) -> ChatSettingsDict:
+            return currentSettings if chatId == currentChatId else targetSettings
+
+        generateMock = _stubGenerateEmbedding(handler, ("target-chat-model", [0.4, 0.5, 0.6]))
+        mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=[])
+
+        with (
+            patch.object(handler, "_resolveTargetChatId", fakeResolveTargetChatId),
+            patch.object(handler, "getChatSettings", AsyncMock(side_effect=fakeGetChatSettings)),
+        ):
+            await _callSearch(
+                handler, _makeEnsuredMessage(chatId=currentChatId), f"keywords: meeting chat: {targetChatId}"
+            )
+
+        generateMock.assert_awaited_once()
+        assert generateMock.await_args is not None
+        assert generateMock.await_args.kwargs["chatId"] == targetChatId
+        assert generateMock.await_args.kwargs["chatSettings"] is targetSettings
+        assert generateMock.await_args.kwargs["doRateLimit"] is False
+        repoKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
+        assert repoKwargs["modelName"] == "target-chat-model"
+        assert repoKwargs["queryEmbedding"] == [0.4, 0.5, 0.6]
+
+    async def test_semantic_search_falls_back_on_embedding_none(self) -> None:
+        """``generateEmbedding`` returning ``None`` → filter-only fallback.
+
+        ``generateEmbedding`` swallows every internal failure (model not
+        registered, generation error, rate limiter) and returns ``None``.
+        A flaky embedding API must not break ``/search`` — the handler
+        falls back to filter-only mode (the same path used when no
+        keywords are present). Neither the vector nor the model name is
+        forwarded: the repository runs filter-only mode (which ignores
+        ``modelName``) exactly as it does when no keywords are present.
         """
         handler, mocks = _makeHandler(
             chatSettings=_makeChatSettings(embeddingModel="text-embedding-3-small"),
         )
-        mockModel = Mock()
-        mockModel.supportsEmbedding = True
-        mockModel.generateEmbeddings = AsyncMock(side_effect=RuntimeError("API down"))
-        _stubEmbeddingModel(handler, mockModel)
+        generateMock = _stubGenerateEmbedding(handler, None)
         mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=[])
 
         await _callSearch(handler, _makeEnsuredMessage(), "keywords: meeting")
 
-        # ``generateEmbeddings`` was attempted (and raised).
-        mockModel.generateEmbeddings.assert_awaited_once()
-        # The repository call still happened, with no query embedding
-        # — the filter-only fallback path. ``modelName`` is preserved
-        # so the repository can still rank any stored embeddings.
+        # The service boundary was consulted, returned None, and the
+        # repository call still happened with no query embedding — the
+        # filter-only fallback path.
+        generateMock.assert_awaited_once()
         mocks["db"].chatSearch.searchChatMessages.assert_awaited_once()
         callKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
         assert callKwargs["queryEmbedding"] is None
-        assert callKwargs["modelName"] == "text-embedding-3-small"
+        assert callKwargs["modelName"] is None
 
-    async def test_semantic_search_skips_if_model_not_found(self) -> None:
-        """``getModel`` returning ``None`` → handler skips the embedding step.
+    async def test_semantic_search_falls_back_on_embedding_exception(self) -> None:
+        """``generateEmbedding`` raising → defensive filter-only fallback.
 
-        The chat has an ``EMBEDDING_MODEL`` set, but the model is not
-        registered with the LLM manager (e.g. it was uninstalled
-        between config and runtime). The handler must treat this as
-        "no embedding available" and fall through to the filter-only
-        path rather than crashing or trying to call methods on
-        ``None``. ``modelName`` is still passed so the repository can
-        load any stored embeddings for ranking.
+        In practice ``generateEmbedding`` never raises (it catches every
+        internal exception), but the handler keeps an equivalent ``except``
+        guard around the call so an unexpected boundary error (or a
+        partial-tuple unpacking failure) still degrades to filter-only
+        mode instead of breaking ``/search``.
         """
         handler, mocks = _makeHandler(
-            chatSettings=_makeChatSettings(embeddingModel="missing-model"),
+            chatSettings=_makeChatSettings(embeddingModel="text-embedding-3-small"),
         )
-        mockModel = Mock()
-        mockModel.supportsEmbedding = True
-        mockModel.generateEmbeddings = AsyncMock()
-        # ``getModel`` returns None — simulate the model not being registered.
-        cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=None)))
+        generateMock = AsyncMock(side_effect=RuntimeError("API down"))
+        cast(Any, handler).llmService.generateEmbedding = generateMock  # type: ignore[method-assign]
         mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=[])
 
         await _callSearch(handler, _makeEnsuredMessage(), "keywords: meeting")
 
-        # The model mock's ``generateEmbeddings`` is never reached.
-        mockModel.generateEmbeddings.assert_not_called()
-        # The repository call still happens, with ``queryEmbedding=None``
-        # (matching the empty-setting / model-missing path). ``modelName``
-        # is preserved for stored-embedding ranking.
+        # The boundary was attempted (and raised); the repository call
+        # still happened with no query embedding — the filter-only path.
+        generateMock.assert_awaited_once()
         mocks["db"].chatSearch.searchChatMessages.assert_awaited_once()
         callKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
         assert callKwargs["queryEmbedding"] is None
-        assert callKwargs["modelName"] == "missing-model"
+        assert callKwargs["modelName"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -1088,6 +1146,29 @@ class TestEmbedAndSaveMessage:
 
         assert result is False
         saveMock.assert_awaited_once()
+
+    async def test_passesRealChatIdAndSkipsRateLimit(self) -> None:
+        """``generateEmbedding`` gets the real chatId + ``doRateLimit=False``.
+
+        Regression for the consumerId gap (docs/design/stats-consumerid-gaps.md
+        Gap 2): the background backfill used to pass ``chatId=None`` to skip
+        the per-chat hot-path rate budget, which also dropped the
+        ``llm_request`` stats attribution to ``__global__``. It must pass the
+        recipient chat id and skip only the limiter.
+        """
+        handler, mocks = _makeHandler()
+        generateMock = AsyncMock(return_value=("text-embedding-3-small", [0.1]))
+        cast(Any, handler).llmService.generateEmbedding = generateMock  # type: ignore[method-assign]
+        mocks["db"].chatEmbeddings.saveMessageEmbedding = AsyncMock(return_value=True)
+
+        result = await handler.embedAndSaveMessage(ensuredMessage=_makeEnsuredMessage(chatId=100))
+
+        assert result is True
+        generateMock.assert_awaited_once()
+        assert generateMock.await_args is not None
+        kwargs = generateMock.await_args.kwargs
+        assert kwargs["chatId"] == 100
+        assert kwargs["doRateLimit"] is False
 
 
 # ---------------------------------------------------------------------------

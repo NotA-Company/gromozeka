@@ -1,4 +1,4 @@
-"""Tests for sandbox enums (RuntimeName, BackendName).
+"""Tests for sandbox enums (RuntimeName, BackendName, StagingPurpose).
 
 Covers:
 - StrEnum construction from string values.
@@ -6,11 +6,16 @@ Covers:
 - String compatibility (str() returns the value).
 - Iteration over enum members.
 - Package-level re-export via ``from lib.sandbox import``.
+- Public-surface re-export of the package-update result types
+  (``PackageUpdate``, ``LibraryUpdateResult``).
 """
 
 from enum import StrEnum
 
-from lib.sandbox import BackendName, RuntimeName
+import lib.sandbox
+from lib.sandbox import BackendName, LibraryUpdateResult, PackageUpdate, RuntimeName
+from lib.sandbox import types as sandboxTypes
+from lib.sandbox.enums import StagingPurpose
 
 # ============================================================================
 # RuntimeName
@@ -68,6 +73,47 @@ def testBackendNameValue() -> None:
 
 
 # ============================================================================
+# StagingPurpose
+# ============================================================================
+
+
+def testStagingPurposeConstructionFromValue() -> None:
+    """Verify that StagingPurpose('install'/'update') returns the matching member.
+
+    Returns:
+        None
+    """
+    assert StagingPurpose("install") is StagingPurpose.INSTALL
+    assert StagingPurpose("update") is StagingPurpose.UPDATE
+
+
+def testStagingPurposeValues() -> None:
+    """Verify the StagingPurpose member values are the ratified strings.
+
+    The values feed the container-name prefix (``sandbox-{purpose}-{runId}``)
+    and the ``sandbox.purpose`` container label and must stay byte-identical.
+
+    Returns:
+        None
+    """
+    assert StagingPurpose.INSTALL.value == "install"
+    assert StagingPurpose.UPDATE.value == "update"
+
+
+def testStagingPurposeStringCompatibility() -> None:
+    """Verify that str(StagingPurpose...) returns the raw value.
+
+    Container-name interpolation (f"sandbox-{purpose}-{runId}") relies on the
+    StrEnum string representation.
+
+    Returns:
+        None
+    """
+    assert str(StagingPurpose.INSTALL) == "install"
+    assert str(StagingPurpose.UPDATE) == "update"
+
+
+# ============================================================================
 # General StrEnum behaviour
 # ============================================================================
 
@@ -86,6 +132,11 @@ def testIterationOverEnumMembers() -> None:
     assert len(backendMembers) == 1
     assert BackendName.DOCKER in backendMembers
 
+    stagingPurposeMembers = list(StagingPurpose)
+    assert len(stagingPurposeMembers) == 2
+    assert StagingPurpose.INSTALL in stagingPurposeMembers
+    assert StagingPurpose.UPDATE in stagingPurposeMembers
+
 
 def testStrEnumIsStrSubclass() -> None:
     """Verify that sandbox enums are proper StrEnum subclasses (string-compatible).
@@ -95,8 +146,10 @@ def testStrEnumIsStrSubclass() -> None:
     """
     assert isinstance(RuntimeName.PYTHON, str)
     assert isinstance(BackendName.DOCKER, str)
+    assert isinstance(StagingPurpose.INSTALL, str)
     assert issubclass(RuntimeName, StrEnum)
     assert issubclass(BackendName, StrEnum)
+    assert issubclass(StagingPurpose, StrEnum)
 
 
 def testPackageReExport() -> None:
@@ -112,3 +165,21 @@ def testPackageReExport() -> None:
 
     assert ImportedRuntimeName is RuntimeName
     assert ImportedBackendName is BackendName
+
+
+def testPackageResultTypesReExport() -> None:
+    """Verify PackageUpdate and LibraryUpdateResult are public from lib.sandbox.
+
+    Both dataclasses are part of the public updateRuntimeLibraries() result
+    surface and must be re-exported from the package root (importable, bound
+    to the canonical types, and listed in ``__all__``).
+
+    Returns:
+        None
+    """
+    # The module-level imports already prove importability; assert the
+    # re-exports are the canonical types, not accidental rebinds.
+    assert PackageUpdate is sandboxTypes.PackageUpdate
+    assert LibraryUpdateResult is sandboxTypes.LibraryUpdateResult
+    assert "PackageUpdate" in lib.sandbox.__all__
+    assert "LibraryUpdateResult" in lib.sandbox.__all__

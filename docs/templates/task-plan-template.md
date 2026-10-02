@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Task [X.Y.Z]: [Task Name]
 
 **Phase:** [Phase X: Phase Name]

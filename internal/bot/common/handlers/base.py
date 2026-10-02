@@ -64,17 +64,20 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
+from internal.database.models import ChatBotStatus, ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageService
+from internal.services.stt import STTService
 from lib.ai import (
     ModelImageMessage,
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.session import buildSessionId
+from lib.stats import NullStatsStorage, StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +134,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatDefaults: Default settings for all chats
         cache: Cache service instance
         queueService: Queue service for background tasks
+        messageStatsStorage: Stats storage for message events
     """
 
     def __init__(
@@ -161,6 +165,13 @@ class BaseBotHandler(CommandHandlerMixin):
         self.storage = StorageService.getInstance()
         self.llmService = LLMService.getInstance()
 
+        # Stats storage for message events (default: no-op) — covers both directions
+        self.messageStatsStorage: StatsStorage = NullStatsStorage()
+
+        # Cached config flags — read once at init, require restart to take effect.
+        # Mirrors the _searchEnabled pattern in MessagePreprocessorHandler.
+        self._sttEnabled: bool = bool(self.configManager.getSttConfig().get("enabled", False))
+
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
         self._bot: Optional[TheBot] = None
@@ -186,6 +197,18 @@ class BaseBotHandler(CommandHandlerMixin):
             None
         """
         self._bot = bot
+
+    def injectStatsStorage(self, statsStorage: Optional[StatsStorage]) -> None:
+        """
+        Inject a stats storage instance for message event recording.
+
+        Args:
+            statsStorage: The stats storage instance to inject, or None to use NullStatsStorage
+
+        Returns:
+            None
+        """
+        self.messageStatsStorage = statsStorage or NullStatsStorage()
 
     ###
     # Chat settings Managenent
@@ -296,9 +319,10 @@ class BaseBotHandler(CommandHandlerMixin):
                 if modelInfo is None:
                     # Wrong model, fallback to default
                     continue
-                modelTier = ChatTier.fromStr(modelInfo.get("tier", ""))
-                if not isSetByBotOwner and (modelTier is None or not chatTier.isBetterOrEqualThan(modelTier)):
-                    # Chat no longer able to use such LLM due to lower Tier
+                modelTier = ChatTier.resolveModelTier(v.toStr(), modelInfo.get("tier", ""))
+                if not isSetByBotOwner and not chatTier.isBetterOrEqualThan(modelTier):
+                    # Missing/invalid model tiers resolve to bot-owner; chat no
+                    # longer able to use such LLM due to lower Tier
                     continue
 
             retSettings[k] = v
@@ -710,6 +734,55 @@ class BaseBotHandler(CommandHandlerMixin):
     # Chat Management
     ###
 
+    async def getLLMRequestSessionId(self, ensuredMessage: EnsuredMessage) -> str:
+        """Build the LLM request session ID for a message's conversation.
+
+        The session ID identifies the conversation the message belongs to
+        (chat + thread root) and is forwarded to LLM providers that use it
+        for prompt-cache affinity — OpenCode Go's mandatory
+        ``x-opencode-session`` header. The thread root is resolved exactly
+        like :meth:`saveChatMessage` / :meth:`getThreadByMessageForLLM` do:
+        a message that is itself a thread start is its own root, otherwise
+        the stored ``root_message_id`` of the thread is used. Each top-level
+        message therefore starts a fresh session and every reply in the
+        thread shares the root's session.
+
+        Args:
+            ensuredMessage: The incoming message to resolve the conversation
+                session for
+
+        Returns:
+            Session ID string in the form
+            ``gromozeka-<chatId>-<rootMessageId>``, stable across restarts
+
+        Raises:
+            ValueError: If a component is empty or sanitizes to empty, or
+                if the joined session id exceeds 128 characters. NOT caught
+                by the DB-error fallback above: that ``try``/``except``
+                only guards thread-root resolution, while the
+                ``buildSessionId`` call runs outside it and propagates.
+        """
+        chatId = ensuredMessage.recipient.id
+        rootMessageId: MessageId = ensuredMessage.messageId
+        try:
+            dbMessage = await self.db.chatMessages.getChatMessageByMessageId(chatId, ensuredMessage.messageId)
+            if dbMessage is not None and dbMessage["root_message_id"] is not None:
+                rootMessageId = dbMessage["root_message_id"]
+        except Exception as e:
+            logger.debug(f"Failed to resolve thread root for session ID, falling back to message ID: {e}")
+        # Byte-identity: buildSessionId reproduces the previous
+        # f"gromozeka-{chatId}-{...}" shape exactly for int chat ids — the
+        # leading "-" of a negative group chat id is preserved, yielding the
+        # historical double dash (e.g. "gromozeka--100123-42"). The identity
+        # guarantee covers nonempty token-safe ids whose complete result
+        # fits within 128 characters; empty components and longer results
+        # now raise ValueError where the old f-string passed them through.
+        # Known accepted delta: a Max-platform string message id containing
+        # characters outside [A-Za-z0-9._-] is now replaced with "-" (the
+        # old f-string passed such characters through unchanged) —
+        # deliberate, deterministic, and limited to exotic ids.
+        return buildSessionId(str(chatId), rootMessageId.asStr())
+
     async def getThreadByMessageForLLM(
         self,
         ensuredMessage: EnsuredMessage,
@@ -890,6 +963,8 @@ class BaseBotHandler(CommandHandlerMixin):
             condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
             condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
             condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
+            consumerId=str(chatId),
         )
 
         condenseCacheMessages.extend(condensedRet)
@@ -908,6 +983,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
                 condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                 condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+                sessionId=await self.getLLMRequestSessionId(ensuredMessage),
+                consumerId=str(chatId),
             )
             # We'll need to rewrite cache, so empty it here
             condenseCache = list(condensingDictMap.values())
@@ -1131,6 +1208,34 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaGroupId=message.mediaGroupId,
         )
 
+        # Record message stats event (best-effort, never raises).
+        # Both directions recorded; direction determined by sender.id == botId (not by messageCategory).
+        # Split parts each count as raw saves. Exclude only DELETED/UNSPECIFIED (rewrites/defaults).
+        if messageCategory not in (MessageCategory.DELETED, MessageCategory.UNSPECIFIED):
+            # Resolve bot id ONCE per call, guarded — getBotId can raise RuntimeError / hit Max API on first call.
+            # Best-effort stats must never break message saving.
+            # Unknown bot identity counts as non-bot (belt-and-suspenders; rare: TTL expiry plus transient API failure).
+            try:
+                botId = await self.getBotId()
+            except Exception as e:
+                logger.debug(f"Failed to get bot id for stats recording: {e}")
+                botId = None
+
+            # Direction: sent=True if sender is the bot, sent=False if sender is a user.
+            # When botId is None, sent=False (treat as non-bot).
+            sent = botId is not None and sender.id == botId
+            await self.messageStatsStorage.record(
+                stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
+                consumerId=str(chat.id),
+                labels={
+                    "user_id": str(sender.id),
+                    "chat_type": chat.chatType.value,
+                    "message_type": message.messageType,
+                    "message_category": messageCategory,
+                    "sent": str(sent),
+                },
+            )
+
         return True
 
     def parseUserMetadata(self, userInfo: Optional[ChatUserDict]) -> UserMetadataDict:
@@ -1282,7 +1387,12 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatTitle = f"#{chatInfo['chat_id']} {chatTitle}"
         return chatTitle
 
-    async def getUserChats(self, userId: int) -> List[ChatInfoDict]:
+    async def getUserChats(
+        self,
+        userId: int,
+        *,
+        botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE,
+    ) -> List[ChatInfoDict]:
         """
         Get all chats for a given user, excluding chats they have left
 
@@ -1291,11 +1401,14 @@ class BaseBotHandler(CommandHandlerMixin):
 
         Args:
             userId: Telegram user ID
+            botStatus: Optional filter for bot accessibility status. Defaults to
+                       ``ChatBotStatus.ACTIVE`` to exclude inaccessible chats. Pass
+                       ``None`` to return all chats regardless of status.
 
         Returns:
             List of ChatInfoDict objects representing chats the user is in
         """
-        userChats = await self.db.chatUsers.getUserChats(userId)
+        userChats = await self.db.chatUsers.getUserChats(userId, botStatus=botStatus)
         ret: List[ChatInfoDict] = []
         for chatInfo in userChats:
             userInfo: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
@@ -1344,6 +1457,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatSettings=chatSettings,
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
+                sessionId=buildSessionId("media", fileUniqueId),
             )
             logger.debug(f"Image LLM Response: {llmRet}")
 
@@ -1367,6 +1481,45 @@ class BaseBotHandler(CommandHandlerMixin):
             return False
 
         # ret['content'] = llmRet.resultText
+
+    async def _transcribeMedia(self, mediaId: str, chatId: int, data: bytes) -> None:
+        """Transcribe a media attachment in a background task.
+
+        The caller (``_processMediaV2``) has already downloaded the media and
+        passes the raw bytes as *data*.  This method calls
+        :meth:`STTService.transcribeMedia` and terminalizes the media-attachment
+        row: PENDING → DONE with the transcript on success, or PENDING → FAILED
+        on error or exception.
+
+        ``asyncio.CancelledError`` is a ``BaseException`` and is **not** caught
+        by the ``except Exception`` — it propagates, which may leave the row
+        PENDING.  The orphan-reclaim logic in ``_processMediaV2`` (rows PENDING
+        longer than ``PROCESSING_TIMEOUT``) is the safety net for those cases.
+
+        Never raises (fire-and-forget).
+
+        Args:
+            mediaId: The media attachment unique id (file_unique_id).
+            chatId: Chat id for per-chat STT rate limiting.
+            data: Downloaded media bytes, provided by the caller.
+        """
+        try:
+            outcome = await STTService.getInstance().transcribeMedia(data, chatId=chatId)
+            if outcome.success:
+                await self.db.mediaAttachments.updateMediaAttachment(
+                    mediaId=mediaId, status=MediaStatus.DONE, description=outcome.description
+                )
+                return
+
+            logger.warning("STT failed for media %s: errorCode=%s", mediaId, outcome.errorCode)
+            await self.db.mediaAttachments.updateMediaAttachment(
+                mediaId=mediaId,
+                status=MediaStatus.FAILED,
+            )
+
+        except Exception:
+            logger.exception("STT background task error for media %s", mediaId)
+            await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, status=MediaStatus.FAILED)
 
     async def processTelegramSticker(
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
@@ -1770,6 +1923,7 @@ class BaseBotHandler(CommandHandlerMixin):
         # First check if we have the photo in the database already
         mediaAttachment = await self.db.mediaAttachments.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
+
         if mediaAttachment is not None:
             logger.debug(f"Media#{ret.id} already in database")
             if mediaAttachment["media_type"] != mediaType:
@@ -1781,6 +1935,9 @@ class BaseBotHandler(CommandHandlerMixin):
             # Only skip processing if Media in DB is in right status
             match MediaStatus(mediaAttachment["status"]):
                 case MediaStatus.DONE:
+                    # DONE rows always return early — retroactive STT transcription of
+                    # previously-processed media is intentionally out of scope (the
+                    # stateless simplification removed the DONE-reprocess branch).
                     ret.task = makeEmptyAsyncTask()
                     return ret
 
@@ -1803,15 +1960,22 @@ class BaseBotHandler(CommandHandlerMixin):
                             ret.task = makeEmptyAsyncTask()
                             return ret
                     except Exception as e:
-                        logger.error("{ret.type}#{ret.id} Error during checking age:")
+                        logger.error(f"{ret.type}#{ret.id} Error during checking age:")
                         logger.exception(e)
+
+                case MediaStatus.FAILED:
+                    logger.debug(
+                        f"{ret.type}#{ret.id} already in database but in status "
+                        f"{mediaAttachment['status']} and is in error, reprocessing it"
+                    )
 
                 case _:
                     mimeType = str(mediaAttachment["mime_type"])
-                    # NOTE: Currently we can process only images
-                    if mimeType.lower().startswith("image/"):
+                    mimeTypeStart = mimeType.lower().split("/", 1)[0]
+                    if mimeTypeStart in ["image", "video", "audio"]:
                         logger.debug(
-                            f"{ret.type}#{ret.id} in wrong status: {mediaAttachment['status']}. Reprocessing it"
+                            f"{ret.type}#{ret.id} ({mimeType}) in wrong status: {mediaAttachment['status']}. "
+                            "Reprocessing it"
                         )
                     else:
                         logger.debug(f"{ret.type}#{ret.id} is {mimeType}, skipping it")
@@ -1831,11 +1995,26 @@ class BaseBotHandler(CommandHandlerMixin):
                     mediaType=mediaType,
                 )
 
-        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in [
+        needParseImage = chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in (
             MessageType.IMAGE,
             MessageType.STICKER,
-        ]:
-            # Currently we can process only images
+        )
+        needProcessSTT = (
+            self._sttEnabled
+            and mediaType
+            in (
+                MessageType.VIDEO,
+                MessageType.VIDEO_NOTE,
+                MessageType.VOICE,
+                MessageType.AUDIO,
+            )
+            and chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool()
+            and chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()
+        )
+
+        if needParseImage:
+            mediaStatus = MediaStatus.PENDING
+        elif needProcessSTT:
             mediaStatus = MediaStatus.PENDING
         else:
             mediaStatus = MediaStatus.DONE
@@ -1863,8 +2042,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 description=None,
             )
 
-        # Need to parse image content with LLM
-        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool():
+        # Need to process Attachment somehow
+        if needParseImage or needProcessSTT:
             # Do not redownload file if it was downloaded already
             if mediaData is None:
                 if self._bot is None:
@@ -1889,40 +2068,48 @@ class BaseBotHandler(CommandHandlerMixin):
                 fileSize=len(mediaData),
             )
 
-            if mimeType.lower().startswith("image/"):
-                logger.debug(f"{ret.type}#{ret.id} is an image")
-            else:
-                logger.warning(f"{ret.type}#{ret.id} is not an image, skipping parsing")
-                ret.task = makeEmptyAsyncTask()
-                await self.db.mediaAttachments.updateMediaAttachment(
-                    mediaId=ret.id,
-                    status=MediaStatus.NEW,
-                )
-                return ret
+            if needParseImage:
+                # Need to parse image content with LLM
+                if mimeType.lower().startswith("image/"):
+                    logger.debug(f"{ret.type}#{ret.id} is an image")
+                else:
+                    logger.warning(f"{ret.type}#{ret.id} is not an image, but {mimeType}, skipping parsing")
+                    ret.task = makeEmptyAsyncTask()
+                    await self.db.mediaAttachments.updateMediaAttachment(
+                        mediaId=ret.id,
+                        status=MediaStatus.NEW,
+                    )
+                    return ret
 
-            imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
-            messages = [
-                ModelMessage(
-                    role="system",
-                    content=imagePrompt,
-                ),
-                ModelImageMessage(
-                    role="user",
-                    # content=ensuredMessage.messageText,
-                    # Openrouer LLMs does not support adding text to message with image.
-                    # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
-                    # So let's delete it
-                    content="",
-                    image=bytearray(mediaData),
-                ),
-            ]
+                imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
+                messages = [
+                    ModelMessage(
+                        role="system",
+                        content=imagePrompt,
+                    ),
+                    ModelImageMessage(
+                        role="user",
+                        # content=ensuredMessage.messageText,
+                        # Openrouer LLMs does not support adding text to message with image.
+                        # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
+                        # So let's delete it
+                        content="",
+                        image=bytearray(mediaData),
+                    ),
+                ]
 
-            logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
-            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
-            # logger.debug(f"{mediaType}#{ret.id} After Start")
-            ret.task = parseTask
-            await self.queueService.addBackgroundTask(parseTask)
-            # logger.debug(f"{mediaType}#{ret.id} After Queued")
+                logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
+                parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
+                # logger.debug(f"{mediaType}#{ret.id} After Start")
+                ret.task = parseTask
+                await self.queueService.addBackgroundTask(parseTask)
+                # logger.debug(f"{mediaType}#{ret.id} After Queued")
+
+            if needProcessSTT:
+                chatId = ensuredMessage.recipient.id
+                sttTask = asyncio.create_task(self._transcribeMedia(ret.id, chatId, data=mediaData))
+                await self.queueService.addBackgroundTask(sttTask)
+                ret.task = sttTask
 
         if ret.task is None:
             ret.task = makeEmptyAsyncTask()

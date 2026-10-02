@@ -23,7 +23,7 @@ Example:
             "gpt-4": {
                 "provider": "yc-provider",
                 "model_id": "gpt-4",
-                "temperature": 0.7
+                "customParams": {"temperature": 0.7}
             }
         }
     }
@@ -39,6 +39,7 @@ from lib.stats import NullStatsStorage, StatsStorage
 from .abstract import AbstractLLMProvider, AbstractModel
 from .providers.custom_openai_provider import CustomOpenAIProvider
 from .providers.fastembed_provider import FastembedProvider
+from .providers.opencode_go_provider import OpencodeGoProvider
 from .providers.openrouter_provider import OpenrouterProvider
 from .providers.yc_openai_provider import YcOpenaiProvider
 from .providers.yc_sdk_provider import YcAIProvider
@@ -104,6 +105,8 @@ class LLMManager:
         - openrouter: OpenRouter API
         - yc-sdk: Yandex Cloud SDK provider
         - custom-openai: Custom OpenAI-compatible endpoint
+        - opencode-go: OpenCode Go subscription endpoint (adds the
+          ``x-opencode-session`` header to every request)
         - fastembed: Local fastembed-backed embedding provider
           (multi-model; ``fastembed`` is an optional dependency)
 
@@ -120,6 +123,7 @@ class LLMManager:
             "openrouter": OpenrouterProvider,
             "yc-sdk": YcAIProvider,
             "custom-openai": CustomOpenAIProvider,
+            "opencode-go": OpencodeGoProvider,
             "fastembed": FastembedProvider,
         }
 
@@ -150,7 +154,9 @@ class LLMManager:
         - provider: Name of the provider to use
         - model_id: Model identifier for the provider
         - model_version: Optional model version (default: "latest")
-        - temperature: Optional temperature setting (default: 0.5)
+        - customParams: Optional dict of parameters passed through to the
+            underlying LLM API call (temperature, top_p, max_tokens, etc.).
+            Defaults to an empty dict.
         - context: Optional context size (default: 32768)
         - enabled: Whether the model is enabled (default: True)
         """
@@ -170,7 +176,7 @@ class LLMManager:
                 providerName: str = modelConfig["provider"]
                 modelId: str = modelConfig["model_id"]
                 modelVersion: str = modelConfig.get("model_version", "latest")
-                temperature: float = modelConfig.get("temperature", 0.5)
+                customParams: Dict[str, Any] = modelConfig.get("customParams", {})
                 contextSize: int = modelConfig.get("context", 32768)
 
                 if providerName not in self.providers:
@@ -182,7 +188,7 @@ class LLMManager:
                     name=modelName,
                     modelId=modelId,
                     modelVersion=modelVersion,
-                    temperature=temperature,
+                    customParams=customParams,
                     contextSize=contextSize,
                     statsStorage=self.statsStorage,
                     extraConfig=modelConfig,
@@ -195,7 +201,7 @@ class LLMManager:
                 logger.info(f"Added model {modelName} to provider {providerName}")
 
             except Exception as e:
-                logger.error(f"Failed to initialize model {modelConfig.get('name', 'unknown')}: {e}")
+                logger.exception(f"Failed to initialize model {modelName}: {e}")
 
     def listModels(self) -> List[str]:
         """List all available models across all providers.

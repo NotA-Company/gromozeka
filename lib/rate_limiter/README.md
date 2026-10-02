@@ -117,7 +117,7 @@ Sliding window rate limiter implementation.
 **Methods:**
 - `async initialize()` - Initialize the rate limiter
 - `async destroy()` - Clean up resources
-- `async applyLimit(queue="default")` - Apply rate limiting (may sleep)
+- `async applyLimit(queue="default", timeout=None) -> bool` - Apply rate limiting (may sleep); returns True when applied, False when the wait would exceed `timeout` (never sleeps in that case, slot not consumed)
 - `getStats(queue="default")` - Get statistics for a queue
 - `listQueues()` - List all registered queues
 
@@ -146,7 +146,7 @@ Singleton manager for multiple rate limiters with queue mapping.
 - `registerRateLimiter(name, limiter)` - Register a rate limiter
 - `setDefaultLimiter(name)` - Set default rate limiter
 - `bindQueue(queue, limiterName)` - Bind queue to specific limiter
-- `async applyLimit(queue="default")` - Apply rate limiting
+- `async applyLimit(queue="default", key=None, timeout=None) -> bool` - Apply rate limiting; returns True when applied, False on failure (no limiter registered, limiter error) or when the wait would exceed `timeout`
 - `getStats(queue="default")` - Get statistics
 - `listRateLimiters()` - List registered limiters
 - `getQueueMappings()` - Get queue-to-limiter mappings
@@ -169,6 +169,11 @@ manager.bindQueue("postgres", "database")
 # Use
 await manager.applyLimit("yandex_search")  # Uses API limiter
 await manager.applyLimit("postgres")       # Uses database limiter
+
+# Bounded waiting: give up (return False) if no slot within 30 seconds
+applied = await manager.applyLimit("yandex_search", timeout=30)
+if not applied:
+    ...  # tell the caller the limit is saturated
 ```
 
 ## Monitoring and Statistics

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Empty TRUNCATED_FINAL LLM Bug
 
 Durable notes on the recurring production failure where an OpenAI-compatible API returns `finish_reason="length"` with empty `message.content`. Suspected root cause: reasoning-token budget exhaustion on Qwen3-class models — failing logs show `outputTokens=32768` matching `max_tokens`. The empty content flows unchecked through every layer (provider → abstract fallback → service → handler → bot send path) and reaches python-telegram-bot as `send_message(text="")`, raising `telegram.BadRequest: Message text is empty`. Item 1 (observability-only WARNING dump) shipped 2026-07-05 in the OpenAI-compatible provider. A partial behavior fix landed the same day: the LLM-message handler now treats bare-empty `resultText` as `SKIPPED_BY_MODEL` (`llm_messages.py:394`, silent-drop variant of plan Option B). The remainder of the plan — provider-side downgrade (Option A), the `bot.py` empty-string safety net (Option B's second half), and the regression tests from the plan's Test Plan — is still pending.

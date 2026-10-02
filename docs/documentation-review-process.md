@@ -1,3 +1,9 @@
+---
+description: "Systematic, repeatable process for reviewing and maintaining documentation for accuracy, consistency, and codebase alignment"
+tags: [process]
+category: process
+---
+
 # Documentation Review Process
 
 > **Purpose**: Establish a systematic, repeatable process for reviewing and maintaining Gromozeka documentation to ensure accuracy, consistency, and alignment with the codebase.
@@ -69,11 +75,14 @@
 ### Phase 2: Discovery and Analysis
 
 1. **Inventory all documentation files**
-   ```bash
-   # Find all markdown documentation
-   find docs -name "*.md" -type f
+   When the markdown-mcp tools are available, `doc_list()` (optionally with
+   a `file_glob` filter) is the inventory — it enumerates the indexed live
+   tree directly. Excluded paths (`docs/archive/`, `docs/other/`) are never
+   indexed and still require a manual `find`/Glob sweep either way:
 
-   # Find all AI guide files
+   ```bash
+   # Manual fallback, and the only option for excluded paths
+   find docs -name "*.md" -type f
    find docs/llm -name "*.md" -type f
    ```
 
@@ -114,25 +123,47 @@
 ### Phase 4: Execution and Updates
 
 1. **Apply changes to documentation**
+   With markdown-mcp available, steps 1-2 below are the CAS loop; without
+   it, they fall back to the manual edit tool. Steps 3-5 apply either way:
+
    ```
    For each document update:
-   1. Read the file first (required by edit tool)
-   2. Apply targeted edits using the edit tool
+   1. Read the current state: `doc_read(file_path, section_slug=…)`
+      (resolve the slug from `doc_outline` at use time) — the response
+      carries the CAS token. Manual fallback: read the file first
+      (required by the edit tool)
+   2. Apply the edit: `doc_section_edit` / `doc_write` with the CAS
+      token, then check `reindex.status` in the result. Manual fallback:
+      apply targeted edits using the edit tool
    3. Run `make format lint test` after changes
    4. Verify links and cross-references via `make check-docs`
    5. Update related documents
    ```
 
 2. **Archive outdated documents**
+   Archival stays a filesystem `mv` — `doc_delete` cannot move a file —
+   and the `mv` plus the `make check-docs` gate (step 1.4 above) are
+   unconditional. When markdown-mcp is available, follow the `mv` with an
+   incremental `markdown-mcp index`; the moved paths are now under the
+   excluded `docs/archive/` and drop out of the index on rescan. Without
+   markdown-mcp, skip the index refresh:
+
    ```bash
    # Create archive directory structure
    mkdir -p docs/archive/review-YYYY-MM-DD
 
-   # Move files with descriptive suffix
+   # Move files with descriptive suffix (filesystem mv, not doc_delete)
    mv docs/old-doc.md docs/archive/review-YYYY-MM-DD/old-doc.md
+
+   # markdown-mcp only: refresh the index; archived paths drop out on rescan
+   markdown-mcp index
 
    # Update AGENTS.md to remove archived references
    ```
+
+   Reserve `doc_delete` (CAS-gated; removes the file and its index rows
+   in-call) for outright deletion of a live indexed doc — version control
+   is the backup story there.
 
 3. **Track findings and action items**
    - Consolidate findings into a prioritized list
@@ -145,6 +176,10 @@
 1. **Complete quality gates**
    - Run `make format lint test` (see [Quality Gates](#quality-gates))
    - Run `make check-docs` to verify all local markdown links resolve
+   - Docs-change definition of done: when the markdown-mcp tools are
+     available, `doc_lint` (or CLI `markdown-mcp lint`) must also come
+     back clean — it covers structure (duplicate slugs, front matter),
+     complementing `make check-docs` for links
    - Check for broken cross-references
    - Ensure code examples are accurate
 
@@ -397,7 +432,7 @@ The review generated 64+ actionable items:
 - **Related items**: Group together under parent item
 - **Implementation vs. documentation**: Separate TODOs from follow-up documentation updates
 - **Completed items**: Mark with `✅ IMPLEMENTED` or remove from active list
-- WONTFIX items**: Document why with "Status: ✅ IMPLEMENTED (update docs only)" or similar
+- WONTFIX items**: Document why with "Status: IMPLEMENTED (update docs only)" or similar
 
 ---
 
@@ -591,7 +626,7 @@ make check-docs
 
 ### Automation Opportunities
 
-1. **Automated link checking** — ✅ IMPLEMENTED (2026-07-11)
+1. **Automated link checking** — IMPLEMENTED (2026-07-11)
    ```bash
    # The project's local-link checker is live (scripts/check_docs.py)
    make check-docs    # exits 1 on any broken local markdown link
@@ -684,8 +719,21 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 git grep -w "old-file-name" docs/
 ```
 
----
+markdown-mcp equivalents (when available; indexed live tree only — excluded
+`docs/archive/` and `docs/other/` stay invisible to these):
 
+```
+# Inventory instead of the find commands
+doc_list()
+
+# Semantic search instead of rg over docs/
+doc_search(query="chat settings gating", file_glob="llm/*.md")
+
+# Structural lint (duplicate slugs, front matter) alongside make check-docs
+doc_lint()
+```
+
+---
 ## Appendices
 
 ### Appendix A: Review Template

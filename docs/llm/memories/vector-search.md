@@ -1,6 +1,21 @@
+---
+category: reference
+---
+
 # Vector Search — Native Provider Support
 
 Durable notes from the vector search design and native sqlite-vec implementation (2026-06-28/29). Read this when working on `ChatSearchRepository`, `ChatEmbeddingsRepository`, `SQLite3Provider`, or vector search infrastructure.
+
+## Post-migration_025 update (2026-07-21)
+
+The embedding-model-lookup refactor (`migration_025_embedding_model_lookup`) unified the storage shape across chat-history search and user memories:
+
+- **Dual-write retired.** The `message_embeddings` BLOB table (and its index + both vec0 families) was DROPPED. Embeddings now live ONLY in vec0. The chat-history write path is now single-write: `UPDATE chat_messages.model_id` + vec0 INSERT (lazy-create on dimension).
+- **numpy fallback retired in chat-search scope.** `_semanticSearch` in `internal/database/repositories/chat_search.py` collapsed to vec0-or-`[]` (the inline cosine + `np.argpartition` top-K path was deleted). `_loadEmbeddingsFromDb` was deleted (no BLOB table to load from). Same for `user_memories.py`'s numpy import. numpy is no longer a direct dep (`numpy==2.5.1` removed from `requirements.direct.txt`; still transitive via `fastembed`).
+- **vec0 partition key changed.** Both vec0 families (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) now use `model_id INTEGER PARTITION KEY` (was TEXT `model`). The `model_id` INTEGER is an FK into the new `models` lookup table. Existing vec0 tables were dropped lazily and recreated on the next write.
+- **`EmbeddingModelsRepository`** (`internal/database/repositories/embedding_models.py`, process-local cache) backs the new lookup table. The three refactored repos (`ChatMessagesRepository`, `ChatSearchRepository`, `UserMemoriesRepository`) take a constructor-injected `modelIdResolver` (D10) that translates `(modelName, dimensions) -> model_id`.
+
+The pre-migration design notes below are preserved as the historical record; they describe the dual-write + numpy-fallback architecture that migration_025 retired.
 
 ## Design
 
@@ -43,14 +58,20 @@ Design document: [`docs/design/vector-search-native.md`](../../design/vector-sea
 
 The design in [`docs/design/vector-search-native.md`](../../design/vector-search-native.md) has been implemented. Concrete implementation facts (supplement the design notes above):
 
-- **New dependency**: `sqlite-vec==0.1.9` in `requirements.direct.txt` under `# Runtime`. Optional at runtime — guarded by a module-level `try/except ImportError` + `_SQLITE_VEC_AVAILABLE` flag in `internal/database/providers/sqlite3.py`.
+- **New dependency**: `sqlite-vec==0.1.9` in `requirements.direct.txt` under `# Runtime`. Optional at runtime — guarded by a module-level `try/except ImportError` + `_SQLITE_VEC_AVAILABLE` flag in `lib/db/providers/sqlite3.py`.
 - **Dual-write**: `ChatEmbeddingsRepository.saveMessageEmbedding()` writes to BOTH `message_embeddings` (authoritative) and the dimension-specific `vec0` table `vec_message_embeddings_{N}` (lazily created via `_upsertVecMessageEmbedding()` → `provider.createVectorTable()` with `readonly=False`). vec0 has no unique constraint on metadata columns, so dual-write is DELETE-then-INSERT (delete by metadata columns, or fallback SELECT rowid → DELETE by rowid).
 - **Native search path**: `ChatSearchRepository._semanticSearch()` calls `isVectorSearchSupported()`; if true, tries `_nativeVectorSearch()` first. On exception OR empty native results, falls through to the numpy path. **Empty native results are NOT returned as `[]`** — they fall through to numpy so a pre-backfill vec0 table doesn't silently return nothing.
 - **Dimension-aware table naming**: `vec_message_embeddings_{N}` where `N = len(queryEmbedding)` (e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`). Multiple dimensions coexist; the repository picks the table from the query vector length. No model introspection API needed.
 - **Auto-connect in `vectorSearch()`**: `vectorSearch()` may be called on a provider whose connection was opened lazily (`keepConnection=false`) or that has not yet connected. It auto-connects when needed to handle the lazy connection lifecycle. Table creation happens ONLY in the write path (`readonly=False`); the search path uses `readonly=True` (SQLite PRAGMA `query_only` blocks DDL), so a missing vec0 table raises and triggers numpy fallback rather than attempting to create it.
+
+### Extension loading, model-drift cleanup, and vec0 ephemerality
+
 - **Extension loading via aiosqlite**: `enable_load_extension(True)` → `load_extension(sqlite_vec.loadable_path())` → `enable_load_extension(False)`, wrapped in `try/finally` so loading is always disabled afterward (safety against leaving extension loading on after a failure). No `sqlite_vec.load(conn)` (that touches the raw `connection._conn` and is fragile), no bare `SELECT load_extension('vec0')`. Version verified via `SELECT vec_version()`.
 - **Model-change cleanup with in-memory tracking**: `ChatSearchHandler._dtCronJob()` delegates to `ChatEmbeddingsRepository.deleteObsoleteModelEmbeddings()` (returns `bool`). Gated by an in-memory `_embeddingModelTracker: Dict[int, str]` (chatId → modelKey where modelKey is `modelName` or `modelName:dimensions`). Cleanup only fires once per model switch; skipped on subsequent ticks until the model changes again. Tracker is only updated on successful cleanup (prevents one-shot misses on transient failures). The repo method cleans **both** `message_embeddings` (authoritative) **and** all `vec_message_embeddings_{N}` tables, skipping the vec0 table matching `currentDimensions`. Dimension-aware: DELETE from `message_embeddings` matches on `(model, dimensions)` tuple; vec0 cleanup skips the current-dimension table (its rows are not stale).
 - **vec0 tables are ephemeral**: `message_embeddings` is authoritative. vec0 tables are rebuildable sidecar indexes — they carry nothing the app cannot reconstruct. No migration creates them; no backfill job is required to populate them (dual-write + CRON re-embed catch them up). They exist only when `sqlite-vec` is loaded.
+
+### Search-path details, config, and known limitations
+
 - **maxMessages cutoff joins `message_embeddings`** (not just `chat_messages`) in the native path to mirror the numpy path's candidate-pool semantics: `minDate` is computed and pushed into the vec0 MATCH query via `filterClause` (`date >= :minDate`) as a pre-filter (Option B from the design), so both paths rank over the same recent-N candidate set.
 - **No config key needed**: auto-detection at connect time. To disable native search: `pip uninstall sqlite-vec` → `isVectorSearchSupported()` returns `False` → numpy path used transparently. There is no `[vector-search]` TOML section.
 - **Custom extension path (Alpine Linux / source builds)**: When the `sqlite-vec` pip package is unavailable (no musl wheel), set `vectorExtensionPath = "/path/to/vec0.so"` under `[database.providers.<name>.parameters]` in TOML. The provider loads the extension from that path instead of `sqlite_vec.loadable_path()`. Use `${VEC0_EXTENSION_PATH}` env-var substitution for Docker flexibility. Commented example in `configs/00-defaults/00-config.toml`. The pip package takes priority when both are present.
@@ -65,4 +86,4 @@ Audit of vec0 virtual-table columns confirmed which columns are live vs. dead, a
 - **`vec_message_embeddings_{N}`: 5 columns, NO dead columns.** All of `message_id`/`chat_id`/`model`/`date`/`embedding` (the schema in the Design section above) are read AND written. Audited fully — do NOT re-investigate this table.
 - **`vec_user_memories_{N}`: 6 live columns (was 8).** `thread_id`+`type` were confirmed write-only and dropped; partition keys are `chat_id`/`user_id`/`model` only (`permanent` is a plain filterable metadata column). The column-by-column detail lives in [`user-memories.md`](user-memories.md) (vec0 virtual table section) — not duplicated here.
 - **vec0 virtual tables cannot `ALTER TABLE`.** Changing columns requires DROP + lazy-recreate. Existing prod tables carrying the old schema must be dropped manually; they are non-durable and rebuild via the regen CRON (consistent with the ephemerality note above). This matches the precedent set when the `model` partition key was added.
-- **`createVectorTable` is the sole vec0-creation entry point** (`/internal/database/providers/sqlite3.py`, takes `list[VectorColumnDef]`); there is no other path that materialises a vec0 table. Vec0 has no native `TIMESTAMP` or `BOOLEAN` type: `date` is stored as TEXT (ISO-8601) and booleans as INTEGER `0`/`1`. There is no real UPSERT on metadata columns — both repos use the DELETE-then-INSERT-with-rowid-fallback pattern already documented above for the message-embeddings repo; the user-memories repo follows the identical shape.
+- **`createVectorTable` is the sole vec0-creation entry point** (`/lib/db/providers/sqlite3.py`, takes `list[VectorColumnDef]`); there is no other path that materialises a vec0 table. Vec0 has no native `TIMESTAMP` or `BOOLEAN` type: `date` is stored as TEXT (ISO-8601) and booleans as INTEGER `0`/`1`. There is no real UPSERT on metadata columns — both repos use the DELETE-then-INSERT-with-rowid-fallback pattern already documented above for the message-embeddings repo; the user-memories repo follows the identical shape.

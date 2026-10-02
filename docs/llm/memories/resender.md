@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Resender Module
 
 Durable notes from the Resender module implementation (2026-07-03). Read this when working on `internal/bot/common/handlers/resender.py` or message forwarding features.

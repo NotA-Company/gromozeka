@@ -2,3 +2,25 @@
 enabled = false
 
 llm-stats-data-source = "default"
+stt-stats-data-source = "default"
+message-stats-data-source = "default"
+tool-stats-data-source = "default"
+command-stats-data-source = "default"
+
+aggregation-interval-seconds = 3600
+aggregation-batch-limit = 1000
+events-retention-days = 30
+
+[stats.pages]
+enabled = false
+# The CLI requires --base-url and --output-dir arguments in the generate-command template
+ttl-hours = 24
+ratelimiter-queue = "stats-pages"
+generate-command = [
+    "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
+    "--base-url=https://stats.example.com", "--output-dir=./stats-pages",
+]
+delete-command = [
+    "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
+    "--output-dir=./stats-pages",
+]

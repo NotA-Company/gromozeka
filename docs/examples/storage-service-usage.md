@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Storage Service Usage Examples
 
 Practical examples demonstrating how to use the Storage Service in various scenarios.
@@ -81,7 +85,7 @@ type = "fs"
 base-dir = "./storage/objects"
 ```
 
-### Usage Example
+### Filesystem Backend Usage Example
 
 ```python
 from pathlib import Path
@@ -158,7 +162,7 @@ bucket = "my-app-storage"
 prefix = "prod/"
 ```
 
-### Usage Example
+### S3 Backend Usage Example
 
 ```python
 from internal.services.storage import StorageService

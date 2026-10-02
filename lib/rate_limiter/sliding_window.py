@@ -167,7 +167,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
             self._locks[queue] = asyncio.Lock()
             logger.debug(f"Auto-registered queue '{queue}'")
 
-    async def applyLimit(self, queue: str = "default") -> None:
+    async def applyLimit(self, queue: str = "default", timeout: Optional[int] = None) -> bool:
         """
         Apply rate limiting for the specified queue.
 
@@ -178,12 +178,27 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         4. Sleeps if necessary to respect the limit
         5. Records the current request timestamp
 
+        When ``timeout`` is set and the required wait exceeds it, the method
+        returns False immediately instead of sleeping. Because the wait
+        happens while holding the queue lock (waiters are serialized), the
+        wait time is known exactly upfront — a timed-out request never
+        sleeps and never consumes a slot.
+
         Args:
             queue: Name of the queue to apply rate limiting to.
-                   Auto-registered on first use.
+                    Auto-registered on first use.
+            timeout: Optional maximum number of seconds to wait for a free
+                    slot. If the limit cannot be applied within this time,
+                    gives up without recording the request.
+
+        Returns:
+            True if the rate limit was applied (timestamp recorded);
+            False if the limit could not be applied within ``timeout``
+            seconds (only possible when ``timeout`` is set).
 
         Example:
             >>> await limiter.applyLimit("api")  # May sleep if limit exceeded
+            >>> await limiter.applyLimit("api", timeout=5)  # Gives up after 5s
             >>> await limiter.applyLimit("other_api")  # Different queue, same limits
         """
         # Auto-register queue on first use
@@ -204,6 +219,13 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
                 waitTime = self._config.windowSeconds - (currentTime - oldestRequest)
 
                 if waitTime > 0:
+                    if timeout is not None and waitTime > timeout:
+                        logger.debug(
+                            f"Rate limit wait {waitTime:.2f}s for queue '{queue}' exceeds "
+                            f"timeout {timeout}s, giving up"
+                        )
+                        return False
+
                     logger.debug(f"Rate limit reached for queue '{queue}', " f"waiting {waitTime:.2f} seconds")
                     await asyncio.sleep(waitTime)
 
@@ -217,6 +239,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
 
             # Add current request time
             self._requestTimes[queue].append(currentTime)
+            return True
 
     def getStats(self, queue: str = "default") -> Dict[str, Any]:
         """

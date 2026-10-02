@@ -59,7 +59,7 @@ class AbstractModelWrapper:
                 name=f"{type(provider).__name__}/{modelId}:{modelVersion}",
                 modelId=modelId,
                 modelVersion=modelVersion,
-                temperature=float(modelArgs.get("temperature", 0.5)),
+                customParams={"temperature": float(modelArgs.get("temperature", 0.5))},
                 contextSize=int(modelArgs.get("context_size", 8192)),
                 statsStorage=NullStatsStorage(),
                 extraConfig=modelArgs,

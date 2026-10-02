@@ -26,7 +26,9 @@ from internal.bot.models import (
     MessageSender,
     MessageType,
 )
+from internal.models import MessageId
 from lib.ai import ModelResultStatus, ModelRunResult
+from lib.ai.session import buildSessionId
 
 # ---------------------------------------------------------------------------
 # Local fixtures
@@ -174,7 +176,7 @@ def _makeEnsuredMessage(
     ensured = Mock(spec=EnsuredMessage)
     ensured.sender = MessageSender(id=123, name="TestUser", username="testuser")
     ensured.recipient = MessageRecipient(id=456, chatType=ChatType.PRIVATE)
-    ensured.messageId = 1
+    ensured.messageId = MessageId(1)
     ensured.date = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
     ensured.messageText = messageText
     ensured.messageType = messageType
@@ -389,3 +391,53 @@ class TestLlmReplayCommand:
         sentText: str = handler.sendMessage.call_args.kwargs.get("messageText", "")  # type: ignore[attr-defined]
         assert "non-final status" in sentText
         assert "TOOL_CALLS" in sentText
+
+    async def testLlmReplayPassesDevSessionId(self, handler: DevCommandsHandler) -> None:
+        """Should pass a dev-namespaced sessionId to generateTextViaLLM.
+
+        The replay bucket is keyed by the command message
+        (``gromozeka-dev-<chatId>-<messageId>``) — deliberately NOT the
+        live conversation session: a replayed frozen transcript must not
+        share a prompt-cache bucket with an evolving thread.
+
+        Args:
+            handler: The handler fixture with mocked dependencies
+        """
+        jsonBytes = _sampleJsonLogBytes()
+        handler._bot.downloadAttachment = AsyncMock(return_value=jsonBytes)  # type: ignore[union-attr]
+
+        doc = _makeTelegramDocument()
+        tgMsg = Mock(spec=telegram.Message)
+        tgMsg.document = doc
+        tgMsg.chat = Mock()
+        tgMsg.chat.id = 456
+        tgMsg.from_user = Mock()
+
+        ensuredMessage = _makeEnsuredMessage(
+            messageText="/llm_replay model-a",
+            messageType=MessageType.DOCUMENT,
+            baseMessage=tgMsg,
+        )
+
+        mockModel = Mock()
+        handler.llmService.getLLMManager().getModel = Mock(return_value=mockModel)
+
+        finalResult = ModelRunResult(
+            rawResult={"id": "resp-final"},
+            status=ModelResultStatus.FINAL,
+            resultText="Replayed ok",
+            elapsedTime=1.0,
+        )
+        handler.llmService.generateTextViaLLM = AsyncMock(return_value=finalResult)
+
+        await handler.llmReplayCommand(
+            ensuredMessage=ensuredMessage,
+            command="llm_replay",
+            args="model-a",
+            UpdateObj=Mock(),
+            typingManager=None,
+        )
+
+        handler.llmService.generateTextViaLLM.assert_awaited_once()  # type: ignore[attr-defined]
+        callKwargs = handler.llmService.generateTextViaLLM.call_args.kwargs  # type: ignore[attr-defined]
+        assert callKwargs["sessionId"] == buildSessionId("dev", "456", "1")

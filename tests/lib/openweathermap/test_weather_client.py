@@ -20,7 +20,7 @@ import asyncio
 import json
 from unittest.mock import Mock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from lib.cache import DictCache, StringKeyGenerator

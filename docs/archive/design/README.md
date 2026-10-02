@@ -15,6 +15,12 @@ These shipped-feature design docs were moved out of `docs/` during the 2026-07-1
 
 - [`sandbox-improvements-design.md`](sandbox-improvements-design.md) — Sandbox Improvements design (IMPLEMENTED; tools `sandbox_list_files`, `sandbox_read_file`, per-run `workDir` all live)
 
+## Recently Archived (2026-08-08)
+
+These design docs were moved out of `docs/design/` because their tracked work is fully implemented. They remain here as historical record.
+
+- [`stt-next-steps.md`](stt-next-steps.md) — STT integration roadmap + release gates (tracked work IMPLEMENTED — `lib/stt` v1 + `STTService` + the `_processMediaV2` handler round + the v1.1 gate-3/gate-4 code; only manual smoke testing + operator-enable prerequisites remain). Live authoritative docs: [`docs/design/stt-v1.1.md`](../../design/stt-v1.1.md), [`docs/design/media-transcription-stt-v1.md`](../../design/media-transcription-stt-v1.md), [`docs/design/lib-stt-v1.md`](../../design/lib-stt-v1.md).
+
 ## File Status Summary
 
 | File | Status | Notes |
@@ -94,5 +100,5 @@ For current architecture, design patterns, and ADRs:
 
 ---
 
-*Last updated: 2026-07-18*
+*Last updated: 2026-08-08*
 *Design archive maintained for historical context only*

@@ -5,16 +5,23 @@ This module provides shared fixtures for testing bot handlers, services,
 and database operations. All fixtures follow camelCase naming convention.
 """
 
-import asyncio
-from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, Mock
+import httpx2
 
-import pytest
+# Mirror production: resolve `import httpx` to `httpx2` process-wide so the test
+# suite exercises the same HTTP library the bot runs under (main.py does the same).
+# MUST run before any test module imports httpx. See docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
 
-from internal.database.manager import DatabaseManagerConfig
+import asyncio  # noqa: E402
+from typing import AsyncGenerator, Generator  # noqa: E402
+from unittest.mock import AsyncMock, Mock  # noqa: E402
 
-# Import test utilities
-from tests.utils import (
+import pytest  # noqa: E402
+
+from lib.db.manager import DatabaseManagerConfig  # noqa: E402
+
+# Import test utilities  # noqa: E402
+from tests.utils import (  # noqa: E402
     createAsyncMock,
     createMockChat,
     createMockMessage,
@@ -79,12 +86,6 @@ def mockDatabaseWrapper():
     from internal.database import Database
 
     mock = Mock(spec=Database)
-
-    # Configure common return values
-    mock.getChatSettings.return_value = {}
-    mock.getUserData.return_value = {}
-    mock.getChatMessages.return_value = []
-    mock.getDelayedTasks.return_value = []
 
     # Configure async methods
     mock.saveChatMessage = AsyncMock(return_value=None)
@@ -279,8 +280,7 @@ def mockConfigManager():
         "token": "test_token",
         "owners": [123456],
     }
-    mock.getProviderConfig.return_value = {}
-    mock.getModelConfig.return_value = {}
+    mock.getModelsConfig.return_value = {}
 
     return mock
 

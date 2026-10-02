@@ -14,6 +14,7 @@ Key features:
 Main exports:
     ConfigManager: Main class for managing bot configuration
     substituteEnvVars: Function to substitute environment variables in config values
+        (moved to lib.utils.utils.substituteEnvVars; use via ConfigManager or import from lib.utils)
 
 Example:
     >>> from internal.config import ConfigManager

@@ -3,7 +3,7 @@
 ## Goal
 
 Remove every occurrence of the SQL expression `CURRENT_TIMESTAMP` from:
-1. **SQL queries** in repositories and `bayes_storage.py` — replace with Python-generated UTC timestamps via [`dbUtils.getCurrentTimestamp()`](internal/database/utils.py:219)
+1. **SQL queries** in repositories and `bayes_storage.py` — replace with Python-generated UTC timestamps via [`dbUtils.getCurrentTimestamp()`](../../../lib/db/utils.py:219)
 2. **Table schema definitions** — remove `DEFAULT CURRENT_TIMESTAMP` from column declarations and create a migration to apply the schema change
 3. **`database.py` settings table** — update the inline `CREATE TABLE` statement
 
@@ -15,7 +15,7 @@ To maintain correctness, every `INSERT` / `UPDATE` / `REPLACE` / `upsert` query 
 
 ### Already converted — no `CURRENT_TIMESTAMP` in SQL
 
-These files already use [`dbUtils.getCurrentTimestamp()`](internal/database/utils.py:219) or [`getCurrentTimestamp()`](internal/database/utils.py:219) for all timestamp values passed into queries. **No work needed on their SQL text**, but some may need to start providing `created_at` if schema defaults are removed.
+These files already use [`dbUtils.getCurrentTimestamp()`](../../../lib/db/utils.py:219) or [`getCurrentTimestamp()`](../../../lib/db/utils.py:219) for all timestamp values passed into queries. **No work needed on their SQL text**, but some may need to start providing `created_at` if schema defaults are removed.
 
 | File | Methods | Notes |
 |------|---------|-------|

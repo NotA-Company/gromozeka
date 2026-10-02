@@ -52,6 +52,7 @@ class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
         from lib.cache import (
             CacheInterface,
             DictCache,
+            GenericDatabaseCache,
             HashKeyGenerator,
             JsonKeyGenerator,
             KeyGenerator,
@@ -62,11 +63,25 @@ class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
         # Verify they are the correct types
         assert CacheInterface is not None
         assert DictCache is not None
+        assert GenericDatabaseCache is not None
         assert NullCache is not None
         assert StringKeyGenerator is not None
         assert HashKeyGenerator is not None
         assert JsonKeyGenerator is not None
         assert KeyGenerator is not None
+
+    def test_genericdatabasecache_in_all(self) -> None:
+        """Test that GenericDatabaseCache is in lib.cache.__all__.
+
+        Verifies that GenericDatabaseCache is properly exported through
+        the __init__.py module's __all__ list.
+
+        Raises:
+            AssertionError: If GenericDatabaseCache is not in __all__.
+        """
+        from lib.cache import __all__ as cacheAll
+
+        assert "GenericDatabaseCache" in cacheAll
 
     def test_import_from_module(self) -> None:
         """Test that imports work as expected.

@@ -880,7 +880,7 @@ class ModelImageMessage(ModelMessage):
 
             content = []
             if self.content:
-                content.append({"type": "text", "content": self.content})
+                content.append({"type": "text", "text": self.content})
 
             content.append(
                 {
@@ -997,6 +997,9 @@ class ModelRunResult:
         "inputTokens",
         "outputTokens",
         "totalTokens",
+        "cachedInputTokens",
+        "reasoningTokens",
+        "cost",
         "elapsedTime",
     )
 
@@ -1034,6 +1037,9 @@ class ModelRunResult:
         inputTokens: Optional[int] = None,
         outputTokens: Optional[int] = None,
         totalTokens: Optional[int] = None,
+        cachedInputTokens: Optional[int] = None,
+        reasoningTokens: Optional[int] = None,
+        cost: Optional[float] = None,
         elapsedTime: Optional[float] = None,
     ):
         """Initialize a model run result.
@@ -1050,6 +1056,15 @@ class ModelRunResult:
             inputTokens: Number of input tokens used (default: None).
             outputTokens: Number of output tokens generated (default: None).
             totalTokens: Total number of tokens used (default: None).
+            cachedInputTokens: Number of input tokens served from the
+                provider's prompt cache — a subset of inputTokens. None when
+                the provider does not report prompt-cache details (default: None).
+            reasoningTokens: Number of hidden reasoning/thinking tokens — a
+                subset of outputTokens. None when the provider does not report
+                reasoning-token details (default: None).
+            cost: Provider-reported cost of the request in USD (e.g. OpenRouter
+                ``usage.cost``). None when the provider does not report cost
+                (default: None).
             elapsedTime: Time, elapsed on LLM request (default: None).
 
         Returns:
@@ -1077,6 +1092,15 @@ class ModelRunResult:
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.totalTokens = totalTokens
+        self.cachedInputTokens = cachedInputTokens
+        """Optional[int]: Input tokens served from the provider's prompt cache
+        (subset of ``inputTokens``); None when not reported."""
+        self.reasoningTokens = reasoningTokens
+        """Optional[int]: Hidden reasoning/thinking tokens (subset of
+        ``outputTokens``); None when not reported."""
+        self.cost = cost
+        """Optional[float]: Provider-reported request cost in USD; None when
+        not reported."""
         self.elapsedTime: Optional[float] = elapsedTime
         """Time, elapsed on LLM request"""
 
@@ -1283,6 +1307,9 @@ class ModelStructuredResult(ModelRunResult):
         inputTokens: Optional[int] = None,
         outputTokens: Optional[int] = None,
         totalTokens: Optional[int] = None,
+        cachedInputTokens: Optional[int] = None,
+        reasoningTokens: Optional[int] = None,
+        cost: Optional[float] = None,
     ):
         """Initialize a structured-output model result.
 
@@ -1295,6 +1322,12 @@ class ModelStructuredResult(ModelRunResult):
             inputTokens: Number of input tokens used (default: None).
             outputTokens: Number of output tokens generated (default: None).
             totalTokens: Total number of tokens used (default: None).
+            cachedInputTokens: Input tokens served from the provider's prompt
+                cache — subset of inputTokens; None when not reported (default: None).
+            reasoningTokens: Hidden reasoning/thinking tokens — subset of
+                outputTokens; None when not reported (default: None).
+            cost: Provider-reported request cost in USD; None when not
+                reported (default: None).
 
         Returns:
             None
@@ -1307,5 +1340,8 @@ class ModelStructuredResult(ModelRunResult):
             inputTokens=inputTokens,
             outputTokens=outputTokens,
             totalTokens=totalTokens,
+            cachedInputTokens=cachedInputTokens,
+            reasoningTokens=reasoningTokens,
+            cost=cost,
         )
         self.data: Optional[Dict[str, Any]] = data

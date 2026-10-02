@@ -27,10 +27,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManager
 from internal.database.models import MemoryType, UserMemorySource
-from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE, SQLite3Provider
-from internal.database.repositories.user_memories import UserMemoryDict
+from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
+from lib.db.manager import DatabaseManager
+from lib.db.providers.sqlite3 import _SQLITE_VEC_AVAILABLE, SQLite3Provider
 
 CHAT_ID = 1
 USER_ID = 100
@@ -104,8 +104,7 @@ class TestUserMemoriesRepository:
         assert row["permanent"] is True
         assert row["source"] == "refinement"
         assert row["thread_id"] is None
-        assert row["embedding_model"] is None
-        assert row["embedding_dimensions"] is None
+        assert row["model_id"] is None
         assert row["created_at"] is not None
         assert row["updated_at"] is not None
 
@@ -687,6 +686,38 @@ class TestUserMemoriesVectorLayer:
 
         assert results == []
 
+    async def test_semanticSearchMemories_forwardsDataSourceToResolver(self, testDatabase: Database) -> None:
+        """``_semanticSearchMemories`` (via ``searchMemories``) forwards ``dataSource`` to the resolver.
+
+        Pins the multi-source routing contract on the semantic search
+        path: when ``searchMemories`` is given a ``queryEmbedding`` it
+        routes to ``_semanticSearchMemories``, which must forward the
+        ``dataSource`` kwarg to the injected resolver so the underlying
+        ``getOrCreateModelId`` can route its provider acquisition. The
+        resolver is invoked before the vec0 table check, so this test
+        is robust to the ``vec_user_memories_{dim}`` table being absent
+        — but it still requires vec0 to be advertised as supported by
+        the provider (otherwise the path short-circuits earlier).
+
+        Args:
+            testDatabase: Fresh in-memory database with migrations applied.
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not available; semantic-mode tests require vec0")
+
+        # Seed at least one user_memories row so the search has context.
+        await self._add(testDatabase, content="route-me", threadId=5)
+        resolverMock = AsyncMock(return_value=42)
+        repo = UserMemoriesRepository(testDatabase.manager, modelIdResolver=resolverMock)
+
+        # dim=2 — no vec0 table is ever created at this dimension, so
+        # the search returns [] AFTER the resolver is invoked.
+        await repo.searchMemories(
+            CHAT_ID, USER_ID, queryEmbedding=[0.1, 0.2], embeddingModel="m", dataSource="custom-src"
+        )
+
+        resolverMock.assert_awaited_once_with("m", 2, dataSource="custom-src")
+
     ###
     # saveMemoryEmbedding — lazy vec0 creation + provenance columns
     ###
@@ -713,11 +744,11 @@ class TestUserMemoriesVectorLayer:
         realTablesAfter = [t for t in tablesAfter if "vec_user_memories_3" in t]
         assert realTablesAfter, "Expected vec_user_memories_3 table to exist after first write"
 
-        # Provenance columns set on user_memories.
+        # Provenance column set on user_memories: model_id resolves ("modelA", 3).
+        expectedModelId = await testDatabase.embeddingModels.getOrCreateModelId("modelA", 3)
         rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
         rowA = next(r for r in rows if r["memory_id"] == idA)
-        assert rowA["embedding_model"] == "modelA"
-        assert rowA["embedding_dimensions"] == 3
+        assert rowA["model_id"] == expectedModelId
 
         # Second write → table reused (no new table created).
         ok2 = await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idB, [0.0, 1.0, 0.0], "modelA")
@@ -729,8 +760,7 @@ class TestUserMemoriesVectorLayer:
 
         rows2 = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
         rowB2 = next(r for r in rows2 if r["memory_id"] == idB)
-        assert rowB2["embedding_model"] == "modelA"
-        assert rowB2["embedding_dimensions"] == 3
+        assert rowB2["model_id"] == expectedModelId
 
     async def test_saveMemoryEmbedding_crossThreadNullThreadId(self, testDatabase: Database) -> None:
         """A memory with ``thread_id IS NULL`` must be embeddable and searchable.
@@ -758,12 +788,12 @@ class TestUserMemoriesVectorLayer:
         ok = await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, memoryId, [1.0, 0.0, 0.0], "modelA")
         assert ok is True, "saveMemoryEmbedding must succeed for NULL-thread memories"
 
-        # Provenance columns set on user_memories (only happens on vec0 success).
+        # Provenance column set on user_memories (only happens on vec0 success).
+        expectedModelId = await testDatabase.embeddingModels.getOrCreateModelId("modelA", 3)
         perm = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0)
         row = next(r for r in perm if r["memory_id"] == memoryId)
         assert row["thread_id"] is None, "relational thread_id must remain NULL (vec0 no longer touches thread_id)"
-        assert row["embedding_model"] == "modelA"
-        assert row["embedding_dimensions"] == 3
+        assert row["model_id"] == expectedModelId
 
         # Semantic search (no thread filter) must find the cross-thread memory.
         results = await testDatabase.userMemories.searchMemories(
@@ -818,25 +848,32 @@ class TestUserMemoriesVectorLayer:
         idCurrent = await self._add(testDatabase, content="current", threadId=5)
 
         if self._vecAvailable(testDatabase):
-            # Embed stale with old model, current with new model.
+            # Embed stale with old model, current with new model. The repo
+            # resolves the model name to ``model_id`` internally via the
+            # injected resolver (``testDatabase.embeddingModels.getOrCreateModelId``).
             await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idStale, [1.0, 0.0], "old-model")
             await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idCurrent, [1.0, 0.0], "new-model")
         else:
-            # Without vec0, manually set the columns via provider.
+            # Without vec0, stamp ``model_id`` directly via raw SQL (the
+            # repo resolves the same id through ``testDatabase.embeddingModels``).
+            staleId = await testDatabase.embeddingModels.getOrCreateModelId("old-model", 2)
+            currentId = await testDatabase.embeddingModels.getOrCreateModelId("new-model", 2)
             sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idStale, "m": "old-model", "d": 2},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idStale, "mid": staleId},
             )
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idCurrent, "m": "new-model", "d": 2},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idCurrent, "mid": currentId},
             )
 
         # Query with currentModel="new-model": surfaces fresh (NULL) + stale ("old-model").
-        stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="new-model", limit=10)
+        stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(
+            CHAT_ID, modelName="new-model", dimensions=2, limit=10
+        )
         staleIds = {r["memory_id"] for r in stale}
         assert idFresh in staleIds  # never embedded
         assert idStale in staleIds  # stale model
@@ -845,8 +882,8 @@ class TestUserMemoriesVectorLayer:
     async def test_getMemoriesWithoutEmbeddings_filtersByDimensions(self, testDatabase: Database) -> None:
         """Pin dimension-mismatch detection independent of embedding model.
 
-        Two memories share the same ``embedding_model`` ("modelA") but
-        differ in ``embedding_dimensions`` (384 vs 1024). Passing
+        Two memories share the same ``models.model`` name ("modelA") but
+        differ in ``models.dimensions`` (384 vs 1024). Passing
         ``dimensions=1024`` must surface only the 384-dim row as stale;
         passing ``dimensions=None`` (the default) omits the dimension
         check, so a matching-model row is never returned even when its
@@ -862,17 +899,19 @@ class TestUserMemoriesVectorLayer:
             await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idLow, [0.0] * 384, "modelA")
             await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idHigh, [0.0] * 1024, "modelA")
         else:
-            # Without vec0, manually set the provenance columns via provider.
+            # Without vec0, stamp ``model_id`` directly via raw SQL.
+            lowId = await testDatabase.embeddingModels.getOrCreateModelId("modelA", 384)
+            highId = await testDatabase.embeddingModels.getOrCreateModelId("modelA", 1024)
             sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idLow, "m": "modelA", "d": 384},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idLow, "mid": lowId},
             )
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idHigh, "m": "modelA", "d": 1024},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idHigh, "mid": highId},
             )
 
         # dimensions=1024: the 384-dim row is stale (mismatch); the 1024-dim row is current.
@@ -891,11 +930,33 @@ class TestUserMemoriesVectorLayer:
         assert idLow not in noneStaleIds
         assert idHigh not in noneStaleIds
 
+    async def test_getMemoriesWithoutEmbeddings_forwardsDataSourceToResolver(self, testDatabase: Database) -> None:
+        """``getMemoriesWithoutEmbeddings`` forwards ``dataSource`` to the resolver.
+
+        Pins the multi-source routing contract on the (modelName,
+        dimensions) branch — the only branch that resolves a model_id
+        via the injected resolver. A future regression that drops the
+        ``dataSource=dataSource`` kwarg from the resolver call breaks
+        the multi-source deployment model silently; this test catches
+        that.
+
+        Args:
+            testDatabase: Fresh in-memory database with migrations applied.
+        """
+        # Seed at least one user_memories row so the query has something to scan.
+        await self._add(testDatabase, content="route-me", threadId=5)
+        resolverMock = AsyncMock(return_value=42)
+        repo = UserMemoriesRepository(testDatabase.manager, modelIdResolver=resolverMock)
+
+        await repo.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="m", dimensions=2, dataSource="custom-src")
+
+        resolverMock.assert_awaited_once_with("m", 2, dataSource="custom-src")
+
     ###
     # deleteObsoleteMemoryEmbeddings
     ###
     async def test_deleteObsoleteMemoryEmbeddings(self, testDatabase: Database) -> None:
-        """Stale rows have embedding columns reset; current-model rows untouched."""
+        """Stale rows have ``model_id`` reset; current-model rows untouched."""
         idStale = await self._add(testDatabase, content="stale", threadId=5)
         idCurrent = await self._add(testDatabase, content="current", threadId=5)
 
@@ -905,31 +966,34 @@ class TestUserMemoriesVectorLayer:
             await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idStale, [1.0, 0.0], "old-model")
             await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idCurrent, [1.0, 0.0], "new-model")
         else:
-            # Manually set columns.
+            # Manually stamp ``model_id`` via raw SQL.
+            staleId = await testDatabase.embeddingModels.getOrCreateModelId("old-model", 2)
+            currentId = await testDatabase.embeddingModels.getOrCreateModelId("new-model", 2)
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idStale, "m": "old-model", "d": 2},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idStale, "mid": staleId},
             )
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idCurrent, "m": "new-model", "d": 2},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idCurrent, "mid": currentId},
             )
 
         # Call with currentModel="new-model", currentDimensions=2.
         # Stale (model="old-model") should be reset; current untouched.
-        count = await testDatabase.userMemories.deleteObsoleteMemoryEmbeddings(CHAT_ID, "new-model", 2)
+        count = await testDatabase.userMemories.deleteObsoleteMemoryEmbeddings(
+            CHAT_ID, "new-model", currentDimensions=2
+        )
         assert count == 1
 
-        # Verify columns.
+        # Verify columns: stale reset, current preserved.
+        expectedCurrentId = await testDatabase.embeddingModels.getOrCreateModelId("new-model", 2)
         rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
         staleRow = next(r for r in rows if r["memory_id"] == idStale)
         currentRow = next(r for r in rows if r["memory_id"] == idCurrent)
-        assert staleRow["embedding_model"] is None
-        assert staleRow["embedding_dimensions"] is None
-        assert currentRow["embedding_model"] == "new-model"
-        assert currentRow["embedding_dimensions"] == 2
+        assert staleRow["model_id"] is None
+        assert currentRow["model_id"] == expectedCurrentId
 
         # After reset, getMemoriesWithoutEmbeddings picks up the stale row.
         stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="new-model", limit=10)
@@ -937,18 +1001,88 @@ class TestUserMemoriesVectorLayer:
         assert idStale in staleIds
         assert idCurrent not in staleIds
 
+    async def test_deleteObsoleteMemoryEmbeddings_unknownModelClearsAll(self, testDatabase: Database) -> None:
+        """When *currentModel* is unseen by ``models``, every previously-stored ``model_id`` is stale.
+
+        ``deleteObsoleteMemoryEmbeddings`` resolves
+        ``(currentModel, currentDimensions)`` via
+        :meth:`getOrCreateModelId`, which is probe-then-insert: an
+        unseen model name *allocates* a brand-new ``model_id`` rather
+        than returning no match. The stale-row predicate is then
+        ``model_id != newId``, so every live row whose provenance is
+        the previously-seeded ``"some-model"`` matches and gets reset.
+        The never-embedded row (``model_id IS NULL``) is excluded by
+        the non-NULL predicate and left untouched.
+        """
+        idA = await self._add(testDatabase, content="embedded-A", threadId=5)
+        idB = await self._add(testDatabase, content="embedded-B", threadId=5)
+        idFresh = await self._add(testDatabase, content="fresh", threadId=5)
+
+        someId = await testDatabase.embeddingModels.getOrCreateModelId("some-model", 3)
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+        for memoryId in (idA, idB):
+            await sqlProvider.execute(
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": memoryId, "mid": someId},
+            )
+
+        # "never-seen-model" is allocated a fresh model_id by getOrCreateModelId;
+        # the predicate ``model_id != newId`` then matches both seeded "some-model" rows.
+        count = await testDatabase.userMemories.deleteObsoleteMemoryEmbeddings(
+            CHAT_ID, "never-seen-model", currentDimensions=1
+        )
+        assert count == 2, f"both embedded rows should be reset, got {count}"
+
+        async def _modelId(mid: str) -> int | None:
+            row = await sqlProvider.executeFetchOne(
+                "SELECT model_id FROM user_memories WHERE memory_id = :mid",
+                {"mid": mid},
+            )
+            return int(row["model_id"]) if (row is not None and row["model_id"] is not None) else None
+
+        assert await _modelId(idA) is None
+        assert await _modelId(idB) is None
+        # The never-embedded row is untouched (already NULL, not counted).
+        assert await _modelId(idFresh) is None
+
+    async def test_getMemoriesWithoutEmbeddings_modelNameNone(self, testDatabase: Database) -> None:
+        """With ``modelName=None``, the helper returns memories where ``model_id IS NULL``.
+
+        This is the "fresh backfill" case — memories that have never been
+        embedded under any model. Memories with a non-NULL ``model_id``
+        are excluded regardless of which model produced them. Mirrors
+        ``test_chat_embeddings.py::test_getMessagesWithoutEmbeddings_modelNameNone``.
+        """
+        idFresh = await self._add(testDatabase, content="fresh", threadId=5)
+        idAlsoFresh = await self._add(testDatabase, content="also-fresh", threadId=5)
+        idEmbedded = await self._add(testDatabase, content="embedded", threadId=5)
+
+        # Stamp the third one as embedded.
+        someId = await testDatabase.embeddingModels.getOrCreateModelId("anything", 3)
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+        await sqlProvider.execute(
+            "UPDATE user_memories SET model_id = :mid " "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+            {"c": CHAT_ID, "u": USER_ID, "memoryId": idEmbedded, "mid": someId},
+        )
+
+        results = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName=None, limit=10)
+        resultIds = {r["memory_id"] for r in results}
+        assert resultIds == {idFresh, idAlsoFresh}
+        assert idEmbedded not in resultIds
+
     ###
     # Gate-1 regression tests
     ###
     async def test_saveMemoryEmbedding_vec0WriteFailure_strandProof(self, testDatabase: Database) -> None:
-        """Regression (Fix 1): a vec0 write failure leaves embedding_model NULL.
+        """Regression (Fix 1): a vec0 write failure leaves ``model_id`` NULL.
 
         When the vec0 INSERT/table-create fails, ``saveMemoryEmbedding``
-        must return ``False`` WITHOUT setting provenance columns. If it
-        set ``embedding_model`` anyway, the memory would be marked
+        must return ``False`` WITHOUT setting the provenance column. If it
+        set ``model_id`` anyway, the memory would be marked
         embedded but carry no searchable vector — and
         ``getMemoriesWithoutEmbeddings`` would never surface it (vec0 is
-        the sole embedding store). Leaving ``embedding_model = NULL``
+        the sole embedding store). Leaving ``model_id = NULL``
         makes the regen cron retry.
         """
         if not self._vecAvailable(testDatabase):
@@ -970,8 +1104,7 @@ class TestUserMemoriesVectorLayer:
         # Provenance NOT set — stays NULL so regen retries.
         rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
         rowA = next(r for r in rows if r["memory_id"] == idA)
-        assert rowA["embedding_model"] is None
-        assert rowA["embedding_dimensions"] is None
+        assert rowA["model_id"] is None
 
     async def test_deleteMemoryEmbedding_returnsFalseWhenNoMatch(self, testDatabase: Database) -> None:
         """Regression (Fix 5): returns False when a vec0 table exists but the memory was never embedded.
@@ -1085,7 +1218,7 @@ class TestUserMemoriesVectorLayer:
         A soft-deleted memory must never be a semantic-search hit and must
         never be re-embedded by the regen cron (``getMemoriesWithoutEmbeddings``
         skips it via the ``deleted_at IS NULL`` filter even though its
-        ``embedding_model`` is NULL).
+        ``model_id`` is NULL).
         """
         idA = await self._add(testDatabase, content="embedded then deleted", threadId=5)
 
@@ -1098,10 +1231,11 @@ class TestUserMemoriesVectorLayer:
             assert any(r["memory_id"] == idA for r in before)
         else:
             sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+            staleId = await testDatabase.embeddingModels.getOrCreateModelId("modelA", 3)
             await sqlProvider.execute(
-                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
-                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idA, "m": "modelA", "d": 3},
+                "UPDATE user_memories SET model_id = :mid "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :memoryId",
+                {"c": CHAT_ID, "u": USER_ID, "memoryId": idA, "mid": staleId},
             )
 
         ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, idA)
@@ -1110,11 +1244,10 @@ class TestUserMemoriesVectorLayer:
         # Provenance nulled on the surviving row.
         survivors = await testDatabase.userMemories.getMemoriesByIds([idA])
         assert len(survivors) == 1
-        assert survivors[0]["embedding_model"] is None
-        assert survivors[0]["embedding_dimensions"] is None
+        assert survivors[0]["model_id"] is None
 
         # The regen cron does NOT resurface the soft-deleted row for re-embedding
-        # (its embedding_model is NULL, but deleted_at IS NOT NULL means the
+        # (its model_id is NULL, but deleted_at IS NOT NULL means the
         # deleted_at IS NULL filter excludes it).
         stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="modelA", limit=10)
         assert idA not in {r["memory_id"] for r in stale}
@@ -1277,3 +1410,70 @@ class TestUserMemoriesVectorLayer:
         )
         assert len(matches2) == 1
         assert matches2[0]["memory_id"] == memId
+
+
+class TestUserMemoriesRepository_ConstructionContract:
+    """Wiring-contract checks for ``modelIdResolver`` injection (Decision D10).
+
+    Mirrors the contract-test pattern from
+    :class:`TestChatEmbeddingsRepository_ConstructionContract` in
+    ``test_chat_embeddings.py``. These tests do not run database
+    operations — they verify the ``_resolveModelId`` forwarding
+    contract, including the ``dataSource`` kwarg introduced for
+    multi-source routing.
+    """
+
+    @staticmethod
+    async def test_resolverPassthroughHelper(testDatabase: Database) -> None:
+        """``_resolveModelId`` is a thin pass-through to the injected callable.
+
+        The private helper exists only so call sites within the repo
+        read as ``await self._resolveModelId(model, dims)``; it must
+        forward the exact args (including the default ``dataSource=None``)
+        to the injected resolver and return its awaitable result.
+
+        Args:
+            testDatabase: Used only for its ``DatabaseManager``.
+        """
+        resolverMock = AsyncMock(return_value=777)
+        repo = UserMemoriesRepository(testDatabase.manager, modelIdResolver=resolverMock)
+
+        result = await repo._resolveModelId("alpha", 384)
+
+        resolverMock.assert_awaited_once_with("alpha", 384, dataSource=None)
+        assert result == 777
+
+    @staticmethod
+    async def test_resolveModelId_forwardsDataSource(testDatabase: Database) -> None:
+        """``_resolveModelId`` forwards the ``dataSource`` kwarg to the injected resolver.
+
+        Pins the multi-source routing contract: when a call site passes
+        ``dataSource`` into ``_resolveModelId``, the injected resolver
+        must receive it as a keyword argument so the underlying
+        :meth:`EmbeddingModelsRepository.getOrCreateModelId` can route
+        its provider acquisition.
+
+        Args:
+            testDatabase: Used only for its ``DatabaseManager``.
+        """
+        resolverMock = AsyncMock(return_value=42)
+        repo = UserMemoriesRepository(testDatabase.manager, modelIdResolver=resolverMock)
+
+        await repo._resolveModelId("routed-model", 512, dataSource="custom-src")
+
+        resolverMock.assert_awaited_once_with("routed-model", 512, dataSource="custom-src")
+
+
+# ---------------------------------------------------------------------------
+# Module-level smoke test: __slots__ is correctly populated.
+# ---------------------------------------------------------------------------
+
+
+def test_userMemoriesRepository_slotsIncludesResolver() -> None:
+    """The class ``__slots__`` tuple includes ``_modelIdResolver``.
+
+    Catches the load-bearing edit documented in plan §8.6: the slot
+    must be declared so the new instance attribute can be assigned in
+    ``__init__``. Without it, construction raises ``AttributeError``.
+    """
+    assert "_modelIdResolver" in UserMemoriesRepository.__slots__

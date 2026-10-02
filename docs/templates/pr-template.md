@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Pull Request: [PR Title]
 
 **Author:** [Developer Name]
@@ -111,7 +115,7 @@ q3r4s5t refactor(utils): improve code readability
 
 [Provide a comprehensive description of all changes, improvements, bug fixes, and other modifications included in this PR. Organize by category for clarity.]
 
-### Features Added ✨
+### Features Added
 - **[Feature 1]:** [Detailed description of the feature]
   - **Implementation:** [How it was implemented]
   - **Benefits:** [Why this feature is valuable]
@@ -122,7 +126,7 @@ q3r4s5t refactor(utils): improve code readability
   - **Benefits:** [Why this feature is valuable]
   - **Files:** [`file3.py`](path/to/file3.py)
 
-### Bug Fixes 🐛
+### Bug Fixes
 - **[Bug 1]:** [Description of the bug that was fixed]
   - **Root Cause:** [What caused the bug]
   - **Solution:** [How it was fixed]
@@ -135,7 +139,7 @@ q3r4s5t refactor(utils): improve code readability
   - **Impact:** [What this fix improves]
   - **Files:** [`file5.py`](path/to/file5.py)
 
-### Improvements 🚀
+### Improvements
 - **[Improvement 1]:** [Description of the improvement]
   - **Before:** [Previous state or behavior]
   - **After:** [New state or behavior]
@@ -148,26 +152,26 @@ q3r4s5t refactor(utils): improve code readability
   - **Benefit:** [Why this is better]
   - **Files:** [`file7.py`](path/to/file7.py)
 
-### Refactoring 🔧
+### Refactoring
 - **[Refactoring 1]:** [Description of code refactoring]
   - **Motivation:** [Why this refactoring was needed]
   - **Changes:** [What was changed]
   - **Impact:** [How this improves the codebase]
   - **Files:** [`file8.py`](path/to/file8.py)
 
-### Documentation 📝
+### Documentation
 - **[Documentation 1]:** [Description of documentation changes]
   - **Type:** [README, API docs, inline comments, etc.]
   - **Changes:** [What was documented or updated]
   - **Files:** [`README.md`](README.md), [`docs/api.md`](docs/api.md)
 
-### Tests 🧪
+### Tests
 - **[Test Suite 1]:** [Description of tests added or modified]
   - **Coverage:** [What is being tested]
   - **Type:** [Unit/Integration/E2E]
   - **Files:** [`test_file1.py`](tests/test_file1.py)
 
-### Configuration Changes ⚙️
+### Configuration Changes
 - **[Config Change 1]:** [Description of configuration changes]
   - **Setting:** [What was changed]
   - **Reason:** [Why this change was needed]

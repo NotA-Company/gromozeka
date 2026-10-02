@@ -66,6 +66,20 @@ class NullCache(CacheInterface[K, V]):
         """
         pass
 
+    async def clearOld(self, ttl: Optional[int]) -> bool:
+        """Do nothing (no-op operation).
+
+        Since NullCache doesn't store anything, there's nothing to clear.
+        This method exists for interface compatibility but has no effect.
+
+        Args:
+            ttl: Age threshold in seconds (ignored).
+
+        Returns:
+            Always True (pretends to succeed).
+        """
+        return True
+
     def getStats(self) -> Dict[str, Any]:
         """Return cache statistics indicating cache is disabled.
 

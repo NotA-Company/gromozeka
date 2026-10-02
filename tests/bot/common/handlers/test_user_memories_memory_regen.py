@@ -182,8 +182,7 @@ def _makeMemoryDict(
         "tags": [],
         "permanent": False,
         "source": UserMemorySource.CHAT,
-        "embedding_model": None,
-        "embedding_dimensions": None,
+        "model_id": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -543,7 +542,7 @@ class TestRegenCleanup:
         is always the bare model name; the dimension suffix lives only in
         the in-memory tracker. ``currentDimensions`` is forwarded so the
         repository can delete rows whose model name matches but whose
-        ``embedding_dimensions`` reflects the previous configuration.
+        ``model_id`` reflects the previous configuration.
         """
         # Tick 1: 384-dim model.
         handler, mocks = _makeHandler(model=_makeModelMock(dimensions=384))

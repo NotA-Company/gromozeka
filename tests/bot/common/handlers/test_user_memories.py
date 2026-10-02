@@ -69,12 +69,13 @@ from internal.bot.models import (
 from internal.database import Database
 from internal.database.models import MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService, UserActiveActionEnum
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.session import buildSessionId
+from lib.db.utils import DEFAULT_THREAD_ID
 
 # ---------------------------------------------------------------------------
 # Singleton hygiene
@@ -719,6 +720,52 @@ class TestCronJobAndRefinement:
         # message, or a different attribute path).
         assert entry.get("lastProcessedMessageDate") == "2026-07-01T12:04:00+00:00"
         assert entry.get("lastProcessedMessageId") == "1004"
+
+    async def test_refinementPassesRealChatIdAndSkipsRateLimit(self, testDatabase: Database) -> None:
+        """Refinement LLM call carries the real ``chatId`` + ``doRateLimit=False``.
+
+        Regression for the consumerId gap (docs/design/stats-consumerid-gaps.md
+        Gap 2): the background refinement used to pass ``chatId=None`` to skip
+        the per-chat hot-path rate budget, which also dropped the
+        ``llm_request`` stats attribution to ``__global__`` — even though the
+        chat id is known (it builds the synthetic ensuredMessage from it). The
+        call must pass the real chat id and skip only the limiter.
+
+        Also pins the prompt-cache-affinity session id (D4): the refinement
+        call must carry ``sessionId`` built from the per-user memory-store
+        identity (``memory-<chatId>-<userId>-<threadId>``), so consecutive
+        refinement runs for the same user share the opencode-go session and
+        its evolving prompt prefix.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+
+        refineResult = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="Refined summary text",
+        )
+        mockGenerate = AsyncMock(return_value=refineResult)
+        handler.llmService.generateTextViaLLM = mockGenerate  # type: ignore[method-assign]
+
+        chatId, userId, threadId = 340, 11, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user11", "Carol")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        handler._accounting[(chatId, userId, threadId)] = 5  # type: ignore[attr-defined]
+
+        await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
+
+        mockGenerate.assert_awaited_once()
+        assert mockGenerate.await_args is not None
+        kwargs = mockGenerate.await_args.kwargs
+        assert kwargs["chatId"] == chatId
+        assert kwargs["doRateLimit"] is False
+        # The session id is built from the persistent (chat, user, thread)
+        # identity — both the builder expression and the literal shape are
+        # pinned so an accidental component drop/format change is caught.
+        assert kwargs["sessionId"] == buildSessionId("memory", str(chatId), str(userId), str(threadId))
+        assert kwargs["sessionId"] == "gromozeka-memory-340-11-0"
 
     async def test_runSingleRefinementBailsWhenFewerThanMinMessages(self, testDatabase: Database) -> None:
         """Below ``min-messages`` → ``_runSingleRefinement`` returns with no LLM call.
@@ -1846,8 +1893,7 @@ def _makeMemoryDict(
         tags=[],
         permanent=permanent,
         source=UserMemorySource.CHAT,
-        embedding_model="test-embed-model",
-        embedding_dimensions=3,
+        model_id=1,
         created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
         updated_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
         score=score,
@@ -3317,7 +3363,7 @@ class TestKnowledgeConfigWizard:
 
         Full free-text flow (seed state → send message), then asserts the
         persisted memory has ``permanent is False``, ``source ==
-        UserMemorySource.USER``, and ``embedding_model is None``.
+        UserMemorySource.USER``, and ``model_id is None``.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -3359,7 +3405,7 @@ class TestKnowledgeConfigWizard:
         mem = memories[0]
         assert mem["permanent"] is False
         assert mem["source"] == UserMemorySource.USER
-        assert mem["embedding_model"] is None
+        assert mem["model_id"] is None
 
 
 class TestGetMyDataCommand:

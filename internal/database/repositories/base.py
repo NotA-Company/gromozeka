@@ -26,7 +26,7 @@ Example:
 
 from abc import ABC
 
-from ..manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 
 class BaseRepository(ABC):
@@ -42,6 +42,10 @@ class BaseRepository(ABC):
     Repositories can perform read operations on any configured data source and
     write operations on the primary data source, with automatic connection
     management and transaction support.
+
+    Every public method exposes ``dataSource: Optional[str] = None``
+    (keyword-only) for multi-source routing; see ``docs/llm/database.md`` §3
+    for the full convention.
 
     Attributes:
         manager: DatabaseManager instance that provides access to database

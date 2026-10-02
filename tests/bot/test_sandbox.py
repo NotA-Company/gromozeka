@@ -16,8 +16,15 @@ from typing import Any, Dict, Optional, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from telegram import Update
+from telegram.ext import ExtBot
 
-from internal.bot.common.handlers.sandbox import SandboxHandler
+from internal.bot.common.handlers.sandbox import (
+    MAX_UPDATE_REPLY_LENGTH,
+    UPDATE_REPLY_TRUNCATION_MARKER,
+    SandboxHandler,
+)
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.constants import MAX_SANDBOX_SEND_BYTES
 from internal.bot.models import (
     BotProvider,
@@ -28,9 +35,14 @@ from internal.bot.models import (
     MessageRecipient,
     MessageSender,
 )
+from internal.database.models import MessageCategory
 from lib.sandbox import (
     FileContent,
     FileInfo,
+    InvalidPackageSpec,
+    LibraryPoolLocked,
+    LibraryUpdateResult,
+    PackageUpdate,
     RunInfo,
     RunResult,
     RuntimeName,
@@ -168,6 +180,64 @@ def _makeFileInfo(path: str, sizeBytes: int, isDirectory: bool = False) -> FileI
         Configured FileInfo instance.
     """
     return FileInfo(path=path, sizeBytes=sizeBytes, modifiedAt=datetime.now(timezone.utc), isDirectory=isDirectory)
+
+
+def _makeUpdateResult(
+    *,
+    success: bool = True,
+    updated: Optional[list[PackageUpdate]] = None,
+    unchanged: Optional[list[PackageUpdate]] = None,
+    upToDate: Optional[list[str]] = None,
+    failedSpecs: Optional[list[tuple[str, str]]] = None,
+    containerId: Optional[str] = None,
+) -> LibraryUpdateResult:
+    """Build a LibraryUpdateResult for mocking package update runs.
+
+    Args:
+        success: Whether the staged update completed and was swapped in.
+        updated: Packages whose version changed.
+        unchanged: Packages with identical versions before and after.
+        upToDate: Names the pre-filter skipped as already current.
+        failedSpecs: (spec, reason) pairs rejected at validation.
+        containerId: Kept container id on failure (docker logs hint).
+
+    Returns:
+        Configured LibraryUpdateResult instance.
+    """
+    return LibraryUpdateResult(
+        runtime=RuntimeName.PYTHON,
+        success=success,
+        updated=updated if updated is not None else [],
+        unchanged=unchanged if unchanged is not None else [],
+        upToDate=upToDate if upToDate is not None else [],
+        failedSpecs=failedSpecs if failedSpecs is not None else [],
+        containerId=containerId,
+        metadataRefreshed=True,
+    )
+
+
+def _grantOwner(handler: SandboxHandler) -> None:
+    """Configure a handler stub so isBotOwner reports a bot owner sender.
+
+    Args:
+        handler: The handler whose owner check should be stubbed.
+
+    Returns:
+        None
+    """
+    handler._bot = Mock(spec=ExtBot)
+    handler._bot.id = 123456  # Bot ID
+    handler.isBotOwner = Mock(return_value=True)
+
+
+def _makeUpdateObject() -> UpdateObjectType:
+    """Build a stand-in platform update object for typed handler invocation.
+
+    Returns:
+        Mock speced to telegram.Update, cast to the concrete UpdateObjectType
+        the sandbox command signature expects.
+    """
+    return cast(UpdateObjectType, Mock(spec=Update))
 
 
 def _makeHandler(
@@ -646,6 +716,421 @@ async def test_sandbox_install_not_admin(mockSandboxManager: AsyncMock) -> None:
     assert mocks["sendMessage"].call_count == 1
     sendKwargs = mocks["sendMessage"].call_args.kwargs
     assert "not authorized" in sendKwargs["messageText"].lower() or "restricted" in sendKwargs["messageText"].lower()
+
+
+async def testSandboxInstallLockBusy(mockSandboxManager: AsyncMock) -> None:
+    """Test install lock-busy reply when another install/update holds the pool lock (exact reply)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.installRuntimeLibraries = AsyncMock(side_effect=LibraryPoolLocked("python pool is locked"))
+
+    await handler.sandbox_command(em, "sandbox", "install numpy", _makeUpdateObject(), None)
+
+    expectedReply = "Another sandbox install/update is in progress, try again later."
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+# 6b. /sandbox update tests
+
+
+async def testSandboxUpdateGatedWhenSandboxNotConfigured(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox update is blocked when sandbox is not configured globally."""
+    handler, mocks = _makeHandler(sandboxEnabled=False, chatSettings=_makeChatSettings(allowSandbox=True))
+    em = _makeEnsuredMessage()
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    mockSandboxManager.updateRuntimeLibraries.assert_not_called()
+
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "not configured" in sendKwargs["messageText"]
+
+
+async def testSandboxUpdateGatedWhenAllowSandboxFalse(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox update is blocked when allow-sandbox setting is False."""
+    handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=False))
+    em = _makeEnsuredMessage()
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    mockSandboxManager.updateRuntimeLibraries.assert_not_called()
+
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "not enabled for this chat" in sendKwargs["messageText"]
+
+
+async def testSandboxUpdateNotOwnerDenied(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox update as non-owner is denied and manager is not called."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage(userId=999)  # Not a bot owner
+
+    # Mock bot instance for isBotOwner check
+    handler._bot = Mock(spec=ExtBot)
+    handler._bot.id = 123456  # Bot ID
+    handler.isBotOwner = Mock(return_value=False)
+
+    await handler.sandbox_command(em, "sandbox", "update numpy", _makeUpdateObject(), None)
+
+    mockSandboxManager.updateRuntimeLibraries.assert_not_called()
+
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == "This command is restricted to bot owners only."
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+async def testSandboxUpdateNoArgsUpdatesAll(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox update with no args calls manager with packages=None."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(return_value=_makeUpdateResult(upToDate=["numpy"]))
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    mockSandboxManager.updateRuntimeLibraries.assert_called_once()
+    callKwargs = mockSandboxManager.updateRuntimeLibraries.call_args.kwargs
+    assert callKwargs["packages"] is None
+    assert callKwargs["runtime"] == RuntimeName.PYTHON
+
+    # Ack message uses the update-all flavour
+    firstCall = mocks["sendMessage"].call_args_list[0]
+    assert firstCall.kwargs["messageText"] == "Updating all packages..."
+
+    # Result reply is the exact all-current line
+    lastCall = mocks["sendMessage"].call_args_list[1]
+    assert lastCall.kwargs["messageText"] == "All sandbox packages are up to date (python, 1 packages)."
+    assert lastCall.kwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateNamedPackages(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox update with named packages passes specs through to the manager."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(return_value=_makeUpdateResult(upToDate=["numpy"]))
+
+    await handler.sandbox_command(em, "sandbox", "update numpy pandas", _makeUpdateObject(), None)
+
+    mockSandboxManager.updateRuntimeLibraries.assert_called_once()
+    callKwargs = mockSandboxManager.updateRuntimeLibraries.call_args.kwargs
+    assert callKwargs["packages"] == ["numpy", "pandas"]
+    assert callKwargs["runtime"] == RuntimeName.PYTHON
+
+    # Ack message uses the named-packages flavour
+    firstCall = mocks["sendMessage"].call_args_list[0]
+    assert firstCall.kwargs["messageText"] == "Updating packages..."
+
+    # Result reply is the exact all-current line
+    lastCall = mocks["sendMessage"].call_args_list[1]
+    assert lastCall.kwargs["messageText"] == "All sandbox packages are up to date (python, 1 packages)."
+    assert lastCall.kwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateReplyDiffAndSkipped(mockSandboxManager: AsyncMock) -> None:
+    """Test update reply renders the exact diff, skipped, unchanged lines and the in-flight note."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(
+            updated=[
+                PackageUpdate(name="numpy", oldVersion="1.26.4", newVersion="2.1.0"),
+                PackageUpdate(name="requests", oldVersion=None, newVersion="2.32.3"),
+            ],
+            unchanged=[PackageUpdate(name="pillow", oldVersion="10.0.0", newVersion="10.0.0")],
+            upToDate=["scipy", "sympy"],
+        )
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    expectedReply = (
+        "Sandbox packages updated (python):\n"
+        "  numpy 1.26.4 → 2.1.0\n"
+        "  requests → 2.32.3 (no prior version recorded)\n"
+        "Already up to date, skipped (2): scipy, sympy\n"
+        "Unchanged (1): pillow\n"
+        "Note: sandbox runs started before this update keep seeing their previous pool; "
+        "new runs see the updated one."
+    )
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateReplyAllUpToDate(mockSandboxManager: AsyncMock) -> None:
+    """Test update reply for a pool where nothing was outdated (exact reply, no note)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(upToDate=["scipy", "sympy", "pillow"])
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    # Exact equality also pins the absence of the in-flight note (no swap happened).
+    expectedReply = "All sandbox packages are up to date (python, 3 packages)."
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateReplySwapWithoutVersionChanges(mockSandboxManager: AsyncMock) -> None:
+    """Regression: a staged swap that only reinstalls same versions still shows the in-flight note.
+
+    A fail-safe prefilter or same-version reinstall produces updated=[] with
+    unchanged=[...] yet a real pool swap occurred, so the note must be present
+    (unlike the all-current and empty-pool variants where both lists are empty).
+    """
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(
+            unchanged=[PackageUpdate(name="pillow", oldVersion="10.0.0", newVersion="10.0.0")]
+        )
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    expectedReply = (
+        "All sandbox packages are up to date (python, 1 packages).\n"
+        "Note: sandbox runs started before this update keep seeing their previous pool; "
+        "new runs see the updated one."
+    )
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateReplyEmptyPool(mockSandboxManager: AsyncMock) -> None:
+    """Test update-all on an empty pool suggests install instead (exact reply, no note)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(return_value=_makeUpdateResult())
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    expectedReply = "Nothing installed in the python sandbox pool. Use /sandbox install <packages...> first."
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateFailureKeepsContainer(mockSandboxManager: AsyncMock) -> None:
+    """Test failure reply reports the untouched pool and the kept container id (exact reply)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(success=False, containerId="deadbeef")
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    expectedReply = (
+        "Update failed (pip error); the pool is untouched — nothing was partially applied.\n"
+        "Keeping container deadbeef for inspection (docker logs deadbeef)."
+    )
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+async def testSandboxUpdateFailureWithoutContainerId(mockSandboxManager: AsyncMock) -> None:
+    """Test failure reply without a container id omits the keep-container line (exact reply)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(return_value=_makeUpdateResult(success=False))
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    expectedReply = "Update failed (pip error); the pool is untouched — nothing was partially applied."
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+async def testSandboxUpdateLockBusy(mockSandboxManager: AsyncMock) -> None:
+    """Test lock-busy reply when another install/update holds the pool lock (exact reply)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(side_effect=LibraryPoolLocked("python pool is locked"))
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    expectedReply = "Another sandbox install/update is in progress, try again later."
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+async def testSandboxUpdateReplyInvalidSpecsSuffix(mockSandboxManager: AsyncMock) -> None:
+    """Test partially invalid specs are reported as the exact suffix line after the note."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(
+            updated=[PackageUpdate(name="numpy", oldVersion="1.0.0", newVersion="2.0.0")],
+            failedSpecs=[("numpy!", "Invalid package name"), ("-requests", "Option-like spec")],
+        )
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update numpy! -requests", _makeUpdateObject(), None)
+
+    expectedReply = (
+        "Sandbox packages updated (python):\n"
+        "  numpy 1.0.0 → 2.0.0\n"
+        "Note: sandbox runs started before this update keep seeing their previous pool; "
+        "new runs see the updated one.\n"
+        "Skipped invalid specs: numpy! (Invalid package name), -requests (Option-like spec)"
+    )
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
+
+
+async def testSandboxUpdateAllSpecsInvalid(mockSandboxManager: AsyncMock) -> None:
+    """Test InvalidPackageSpec from the manager produces the exact invalid-spec error reply."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        side_effect=InvalidPackageSpec(spec="numpy!", reason="Invalid package name")
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update numpy!", _makeUpdateObject(), None)
+
+    expectedReply = "Invalid package spec: invalid package spec 'numpy!': Invalid package name"
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedReply
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+async def testSandboxUsageListsAllSubcommands(mockSandboxManager: AsyncMock) -> None:
+    """Regression: /sandbox usage text pins the complete subcommand list verbatim."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    await handler.sandbox_command(em, "sandbox", "", _makeUpdateObject(), None)
+
+    assert mocks["sendMessage"].call_count == 1
+    expectedUsage = (
+        "Usage: /sandbox <subcommand> [args]\n"
+        "Subcommands:\n"
+        "  files [path] - List files in workspace (default: root)\n"
+        "  read <path> - Read a file from workspace\n"
+        "  status - Show sandbox session status\n"
+        "  packages - List installed Python packages\n"
+        "  install <packages...> - Install Python packages (admin only)\n"
+        "  update [packages...] - Update Python packages (admin only)"
+    )
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert sendKwargs["messageText"] == expectedUsage
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
+
+
+def testSandboxHelpListsAllSubcommands() -> None:
+    """Regression: helpMessage pins the complete subcommand summary verbatim."""
+    metadata = getattr(SandboxHandler.sandbox_command, "_commandHandlerInfoV2")
+    expectedHelp = " <files|read|status|packages|install|update> [args]: Manage sandbox workspace files and packages."
+    assert metadata.helpMessage == expectedHelp
+
+
+def testFormatPackageUpdateVersionRendering() -> None:
+    """Test _formatPackageUpdate renders every nullable old/new version combination."""
+    assert (
+        SandboxHandler._formatPackageUpdate(PackageUpdate(name="numpy", oldVersion="1.26.4", newVersion="2.1.0"))
+        == "numpy 1.26.4 → 2.1.0"
+    )
+    assert (
+        SandboxHandler._formatPackageUpdate(PackageUpdate(name="requests", oldVersion=None, newVersion="2.32.3"))
+        == "requests → 2.32.3 (no prior version recorded)"
+    )
+    # Regression: newVersion=None means the package is absent after the update.
+    assert (
+        SandboxHandler._formatPackageUpdate(PackageUpdate(name="scipy", oldVersion="1.0.0", newVersion=None))
+        == "scipy 1.0.0 → absent after update"
+    )
+    assert (
+        SandboxHandler._formatPackageUpdate(PackageUpdate(name="pillow", oldVersion=None, newVersion=None))
+        == "pillow → absent after update (no prior version recorded)"
+    )
+
+
+async def testSandboxUpdateReplyLongDiffCappedWithMarker(mockSandboxManager: AsyncMock) -> None:
+    """Boundary: a long updated diff is capped with the truncation marker present."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    updated = [
+        PackageUpdate(name=f"package{index:04d}", oldVersion="1.0.0", newVersion="2.0.0") for index in range(500)
+    ]
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(return_value=_makeUpdateResult(updated=updated))
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    msgText = mocks["sendMessage"].call_args.kwargs["messageText"]
+    assert len(msgText) <= MAX_UPDATE_REPLY_LENGTH
+    assert msgText.endswith(UPDATE_REPLY_TRUNCATION_MARKER)
+    # Header and the first diff entries survive before the cut
+    assert msgText.startswith("Sandbox packages updated (python):\n  package0000 1.0.0 → 2.0.0\n")
+
+
+async def testSandboxUpdateReplyLongSkipListsCappedWithMarker(mockSandboxManager: AsyncMock) -> None:
+    """Boundary: long skipped/unchanged lists are capped with the truncation marker present."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(
+            updated=[PackageUpdate(name="numpy", oldVersion="1.0.0", newVersion="2.0.0")],
+            unchanged=[
+                PackageUpdate(name=f"oldpkg{index:04d}", oldVersion="1.0.0", newVersion="1.0.0") for index in range(300)
+            ],
+            upToDate=[f"pkg{index:04d}" for index in range(300)],
+        )
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    msgText = mocks["sendMessage"].call_args.kwargs["messageText"]
+    assert len(msgText) <= MAX_UPDATE_REPLY_LENGTH
+    assert msgText.endswith(UPDATE_REPLY_TRUNCATION_MARKER)
+    assert msgText.startswith("Sandbox packages updated (python):\n  numpy 1.0.0 → 2.0.0\n")
+
+
+async def testSandboxUpdateReplyFailureLongFailedSpecsCappedWithMarker(
+    mockSandboxManager: AsyncMock,
+) -> None:
+    """Regression: the failure reply goes through the same cap (marker present, length enforced)."""
+    handler, mocks = _makeHandler()
+    _grantOwner(handler)
+    em = _makeEnsuredMessage(userId=123456)
+    failedSpecs = [(f"bad-pkg-{index:04d}", "Invalid package name") for index in range(300)]
+    mockSandboxManager.updateRuntimeLibraries = AsyncMock(
+        return_value=_makeUpdateResult(success=False, failedSpecs=failedSpecs)
+    )
+
+    await handler.sandbox_command(em, "sandbox", "update", _makeUpdateObject(), None)
+
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    msgText = sendKwargs["messageText"]
+    assert len(msgText) <= MAX_UPDATE_REPLY_LENGTH
+    assert msgText.endswith(UPDATE_REPLY_TRUNCATION_MARKER)
+    assert msgText.startswith("Update failed (pip error); the pool is untouched — nothing was partially applied.\n")
+    assert sendKwargs["messageCategory"] == MessageCategory.BOT_ERROR
 
 
 # ---------------------------------------------------------------------------

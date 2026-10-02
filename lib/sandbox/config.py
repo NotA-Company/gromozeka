@@ -22,7 +22,7 @@ Classes:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 from .enums import BackendName, RuntimeName
 from .errors import ConfigError
@@ -68,12 +68,9 @@ class DockerBackendConfig:
 
     Attributes:
         baseUrl: Docker daemon socket URL or TCP address.
-        imagePullPolicy: When to pull container images — ``"never"``,
-            ``"if-not-present"``, or ``"always"``.
     """
 
     baseUrl: str = "unix:///var/run/docker.sock"
-    imagePullPolicy: Literal["never", "if-not-present", "always"] = "if-not-present"
 
     @classmethod
     def fromDict(cls, data: dict) -> "DockerBackendConfig":
@@ -87,7 +84,6 @@ class DockerBackendConfig:
         """
         return cls(
             baseUrl=data.get("base-url", "unix:///var/run/docker.sock"),
-            imagePullPolicy=data.get("image-pull-policy", "if-not-present"),
         )
 
 

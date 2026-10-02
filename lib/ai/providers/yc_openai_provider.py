@@ -60,11 +60,13 @@ class YcOpenaiModel(BasicOpenAIModel):
         provider: The YcOpenaiProvider instance that created this model.
         modelId: The identifier of the model (e.g., "yandexgpt", "summarization").
         modelVersion: The version string of the model (e.g., "latest", "rc").
-        temperature: The sampling temperature for generation (0.0 to 2.0).
         contextSize: The maximum context window size in tokens.
         openAiClient: The OpenAI async client instance for API communication.
         folderId: Yandex Cloud folder identifier for model identification.
         extraConfig: Additional configuration options for the model.
+        customParams: Per-model custom parameters passed through to the
+            underlying OpenAI API call (temperature, top_p, max_tokens,
+            etc.). See :attr:`AbstractModel._customParams`.
 
     Raises:
         ValueError: If folderId is not provided or is empty.
@@ -75,10 +77,10 @@ class YcOpenaiModel(BasicOpenAIModel):
         ...     provider=provider,
         ...     modelId="yandexgpt",
         ...     modelVersion="latest",
-        ...     temperature=0.7,
         ...     contextSize=8000,
         ...     openAiClient=provider._client,
         ...     folderId="b1g...",
+        ...     customParams={"temperature": 0.7},
         ... )
         >>> result = await model.generateText(messages)
     """
@@ -89,10 +91,10 @@ class YcOpenaiModel(BasicOpenAIModel):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
         openAiClient: AsyncOpenAI,
         folderId: str,
     ) -> None:
@@ -102,11 +104,13 @@ class YcOpenaiModel(BasicOpenAIModel):
             provider: The YcOpenaiProvider instance that created this model.
             modelId: The identifier of the model (e.g., "yandexgpt", "summarization").
             modelVersion: The version string of the model (e.g., "latest", "rc").
-            temperature: The sampling temperature for generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             openAiClient: The OpenAI async client instance for API communication.
             folderId: Yandex Cloud folder identifier for model identification.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenAI API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Raises:
             ValueError: If folderId is not provided or is empty.
@@ -115,10 +119,10 @@ class YcOpenaiModel(BasicOpenAIModel):
             provider,
             modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
             openAiClient=openAiClient,
         )
         self._folderId = folderId
@@ -177,21 +181,20 @@ class YcOpenaiModel(BasicOpenAIModel):
         return f"art://{self._folderId}/{self.modelId}/{self.modelVersion}"
 
     def _getExtraParams(self) -> Dict[str, Any]:
-        """Get Yandex Cloud-specific extra parameters for API calls.
+        """Get Yandex Cloud-specific extra parameters merged with customParams.
 
-        This method can be extended to include Yandex Cloud-specific parameters
-        such as max_tokens, stream, or other provider-specific options.
+        Merges any YC-specific defaults (currently none) with the
+        user-supplied ``customParams`` from :meth:`BasicOpenAIModel._getExtraParams`.
+        ``customParams`` keys take precedence (last-wins ordering).
 
         Returns:
-            A dictionary of extra parameters to include in the API call.
-            Currently returns an empty dictionary, but can be extended
-            to include parameters like max_tokens or stream.
-
-        Example:
-            >>> model._getExtraParams()
-            {}
+            A dict of extra parameters to include in the API call.
+            Currently equivalent to ``dict(self._customParams)`` since
+            YC OpenAI has no provider-specific defaults; YC-specific
+            overrides can be added by extending the first dict literal.
         """
         return {
+            **super()._getExtraParams(),
             # "max_tokens": 2000,
             # "stream": True,  # Commented out for now
         }
@@ -230,8 +233,8 @@ class YcOpenaiProvider(BasicOpenAIProvider):
         ...     name="yandexgpt",
         ...     modelId="yandexgpt",
         ...     modelVersion="latest",
-        ...     temperature=0.7,
         ...     contextSize=8000,
+        ...     customParams={"temperature": 0.7},
         ... )
         >>> result = await model.generateText(messages)
     """
@@ -295,10 +298,10 @@ class YcOpenaiProvider(BasicOpenAIProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a Yandex Cloud OpenAI model instance.
 
@@ -310,9 +313,11 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             name: The name to assign to the model instance (not used in YC model).
             modelId: The identifier of the model (e.g., "yandexgpt", "summarization").
             modelVersion: The version string of the model (e.g., "latest", "rc").
-            temperature: The sampling temperature for generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenAI API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Returns:
             A YcOpenaiModel instance configured with the provided parameters.
@@ -326,8 +331,8 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             ...     name="yandexgpt",
             ...     modelId="yandexgpt",
             ...     modelVersion="latest",
-            ...     temperature=0.7,
             ...     contextSize=8000,
+            ...     customParams={"temperature": 0.7},
             ... )
             >>> isinstance(model, YcOpenaiModel)
             True
@@ -339,10 +344,10 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             folderId=self._folderId,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
             openAiClient=self._client,
         )

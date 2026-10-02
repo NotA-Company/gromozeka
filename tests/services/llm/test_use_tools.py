@@ -300,7 +300,8 @@ async def testDisabledToolCallRejectedByGuard(llmService: LLMService) -> None:
 
     result = await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,

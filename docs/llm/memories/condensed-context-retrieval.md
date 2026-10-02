@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Condensed-Context Retrieval
 
 Durable notes for the conversation-condensing machinery and the ADR-019 "condensed-context retrieval" feature (record which message IDs each summary covers, render summaries as JSON, expose a `get_messages_by_ids` LLM tool). Read this when touching `LLMService.condenseContext()`, `CondensingDict` / `CondensedDateRangeDict`, the `condensedThread` / `randomContext` persistent write paths, the `get_messages_by_ids` tool, or `/scripts/check_condensing.py`.
@@ -71,6 +75,8 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
 - **[`/internal/services/llm/service.py`](/internal/services/llm/service.py):**
   - `generateCondensingDict(text, messages) -> CondensingDict` (module fn) — the coverage producer. Walks the batch `ModelMessage`s and reads `.source`: `EnsuredMessage` → extract messageId / username / `date.timestamp()`; `dict` / `CondensingDict` → union (re-condense cascade); `None` → `logger.warning` + skip metadata extraction (but the position IS still counted toward `messageCount` per `service.py:107-108` — `messageCount += 1` runs unconditionally in the `None` branch; the source docstring of `generateCondensingDict` itself claims "NOT counted" — that docstring is stale). Returns `CondensingDict` with `text` + conditionally-populated `messageIds` / `participants` / `dateRange` (`{from:min ts, to:max ts}`, omitted if none) / `messageCount`. Does NOT set `tillMessageId` / `tillTS`. Wrapped in try/except → fallback `CondensingDict(text=respText)` on failure (summary preserved, coverage dropped).
   - `condenseContext` **always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]` (no `returnCoverage` kwarg); coverage computed inside via `generateCondensingDict`; Path C unpacks `_messages, _`.
+
+#### Handlers, repository, and config anchors
 
 - **[`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)** (`getThreadByMessageForLLM`): TWO `condenseContext` call sites (initial condense + re-condense cascade); unpacks `condensedRet, condensingDictMap`; `condenseCache.extend(condensingDictMap.values())` (or `= list(...)` for the cascade); injection site calls `renderCondensedSummary(condensedMessage)`.
 

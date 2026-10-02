@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Gromozeka — Architecture & Design Decisions
 
 > **Audience:** LLM agents  
@@ -92,8 +96,9 @@ class MyService:
 16. (if enabled) `DivinationHandler` — PARALLEL — tarot/runes divination
 17. (if enabled) `SandboxHandler` — PARALLEL — sandboxed code execution
 18. (if enabled) `ChatSearchHandler` — PARALLEL — chat search /search command
-19. (custom handlers via `CustomHandlerLoader`) — PARALLEL by default (configurable per-handler)
-20. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+19. (if enabled) `StatsHandler` — PARALLEL — usage statistics display (gated by `[stats].enabled`, registered after ChatSearchHandler, before custom handlers; see manager.py:612-619)
+20. (custom handlers via `CustomHandlerLoader`) — PARALLEL by default (configurable per-handler)
+21. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 **Return values:** Handlers return [`HandlerResultStatus`](../../internal/bot/common/handlers/base.py:81):
 - `FINAL` — stop chain, success
@@ -121,7 +126,7 @@ class MyService:
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
-- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates, user_memories)
+- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, embedding_models, user_memories)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
@@ -153,7 +158,7 @@ timeout = 10
 **SQL Portability Notes:**
 - Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns for cross-database compatibility
 - All timestamp values are now explicitly set in application code
-- Provider abstraction layer (`internal/database/providers/`) handles database-specific SQL dialects
+- Provider abstraction layer (`lib/db/providers/`) handles database-specific SQL dialects
 - Supports SQLite3, PostgreSQL, MySQL, and SQLink (SQLite3 over REST) providers
 
 **Repository Structure:**
@@ -170,8 +175,8 @@ timeout = 10
 - `DivinationsRepository` — Tarot/runes divination data
 - `MediaAttachmentsRepository` — Media file attachments
 - `SpamRepository` — Spam detection and messages
-- `WebhookUpdatesRepository` — Max webhook payload storage and consumption (backed by `migration_019`)
 - `UserMemoriesRepository` — Unified per-`(chat, user, thread)` structured memory store (backed by `migration_020`; supersedes the legacy `user_data` key-value table, dropped in `migration_022`, + rolling-bio blob — see ADR-016)
+- `EmbeddingModelsRepository` — Embedding-model lookup table (`models` table, backed by `migration_025_embedding_model_lookup`); resolves model name + dimensions to a stable `model_id` integer that the embedding repos (chat-search + user-memories) FK into. Process-local cache; constructor-injected `modelIdResolver` (D10) in the three refactored repos.
 - `BaseRepository` — Abstract base with common functionality
 
 **Implementation Details:**
@@ -376,24 +381,25 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
                                │       │
                      creates    │       │  creates
                                ▼       ▼
-               ┌────────────────┐   ┌──────────────────────┐
-               │  LLMManager    │   │ DatabaseStatsStorage │
-               │  (lib/ai)      │◄──│ (internal/database/  │
-               │                │   │  stats_storage.py)   │
-               │ .statsStorage ─┼──►│                      │
-               └───────┬────────┘   │ - record()           │
-                       │            │ - aggregate()        │
-                       │ propagate  │ - db: Database       │
-                       ▼            │ - dataSource: "stats"│
-               ┌─────────────────┐  └──────────┬───────────┘
-               │ AbstractModel   │             │
-               │ (lib/ai)        │             │ single provider
-               │                 │             ▼
-               │ .statsStorage   │  ┌──────────────────────┐
-               │ _runWithFallback│  │   DatabaseManager    │
-               └─────────────────┘  │                      │
-                                    │ "stats" provider     │
-                                    └──────────┬───────────┘
+                ┌────────────────┐   ┌──────────────────────┐
+                │  LLMManager    │   │ DatabaseStatsStorage │
+                │  (lib/ai)      │◄──│ (lib/stats/          │
+                │                │   │  sql_storage.py)     │
+                │ .statsStorage ─┼──►│                      │
+                └───────┬────────┘   │ - record()           │
+                        │            │ - aggregate()        │
+                        │ propagate  │ - manager:           │
+                        ▼            │   DatabaseManager    │
+                ┌─────────────────┐  │ - dataSource: "stats"│
+                │ AbstractModel   │  └──────────┬───────────┘
+                │ (lib/ai)        │             │
+                │                 │             │ single provider
+                │ .statsStorage   │             ▼
+                │ _runWithFallback│  ┌──────────────────────┐
+                └─────────────────┘  │   DatabaseManager    │
+                                     │                      │
+                                     │ "stats" provider     │
+                                     └──────────┬───────────┘
                                                │
                            ┌───────────────────┼───────────────────┐
                            ▼                   ▼
@@ -417,8 +423,9 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 6. **Claim-aggregate-commit:** `aggregate()` claims unprocessed events, computes sums, upserts to `stat_aggregates`, marks events processed
 
 **Configuration:**
-- `[stats] enabled = false` (default) — disabled until aggregation trigger and query API are implemented
-- When enabled: `DatabaseStatsStorage` created in `main.py`, passed to `LLMManager`, propagated to all models
+- `[stats] enabled = false` (default) — when enabled, `StatsAggregationService.getInstance().initialize(configManager, database)` is called (synchronous) and the factory `createStatsStorage(eventType, dataSource)` constructs and registers five storages (LLM, tool, STT, message, command). The factory reads `[stats] enabled` itself; when disabled, it returns unregistered `NullStatsStorage` and the registry stays empty.
+- `aggregation-interval-seconds` (default `3600`) — periodic aggregation cycle cadence in seconds (minimum 60, gated on shared CRON_JOB tick)
+- `events-retention-days` (default `30`) — retention window for processed `stat_events` rows (day-truncated UTC midnight cutoff); `0` = keep forever
 
 **Stats recorded for LLM events:**
 - `generation_text`, `generation_structured`, `generation_image` — 0/1 flags per generation type
@@ -438,7 +445,17 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ### ADR-013: Max Webhook Receiver (Two-Process Local API Proxy)
 
-**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
+> **Updated by ADR-025 (2026-08-26):** the two-process architecture below is unchanged, but
+> the receiver's implementation now lives in [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)
+> (started with `python -m lib.max_webhook_receiver --config webhook-receiver.toml`, no
+> `ConfigManager` — it reads its own single TOML file) and stores `webhook_updates` in its OWN
+> SQLite file (`webhook_receiver_data.db` via `[webhook-receiver.database]`), not in the bot's
+> database — `migration_029` dropped the table from the bot DB. The stale "shared SQLite" and
+> `db.webhookUpdates` wording below is corrected in place; see ADR-025 for the extraction.
+
+#### ADR-013: Decision and rationale
+
+**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
 
 **Why:** Max's webhook model pushes updates to an HTTPS URL the operator controls. Rather than threading a second ingestion path into the bot process, a thin local receiver decouples the public HTTPS endpoint from the bot: it persists payloads durably, then the bot's existing long-poll loop consumes them unchanged.
 
@@ -446,15 +463,15 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ```
    Max API ──POST /webhook──▶  webhook receiver process
-   (platform-api2.max.ru)      (internal/max_webhook_receiver/, aiohttp.web)
+   (platform-api2.max.ru)      (lib/max_webhook_receiver/, aiohttp.web)
                                        │
-                                       │ addUpdate() / db.webhookUpdates
+                                       │ repository.addUpdate()
                                        ▼
                                ┌──────────────────┐
-                               │ webhook_updates  │  (shared SQLite)
-                               └──────────────────┘
+                               │ webhook_updates  │  (receiver's OWN SQLite:
+                               └──────────────────┘   webhook_receiver_data.db)
                                        ▲
-                                       │ getUnprocessedUpdates() / markProcessed()
+                                       │ repository.getUnprocessedUpdates() / markProcessed()
                                        │
    bot process (MaxBotApplication) ────┘
        MaxBotClient._pollingLoop()
@@ -462,21 +479,27 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
        polls GET /updates  (Max API protocol: {"updates": [...], "marker": ...})
 ```
 
+#### ADR-013: Components
+
 **Components:**
-- **Receiver process** — `internal/max_webhook_receiver/__main__.py` (`python -m internal.max_webhook_receiver`). aiohttp.web app (`app.py`) with two routes: `POST <webhook-path>` (verifies `X-Max-Bot-Api-Secret`, stores raw body) and `GET /updates` (long-polls `webhook_updates`, marks rows processed, returns Max-shaped `{"updates": [...], "marker": ...}`). The webhook handler returns **500 on a DB write failure so the Max API retries the delivery** rather than silently acknowledging a transient loss (full status map: 403 bad secret, 400 malformed JSON, 500 DB write failure, 200 success). A background cleanup task reaps processed rows past a 1h TTL.
-- **`webhook_updates` table** (`migration_019`) — durable buffer between the two processes. The receiver only writes; the bot (via the receiver's GET /updates handler) reads and marks processed. See [`database.md`](database.md) and [`docs/database-schema.md`](../../docs/database-schema.md).
+- **Receiver process** — [`lib/max_webhook_receiver/__main__.py`](../../lib/max_webhook_receiver/__main__.py) (`python -m lib.max_webhook_receiver --config webhook-receiver.toml`). aiohttp.web app (`app.py`) with two routes: `POST <webhook-path>` (verifies `X-Max-Bot-Api-Secret`, stores raw body) and `GET /updates` (long-polls `webhook_updates`, marks rows processed, returns Max-shaped `{"updates": [...], "marker": ...}`). The webhook handler returns **500 on a DB write failure so the Max API retries the delivery** rather than silently acknowledging a transient loss (full status map: 403 bad secret, 400 malformed JSON, 500 DB write failure, 200 success). A background cleanup task reaps processed rows past a 1h TTL.
+- **`webhook_updates` table** — durable buffer between the two processes, living in the RECEIVER's own database (`webhook_receiver_data.db` via `[webhook-receiver.database]`; created in the bot's chain by `migration_019`, dropped from it by `migration_029` — see ADR-025). The receiver self-heals both the table and its index at startup and is the sole writer; the bot reads and marks processed via the receiver's GET /updates handler. See [`database.md`](database.md) and [`docs/database-schema.md`](../../docs/database-schema.md).
 - **`MaxBotClient.basePollingUrl`** ([`lib/max_bot/client.py`](../../lib/max_bot/client.py)) — when set, the client's existing `_pollingLoop()` routes getUpdates to the local receiver's `GET /updates` instead of `platform-api2.max.ru`. Trailing slash is stripped at construction. Authenticated via `Authorization` header when the receiver's `get-updates-secret` is set.
 - **Webhook subscription** — managed by the bot process. When `webhook-receiver.register-webhook = true` (the default), the bot calls Max's `POST /subscriptions` on startup; when `webhook-receiver.unregister-webhook = true`, it calls `DELETE /subscriptions` on shutdown. The two keys default independently — `register-webhook` defaults to `true`, `unregister-webhook` defaults to `false` — so a bot restart does not tear down the Max subscription unless unregistering is explicitly opted in.
 
+#### ADR-013: Key invariants
+
 **Key invariants:**
-- The bot never writes to `webhook_updates` directly in webhook mode — the receiver is the sole writer. The bot's poll loop hits the receiver's `GET /updates`, which internally calls `db.webhookUpdates.getUnprocessedUpdates()` / `markProcessed()` on the shared database.
+- The bot never writes to `webhook_updates` — it has no `webhookUpdates` repository handle at all (removed with ADR-025); the receiver is the sole writer AND owns the sole database. The bot's poll loop hits the receiver's `GET /updates`, which internally calls `repository.getUnprocessedUpdates()` / `markProcessed()` on the receiver's own database.
 - **Delivery semantics** are controlled by `webhook-receiver.mark-on-subsequent-poll` (default `true` = deferred/at-least-once): `GET /updates` does NOT mark rows on read; instead it returns a compound marker `"{received_at}|{id}"` for the last served row, and rows are acknowledged via `markProcessedBeforeMarker()` only when the bot passes that marker back on its next poll. A bot crash between polls leaves the rows unprocessed → re-delivered. When `false` (immediate/at-most-once), rows are marked processed on read via `markProcessed()` and the response carries `marker: null` (there is nothing to acknowledge on the next poll); a crash after serving loses them. A malformed marker passed back by a client is caught narrowly (`ValueError`/`OverflowError`/`TypeError` raised inside `_parseMarker`) and treated as a no-marker poll rather than 500-ing — this prevents the bot from wedging in an infinite retry loop against the same bad marker.
 - `webhook-receiver.enabled = false` keeps the bot on normal long-polling to the real Max API; the receiver process still runs and still writes any webhook POSTs it receives, but the bot ignores them. This is the safe default.
 - The receiver refuses to start when `webhook-receiver.secret` is empty or an unresolved `${VAR}` placeholder (it would otherwise be a publicly-known secret). The bot mirrors this guard in webhook mode: whenever `webhook-receiver.enabled = true` it rejects unresolved `${VAR}` placeholders in both `secret` and `get-updates-secret` at startup (an unresolved placeholder would otherwise be sent verbatim as a credential — to the Max API for `secret`, or as the `Authorization` header to the local receiver for `get-updates-secret`), and additionally requires `secret` to be non-empty when `register-webhook = true`.
 
+#### ADR-013: Local API proxy pattern and config
+
 **Local API proxy pattern:** the receiver's `GET /updates` re-shapes stored rows into the Max API `UpdateList` response, so the bot's polling code path is identical whether it points at the receiver or the real platform API. Only the base URL differs. This keeps the webhook feature a config flip rather than a parallel code path.
 
-**Config:** `[webhook-receiver]` in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). See [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+**Config (split since ADR-025):** the bot reads its `[webhook-receiver]` keys (enabled, base-polling-url, secret, get-updates-secret, register/unregister, webhook-url, webhook-update-types) from the ConfigManager hierarchy ([`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml)); the receiver reads its OWN single TOML file (`--config`, default `webhook-receiver.toml`) holding the receiver-only keys plus `[webhook-receiver.database]`. See [`configuration.md`](configuration.md) §`[webhook-receiver]`.
 
 ---
 
@@ -488,11 +511,15 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 > arrival-time per-message injection, Phases 1–4b). The cron / lock / accounting invariants below are still
 > authoritative. See ADR-016 and `docs/llm/memories/user-memories.md`.
 
+#### ADR-014: Decision and rationale
+
 **Decision:** A rolling per-`(chat, user, thread)` memory summary is refined in the background by an LLM on a 60s `CRON_JOB` owned by `UserMemoriesHandler`, and injected into normal chat context as a new `EnsuredMessage.userSummary` field.
 
 **Why:** Lets future replies carry short-term context about each user without re-reading their whole history or putting durable facts into every message's `userData`. The work is asynchronous and bounded so it never blocks the hot reply path or floods the LLM provider.
 
 > **Note (post-ADR-016):** the JSON field is now `userMemories` (per-message compact-ID memory injection per ADR-016/ADR-018); the historical `userData` name in the prose above is retained as a frozen record.
+
+#### ADR-014: Components
 
 **Components** (see [`docs/llm/memories/user-memory-refinement.md`](memories/user-memory-refinement.md) for the durable implementation summary):
 
@@ -503,11 +530,16 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 - **Persistence** — the resulting summary + cursors land in `chat_users.metadata.memoryRefinement[str(threadId)]` (`{summary, lastProcessedMessageId, lastProcessedMessageDate}`). Written via **direct read-modify-write through `chatUsers.updateUserMetadata()`** — NOT `setUserMetadata(isUpdate=True)`, which shallow-merges at the top level and would wipe sibling threads' summaries (see [`tasks.md`](tasks.md) §3 gotcha). The `lastRefinedTS` (drives the 6h time threshold) is tracked **in-memory** on `UserMemoriesHandler._lastRefinedTS` (lost on restart; absent → 0 → due).
 - **Context injection** — `BaseBotHandler._updateEMessageUserData` and `HandlersManager._processMessageRec` fetch the full `UserMetadataDict` via `cache.getUserMetadata` and pass it to `EnsuredMessage.applyUserMetadata(metadata)`, which extracts `memoryRefinement[str(threadId or DEFAULT_THREAD_ID)].summary` into `userSummary`. Intentionally not gated on `MEMORY_REFINEMENT_ENABLED` at injection — the write side gates, so absence-of-summary is the gate. `formatForLLM` omits `userSummary` from JSON when `None` → byte-identical default output.
 
+#### ADR-014: Load-bearing invariants
+
 **Load-bearing invariants:**
 - The global lock is the concurrency boundary for refinement. Never add per-entry locks or fire-and-forget tasks — a slow run must block the next tick, not pile up concurrent calls.
 - Nested `memoryRefinement` writes must read-modify-write the whole metadata dict. Never pass a partial `{"memoryRefinement": {<threadId>: ...}}` through `setUserMetadata(isUpdate=True)`.
 - The dispatch loop uses a **credit-consumed** counter reset in the per-entry `finally` block: `_accounting[key] = max(0, _accounting.get(key,0) - preCount)` where `preCount` is the count captured at scan time, NOT an unconditional zeroing. This preserves increments from messages that arrived during the (possibly multi-second) LLM call. When the result is `0` the key is **popped** from `_accounting` (not kept at `0`) so empty keys aren't re-iterated next tick. Never revert to `= 0`.
 - Due-list selection is an **online top-K by smallest `lastRefinedTS`** maintained during the scan, NOT a collect-all → sort → truncate. A bounded `due` list of size ≤ `_memoryMaxRefinesPerTick` is kept, holding the entries with the SMALLEST `lastRefinedTS` (oldest-due / never-refined carry TS=0). When full, a new candidate with a smaller `lastRefinedTS` than the running max evicts that max and the running max is recomputed. The 3rd tuple element is `lastRefinedTS` (int), not `elapsed` (float). Dispatch order within the selected K is unspecified — acceptable since K is tiny and all selected entries get processed in the happy path. Never revert to the old `due.sort(key=lambda x: (-x[2], -x[1]))[:maxRefinesPerTick]` (largest-elapsed-first).
+
+#### ADR-014: Scheduling invariants and config
+
 - **Never-refined users are deliberately NOT skipped.** An earlier `isNeverRefined and newMessagesCount < minMessages: continue` pre-filter was removed because it gated on the *new-message counter*, but refinement of a never-refined user actually pulls *lifetime* messages via `getChatMessagesSince(sinceDateTime=None)`. The skip was over-conservative — it blocked users with plenty of pre-existing chat history but few messages since feature-enable. Now never-refined users (TS=0 → due-by-time) enter the due list normally and get refined from their lifetime history; if genuinely too few lifetime messages, `_runSingleRefinement` bails once on the `< min-messages-to-refine` path and advances the in-memory `_lastRefinedTS` so the candidate isn't retried until the count/time threshold fires again.
 - `_runSingleRefinement` sets `_lastRefinedTS[key] = int(time.time())` on the `< min-messages` bail path, so idle (e.g. post-restart, previously-refined) users aren't re-scanned and re-bailed on every 60s tick. The count threshold still fires independently once messages accumulate. Never remove this — without it the cron hot-loops over idle due-by-time users.
 - **Lock ordering for nested metadata RMW:** the cursor-persist block inside `_runSingleRefinement` (`user_memories.py`, runs under `_refineLock`) acquires `CacheService.chatUserMetadataLock()` to serialize its read-modify-write of `chat_users.metadata` against `setUserMetadata(isUpdate=True)`. (The Phase 4a refinement rewrite inlined this cursor persist — it was formerly a standalone `_persistMemoryEntry` method; see [`memories/chat-users-cache.md`](memories/chat-users-cache.md).) The ordering is `_refineLock` (outer) → `chatUserMetadataLock` (inner) — never invert it. `setUserMetadata` (both `isUpdate=True` and `isUpdate=False` branches — the lock wraps the entire method body) is the only other `chatUserMetadataLock` holder and it never touches `_refineLock`, so the no-deadlock argument holds; a new metadata-RMW site added inside the refinement flow must respect the same ordering. See ADR-015.
@@ -518,9 +550,13 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ### ADR-015: Write-Through `chat_users` Cache in `CacheService`
 
+#### ADR-015: Decision and rationale
+
 **Decision:** `CacheService` gained a write-through cache for the single-row `chat_users` lookup. The existing `CacheNamespace.CHAT_USERS` namespace (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`) was reused; its value TypedDict `HCChatUserCacheDict` ([`internal/services/cache/types.py:130`](../../internal/services/cache/types.py:130)) was extended with a second lazily-loaded field `userInfo: NotRequired[ChatUserDict]` (non-Optional; presence-of-key is the "loaded" sentinel) alongside `permanentMemories` (the per-thread permanent-memory cache). Every single-row `(chatId, userId)` read and username/fullName/metadata write in the handler layer now routes through `CacheService` instead of `self.db.chatUsers.*`. Aggregate/by-username queries (`getChatUserByUsername`, `getChatUsers`, `getUserChats`, `getAllGroupChats`, `getUserIdByUserName`) are untouched.
 
 **Why:** On every inbound message the bot read the `chat_users` row for the sender 2–5 times (memory-summary reads during LLM history reconstruction, spam `checkSpam`, per-message `updateChatUser` upsert, internal metadata-read inside `setUserMetadata`). The cache eliminates the redundant reads on the warm path. It mirrors the established permanent-memory cache pattern (`getChatUserPermanentMemories`/`invalidateChatUserPermanentMemories`): `MEMORY_ONLY` namespace, durability from explicit write-through inside the setter methods.
+
+#### ADR-015: New CacheService methods
 
 **New `CacheService` methods** ([`internal/services/cache/service.py:1008`](../../internal/services/cache/service.py:1008)):
 
@@ -533,11 +569,15 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 **Refactored call sites:** `internal/bot/common/handlers/{base,spam,message_preprocessor,user_memories}.py` route single-row reads/writes through `self.cache.*`.
 
+#### ADR-015: messages_count staleness and cache semantics
+
 **`messages_count` staleness trade-off (load-bearing):** the `messages_count` column is incremented by a raw SQL `UPDATE ... SET messages_count = messages_count + 1` inside `ChatMessagesRepository.saveChatMessage` ([`internal/database/repositories/chat_messages.py:154`](../../internal/database/repositories/chat_messages.py:154)), which bypasses `ChatUsersRepository` and therefore this cache. A cached row's `messages_count` drifts. The two correctness-critical readers that gate on `messages_count` vs `AUTO_SPAM_MAX_MESSAGES` — `SpamHandler.checkSpam` ([`spam.py`](../../internal/bot/common/handlers/spam.py)) and `markAsSpam` — use the **conditional-refresh micro-optimisation** `SpamHandler._getUserInfoFreshIfMessagesLessThan(chatId, userId, messagesCountThreshold)` instead of an unconditional `refresh=True`. Because `messages_count` is monotonically non-decreasing, a cached value at or above the threshold can only stay there or grow, so it remains valid for any `>=` / `>` gate; only a cached value strictly below the threshold might have drifted up past it, so only that case pays for a `refresh=True` re-fetch. The two call sites pass different thresholds matching their gate direction: `checkSpam` (a `>=` gate) passes `maxCheckMessages` unchanged; `markAsSpam` (a STRICT `>` gate) passes `maxSpamMessages + 1` so the boundary case (`cached == maxSpamMessages`) still triggers a refresh, closing the false-ban window. Read-heavy paths (memory summary, metadata) consume the warm cache and do not need an accurate count.
 
 **Absent-row non-memoization (intentional):** `getChatUser` does NOT cache a missing row. An absent `(chatId, userId)` row indicates something went wrong upstream (e.g. a message arrived before the row was seeded) and is not worth memoizing — every read of an absent row re-queries the DB until the row appears. This also keeps `userInfo` non-Optional (presence-of-key is the "loaded" sentinel).
 
 **Skip-when-unchanged optimization & `updated_at` semantics shift:** because `updateChatUser` is a no-op when `username`/`full_name` are unchanged, `updated_at` no longer refreshes on such calls. Accepted trade-off; callers must not assume `updated_at` moves on every `updateChatUser` invocation. (`saveChatMessage`'s raw increment still bumps `updated_at` independently on every message.)
+
+#### ADR-015: Nested-write safety and tests
 
 **Nested-write safety invariant:** `updateUserMetadata` does NO merge. Callers writing a nested sub-dict (e.g. `memoryRefinement[str(threadId)]`) must read the FULL metadata via `getUserMetadata`, mutate the single nested key, and write the FULL metadata back via `updateUserMetadata`. A blind shallow top-level merge (`{**old, **new}`) would wipe sibling keys — the memory-refinement write path (`user_memories.py`'s `_runSingleRefinement` inlined cursor-persist block, formerly `_persistMemoryEntry`) keeps its explicit full-read + nested-mutate + full-write pattern, and that whole RMW is serialized via `chatUserMetadataLock()` (above) so concurrent metadata writers cannot lose updates. This invariant is documented in both `setUserMetadata` and `updateUserMetadata` docstrings; see also ADR-014 and [`tasks.md`](tasks.md) §3.
 
@@ -553,22 +593,31 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ### ADR-016: Unified `user_memories` Store (Structured Memories + vec0 + Tool Self-Management)
 
+#### ADR-016: Decision and context
+
 **Decision:** Every durable fact, preference, event, relationship, or high-level bio note about a user lives as one row in a single `user_memories` table (`migration_020`), discriminated by a `MemoryType` tag and a freeform `tags` set, split into **permanent** (always injected) and **ephemeral** (retrieved per turn) classes. Memories are searchable via a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) and are managed by the LLM itself through three tools (`add_memory` / `delete_memory` / `search_memories`). A per-message `userMemories` snapshot (injected at arrival time into `chat_messages.metadata`) replaces the old opaque per-message `userSummary` JSON injection.
 
 **Context:** The predecessor (ADR-014) refined a single rolling-bio **string** per `(chat, user, thread)` — an opaque summary blob stored in `chat_users.metadata.memoryRefinement[threadId].summary` and injected whole into every chat turn as `EnsuredMessage.userSummary`. That design could not represent discrete facts, could not be searched, could not be selectively retained vs. expired, and forced the model to emit one re-written paragraph per run. The legacy `user_data` key-value table held durable facts but was equally opaque (one JSON blob per user, no type/tags, no search, no dedup). Both were LLM-read-only at chat time: the model could not add, delete, or look up a specific memory on demand.
 
 The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/`relationship`), a `tags` set, a `permanent` flag, a `source` provenance, and an embedding — so memories are individually addressable, filterable, de-duplicated (cosine similarity at insert time), and curatable by the model itself.
 
+#### ADR-016: Storage components
+
 **Components** (see [`memories/user-memories.md`](memories/user-memories.md) for the canonical durable summary):
 
 - **`user_memories` table** (`migration_020`) — composite natural key `(chat_id, user_id, memory_id)` (no `AUTOINCREMENT`); `memory_id` is an app-generated UUID hex. Three indexes back the read paths (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`).
-- **vec0 virtual table `vec_user_memories_{dim}`** — lazy-created at runtime by `UserMemoriesRepository._upsertVecMemoryEmbedding` on first write of a given dimension (mirrors `chat_embeddings._upsertVecMessageEmbedding`). NOT created by the migration. Carries `memory_id` (the row identifier), three partition keys (`chat_id`/`user_id`/`model`), a `permanent` filterable metadata column, and the `embedding` vector column (cosine distance); the `model` partition key scopes vectors per embedding model so a model swap does not cross-contaminate vector spaces. `thread_id` and `type` are deliberately NOT carried in vec0 (they were write-only and never read back); semantic search re-applies them in a JOIN step on the authoritative `user_memories` columns (`model` and `permanent` are pushed into the vec0 filter clause directly).
-- **`UserMemoriesRepository`** (`internal/database/repositories/user_memories.py`, wired as `db.userMemories`) — 10 public methods (writes, reads, search, embedding persistence, model-drift regen helpers); all SQL goes through `BaseSQLProvider`.
+- **vec0 virtual table `vec_user_memories_{dim}`** — lazy-created at runtime by `UserMemoriesRepository._upsertVecMemoryEmbedding` on first write of a given dimension (mirrors `chat_embeddings._upsertVecMessageEmbedding`). NOT created by the migration. Carries `memory_id` (the row identifier), three partition keys (`chat_id`/`user_id`/`model_id`), a `permanent` filterable metadata column, and the `embedding` vector column (cosine distance); the `model_id` partition key (INTEGER FK into the `models` lookup table added in `migration_025`; was TEXT `model` pre-migration_025) scopes vectors per embedding model so a model swap does not cross-contaminate vector spaces. `thread_id` and `type` are deliberately NOT carried in vec0 (they were write-only and never read back); semantic search re-applies them in a JOIN step on the authoritative `user_memories` columns (`model_id` and `permanent` are pushed into the vec0 filter clause directly).
+- **`UserMemoriesRepository`** (`internal/database/repositories/user_memories.py`, wired as `db.userMemories`) — 12 public methods (writes, reads, search, embedding persistence, model-drift regen helpers); all SQL goes through `BaseSQLProvider`.
+
+#### ADR-016: Tools, injection, and regeneration cron
+
 - **3 LLM tools** (registered in `UserMemoriesHandler.__init__`, gated on the global `[user-memory].enabled` kill switch): `add_memory` (dedup state machine at insert), `delete_memory` (refinement-only at chat time — D3 gating forces `useTools[DELETE_MEMORY] = False` on every chat-time turn), `search_memories` (semantic or filter-only). Embeddings (tools + regen cron) are produced via `LLMService.generateEmbedding(text, chatId, chatSettings) -> Optional[Tuple[modelName, List[float]]]`; the old `internal/bot/common/memory_embedding_utils.py` helper module was removed.
 - **Injection** — **centralised** in `MessagePreprocessorHandler.injectMemories()`, which runs at message-arrival time (inside `newMessageHandler`, before the message is saved): it loads permanent memories (from the `getChatUserPermanentMemories` cache) and ephemeral memories (semantic vec0 `searchMemories` driven by `LLMService.generateEmbedding` when memory embeddings are on — i.e. `MEMORY_ENABLED && EMBEDDINGS_ENABLED` — otherwise `getLatestMemories`, with a runtime semantic→latest fallback if the query embed fails), then writes the **compact memory IDs** into `chat_messages.metadata.memories` and warms the by-id cache (`cache.warmMemoriesByIds`). There is no per-message content field — `formatForLLM` resolves the IDs lazily at render time (ADR-018) and emits the resolved block under the JSON key `userMemories`. The previous `BaseBotHandler._buildMemoriesBlock` helpers and the four handler-level injection sites were deleted (there is no `<user-memories>` system-message block any more).
 
   > **Amendment (post-ship correction):** `injectMemories()` actually runs **after** `saveChatMessage(...)` inside `newMessageHandler`, not before — the saved row is then re-persisted with the compact IDs via a separate `db.chatMessages.updateChatMessageMetadata(...)` call. The `cache.warmMemoriesByIds(...)` method was planned but **not shipped**; the by-id cache populates lazily (cache-aside) on the first `formatForLLM` read via `cache.getMemoriesByIds`. See ADR-018's amendment below and [`docs/llm/handlers.md`](handlers.md) §1 (`MessagePreprocessorHandler`).
 - **Regeneration cron** — `UserMemoriesHandler._runMemoryEmbeddingRegen` runs every 60s tick (outside `_refineLock`) and mirrors `ChatSearchHandler._dtCronJob` one-to-one, adapted for the single-store model: chat discovery round-robins over the in-memory `self._trackedChats: MutableSet[int]` (populated by `newMessageHandler` when memory embeddings are on — i.e. `MEMORY_ENABLED && EMBEDDINGS_ENABLED`), model-drift cleanup, stale detection (`getMemoriesWithoutEmbeddings`), re-embed loop. **Cold-start tradeoff (intentional):** `_trackedChats` is empty on restart and only grows from live inbound messages, so a chat with a backlog that stays quiet after a restart is not backfilled until the next qualifying message arrives; eviction is one-way — a chat dropped by a per-chat gate failure is not re-added until the next message. Never raises. (The previous DB-scan discovery — the deleted `ChatSettingsRepository` method that queried `chat_settings` for memory-embedding settings — and that repository method itself were both removed.)
+
+#### ADR-016: Consequences
 
 **Consequences:**
 
@@ -577,9 +626,11 @@ The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/
   > **Follow-up correction:** `migration_022` subsequently DROPPED the `user_data` table entirely. It is no longer present in the schema; do not assume it still exists. (See the Note on `docs/database-schema.md` `user_memories`.)
 - **Old rolling-bio blob is backfilled in** (permanent thread-scoped `type='bio'`, `tags=["migrated_bio"]`); the stale `chat_users.metadata.memoryRefinement` blob is left unread (the refinement rewrite stops writing it; only the message cursor is still persisted there).
 - **Old `userSummary` injection path is removed entirely** — `EnsuredMessage.applyUserMetadata`, the `userSummary` field, the `formatForLLM` key, and the `chat-prompt-suffix` documentation line are all gone (Phase 4b). The per-message compact memory-ID snapshot (injected at arrival time, persisted in `metadata.memories`) fully replaces per-message summary JSON.
-- **vec0 is the sole embedding store** — unlike chat-history search (`message_embeddings` BLOB table + vec0), `user_memories` has no BLOB side table. `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself; the vectors live only in vec0. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
+- **vec0 is the sole embedding store** — since `migration_025_embedding_model_lookup`, this is true for BOTH `user_memories` and `chat_messages`: the `message_embeddings` BLOB side table was dropped (chat-history search no longer has a BLOB fallback either), and the per-row `embedding_model`/`embedding_dimensions` columns on `user_memories` were swapped for a single `model_id` INTEGER FK into the new `models` lookup table. The vec0 partition key on both vec0 families is now `model_id INTEGER` (was TEXT `model` pre-migration_025). When vec0 is unavailable, both `searchMemories` and the chat-history `_semanticSearch` return `[]` (no numpy fallback — the numpy paths in `chat_search.py` and `user_memories.py` were removed in the same refactor).
 - **Refinement rewrite** — `_runSingleRefinement` no longer emits a summary string; it curates the store live via the three tools during the LLM call. The accounting/cron/locking machinery (ADR-014) and the `chat_users` cursor persist (ADR-015) are unchanged.
 - The per-tool JSONL refinement log now records `addCount` / `deleteCount` / `searchCount` (the primary observability for the grey-zone dedup review) instead of a summary string.
+
+#### ADR-016: Config and relationship to ADR-014/015
 
 **Config:** `[user-memory]` (global kill switch + thresholds including `memory-reindex-batch-size`); per-chat memory settings under `[bot.defaults]` — master gate `MEMORY_ENABLED` (renamed in the chatSettings consolidation from the old injection-only flag), plus `MEMORY_REFINEMENT_ENABLED` / `MEMORY_REFINE_MODEL` / `MEMORY_REFINE_FALLBACK_MODEL` / `MEMORY_REFINE_SYSTEM_PROMPT` / `MEMORY_REFINE_USER_PROMPT_TEMPLATE`. Memory embeddings are a derived condition (`MEMORY_ENABLED && EMBEDDINGS_ENABLED`), not a separate flag; semantic memory retrieval happens when both are on, otherwise latest (runtime semantic→latest fallback on embed failure). See [`configuration.md`](configuration.md) §`[user-memory]` and [`memories/user-memories.md`](memories/user-memories.md).
 
@@ -589,9 +640,13 @@ The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/
 
 ### ADR-017: Memory Compaction v1 — Compact Per-Message ID Storage + By-Id Cache + Soft-Delete
 
+#### ADR-017: Decision and context
+
 **Decision:** Each message's `metadata["memories"]` stores **compact memory IDs** (`{"permanentIds": [...], "shortTermIds": [...]}`) instead of a full per-message content snapshot. The read path resolves IDs → content at render time through a new `CacheNamespace.MEMORIES_BY_ID` cache + `CacheService.getMemoriesByIds` + `UserMemoriesRepository.getMemoriesByIds`. `user_memories.deleteMemory` becomes a **soft delete** (sets `deleted_at`, drops vec0 + provenance; the row survives) so a historical message referencing a now-deleted memory can still resolve its content. Spec/plan: [`docs/archive/plans/memory-compaction-v1.md`](../archive/plans/memory-compaction-v1.md) (status: IMPLEMENTED).
 
 **Context:** ADR-016's injection design persists the resolved memory content into `chat_messages.metadata.memories` per message so `formatForLLM` can render it later without a re-fetch. For a user with 10 permanent + 5 ephemeral memories, that is ~2–3 KB per message; the permanent block (~1.5 KB) is byte-identical across every message in the same `(chat, user, thread)`, so a 50-message thread carries ~75 KB of duplicated permanent-memory JSON. Compacting the storage to UUID lists and resolving at read time eliminates the **storage** duplication (IDs are ~tiny relative to content). Note: ADR-017 eliminated only the *storage* duplication — each message still *rendered* its full resolved content block into the LLM context, so the ~75 KB of rendered duplication persisted until ADR-018 (context dedup) moved resolution lazily into `formatForLLM` and deduplicated per-context. Soft-delete is required because a historical message that references a deleted memory must still resolve its content for the LLM — a hard `DELETE` would make it resolve to `None` and silently drop from the rendered block.
+
+#### ADR-017: Components
 
 **Components** (see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Read-path resolution" / "By-id resolution cache" for the canonical summary):
 
@@ -603,11 +658,15 @@ The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/
 - **Write path** (`MessagePreprocessorHandler.injectMemories`) — splits `userMemories` (resolved content for the current turn, with `id` stripped from permanent entries) from `metadata["memories"]` (the compact ID lists persisted into `chat_messages.metadata`). The permanent-memories cache loader switches to `keepId=True` so the write path can extract `permanentIds`.
 - **Read path** (`EnsuredMessage.loadMemoriesMetadata` + `resolveMemories`) — `fromDBChatMessage` stashes compact IDs without resolving (avoids a `CacheService`→`ensured_message` circular import); each render site calls `await msg.resolveMemories(self.cache)` before `formatForLLM`/`toModelMessage`. An AST-based coverage guard (`tests/test_memory_resolution_coverage.py`) enforces every `fromDBChatMessage(injectMemories=<not literal False>)` render site is followed by `resolveMemories`, and bans the `setUserMemories(metadata-derived)` bypass.
 
+#### ADR-017: Consequences
+
 **Consequences:**
 
 - **Backward compat without backfill:** old messages keep their inline content snapshots (`{"permanent": [...], "shortTerm": [...]}`) and render unchanged via `setUserMemories`; new messages carry the compact ID shape. `loadMemoriesMetadata` detects the format. A zero-memory compact-format message now renders WITHOUT a `userMemories` block (was an empty block) — empty blocks are LLM noise.
 - **Soft-deleted rows accumulate** — the `user_memories` table grows over time. GC is deferred (the safe shape requires a join against `chat_messages.metadata` JSON TEXT to check ID references; tracked as a follow-up).
 - **Prompt hoisting deferred** — memories still attach per-message (resolved from cache); hoisting the permanent block to a single system message is a separate future feature for which this compact storage is a prerequisite.
+
+#### ADR-017: Implementation deviations from the plan
 
 **Implementation deviations from the plan** (recorded in the plan's status note and [`memories/user-memories.md`](memories/user-memories.md) "Read-path resolution"):
 
@@ -617,6 +676,8 @@ The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/
 4. **AST coverage guard** implemented with a dynamic scan over `internal/` (not a fixed file list) + target-tracking for the `eRootMessage` exemption (built but never rendered) + `setUserMemories(metadata-derived)` bypass ban. 8 sanity tests prove detection.
 
 > **Count reconciliation:** the plan records 6 deviations while ADR-017 lists 4 numbered implementation deviations because #5 (the `_llmToolGenerateImage`→`draw_command` symbol drift) is a plan-internal self-correction — ADR-017 names `draw_command` correctly throughout — and #6 (a zero-memory compact-format message omits the `userMemories` block) is recorded under ADR-017's **Consequences** above, not as a deviation.
+
+#### ADR-017: Follow-up refactor (2026-07-10)
 
 **Follow-up refactor (2026-07-10, 3101 tests):** The sections above are the
 original ADR-017 snapshot. A post-implementation refactor tightened the
@@ -664,9 +725,13 @@ read/write paths (detail in [`memory-compaction-v1.md`](../archive/plans/memory-
 
 ### ADR-018: Memories Context Deduplication — Lazy Render-Time Resolution + Newest→Oldest Per-Context Dedup
 
+#### ADR-018: Decision and context
+
 **Decision:** Drop the `EnsuredMessage.userMemories` content field entirely; resolve compact memory IDs to content **lazily, on-demand, inside `formatForLLM`** (not at load time), and render each memory **exactly once per rendered context** via a newest→oldest exclusion computation. `metadata["memories"]` (`CompactMemoryIdsDict`: `{permanentIds, shortTermIds}`) is now the sole canonical source of which memories a message carries. Spec/plans: [`docs/archive/plans/memories-context-dedup-plan-v1.md`](../archive/plans/memories-context-dedup-plan-v1.md), [`memories-context-dedup-plan-v2.md`](../archive/plans/memories-context-dedup-plan-v2.md) (status: IMPLEMENTED).
 
 **Context:** ADR-017 compacted *storage* to UUID lists but each message still rendered its full resolved content block into the LLM context — the permanent block (~1.5 KB) was duplicated ~N× across a thread (~75 KB for a 50-message thread). Three symbols encoded the eager, per-message, duplicated model: `EnsuredMessage.userMemories` (a per-message content snapshot field), `EnsuredMessage.resolveMemories` (eagerly resolved IDs→content at load time, before any render), and `EnsuredMessage.setUserMemories` (the write-path setter that split content from compact IDs). This ADR removes all three and moves resolution to render time with per-context deduplication, so each memory appears at most once in a given rendered context (at its newest occurrence).
+
+#### ADR-018: Components
 
 **Components** (see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Render-time resolution (lazy + dedup)" for the canonical summary):
 
@@ -679,6 +744,8 @@ read/write paths (detail in [`memory-compaction-v1.md`](../archive/plans/memory-
   > **Amendment (post-ship correction):** `CacheService.warmMemoriesByIds` was specified here but **not shipped** — the method does not exist in the codebase. The `MEMORIES` namespace populates lazily (cache-aside) on the first `formatForLLM` read via `cache.getMemoriesByIds`. Additionally, `injectMemories()` runs **after** `saveChatMessage(...)` (not before the row is saved); because it mutates `metadata` after the initial insert, the compact IDs are re-persisted to `chat_messages.metadata` via a separate `db.chatMessages.updateChatMessageMetadata(...)` call. See [`docs/llm/handlers.md`](handlers.md) §1 (`MessagePreprocessorHandler`) and [`memories/user-memories.md`](memories/user-memories.md).
 - **`formatForLLM` / `toModelMessage` / `toModelMessageList`** now take keyword-only `cache: Optional[CacheService]` (REQUIRED — no default; pyright errors on any caller that omits it) + `excludeMemoryIds: Optional[Set[str]] = None` (the `None` default is treated as the empty set inside `formatForLLM`). Only `cache` is required; `excludeMemoryIds` keeps its `None` default, so pyright does NOT force callers to pass it. (The plan proposed dropping both defaults, but the implementation kept `excludeMemoryIds=None` — call sites that omit it render all memories.) The JSON branch resolves IDs on-demand via `cache.getMemoriesByIds(...)` (only when `cache is not None`), filters each cohort by `excludeMemoryIds` before resolving, omits the `"userMemories"` key when `cache is None` / no IDs survive / nothing resolves, and **never mutates `self.metadata`** (the condense branch persists `eRootMessage.metadata` to DB, so mutating it during render would corrupt the persisted compact IDs).
 - **Per-context deduplication is applied INLINE at each call site** (no shared helper). Each call site walks its message sequence newest→oldest, accumulating an exclude-set: for each message it applies `excludeMemoryIds = ownIds ∩ seen`, then adds its own IDs to `seen`. In `getThreadByMessageForLLM` the tail messages are walked newest→oldest into a `deque` (the `excludedMemoryIds` set accumulates each message's `getMemoryIds()`); `handleRandomMessage` does the same across its history+current sequence. Condense-summary plain-text messages carry no memory blocks and never participate in dedup.
+
+#### ADR-018: Consequences
 
 **Consequences:**
 
@@ -695,6 +762,8 @@ read/write paths (detail in [`memory-compaction-v1.md`](../archive/plans/memory-
 
 ### ADR-019: Condensed-Context Retrieval — Coverage Tracking + Lazy JSON Render + `get_messages_by_ids` Tool
 
+#### ADR-019: Decision and context
+
 **Decision:** When the LLM's conversation context is condensed (older messages summarised to fit the context window), record *which* message IDs each summary covers plus structured metadata (participants, date range, message count) on the persisted `CondensingDict`; render every condensed summary as a JSON object (consistent with the real-user-message JSON shape) via a shared lazy renderer; and expose an `get_messages_by_ids` LLM tool so the model can fetch the originals underlying a summary on demand. Spec: [`docs/archive/plans/condensed-context-retrieval-plan-v1.md`](../archive/plans/condensed-context-retrieval-plan-v1.md) (status: IMPLEMENTED, then SIMPLIFIED 2026-07-13 — see note below).
 
 > **Simplification (2026-07-13):** The original implementation computed coverage metadata on the *caller* side via a `returnCoverage` kwarg on `condenseContext`, `CondenseBatchCoverage` index ranges, and parallel `indexToEntry`/`indexToEntry2` lists that mapped indices back to source rows. That caller-side index-range machinery was **deleted** and replaced by `ModelMessage.source`-based provenance: coverage is now computed *inside* `condenseContext` by the `generateCondensingDict` helper, which walks each batch's `ModelMessage`s and reads `.source`. The callers (Path A / Path B) simply consume `condensingDictMap.values()` — no parallel-list bookkeeping. This ADR describes the simplified design.
@@ -710,12 +779,17 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 2. **Unidentifiable coverage.** The legacy `CondensingDict` recorded only a *boundary* marker (`tillMessageId`/`tillTS`) — not *which* messages a summary actually covered. Re-condense cascades and multi-batch summaries lost precision.
 3. **Latent render asymmetry.** Real user messages are rendered as **JSON** (`EnsuredMessage.formatForLLM` JSON branch), but condensed summaries were injected as **raw text** `role="user"` at both sites. This was an undocumented asymmetry the LLM had to silently accommodate.
 
+#### ADR-019: Metadata model components
+
 **Components** (see [`internal/bot/models/message_metadata.py`](../../internal/bot/models/message_metadata.py) and [`internal/services/llm/service.py`](../../internal/services/llm/service.py)):
 
 - **`CondensingDict` evolution** — only `text` is required; all other fields (`tillMessageId`, `tillTS`, `messageIds`, `participants`, `dateRange`, `messageCount`) are `NotRequired`. Legacy rows carry `text` + the boundary markers; new writes populate `messageIds` as the authoritative coverage list. `tillMessageId`/`tillTS` are **legacy boundary markers NOT set by `generateCondensingDict`** — readers use `in`/`.get()` checks and fall back to `dateRange`/`messageIds` when absent.
 - **`CondensedDateRangeDict`** — functional-syntax TypedDict `{"from": float, "to": float}` (the JSON key `from` is a Python reserved keyword, so class-body syntax would be a `SyntaxError`; functional syntax is the only way to express it). This is the *storage* shape — two unix-timestamp floats. The renderer converts to ISO strings at call-time; ISO strings are **not** pre-baked into storage (mirrors how real messages render `date`).
 - **`MetadataDict.randomContext` reshape** — widened from `str` to `Union[str, CondensingDict]`. Path B new writes store a single `CondensingDict` (one summarisation possible per random context); legacy `str` rows are pre-wrapped into `CondensingDict(text=...)` by the read site before calling the renderer.
 - **`CondensedSummaryKind(StrEnum)`** — single-member render-side discriminator (`CONDENSED = "condensed"`) for the JSON `"type"` key. **Deliberately separate from `MessageType`** (which classifies real message *media*: text/image/sticker). `condensed` is a render-only construct; the JSON shape is structurally disjoint from real user messages (carries `coveredMessageIds`/`participants`/`dateRange`/`messageCount`/`summary` instead of `login`/`name`/`messageId`/`text`/...), so the shared `"type"` key never collides.
+
+#### ADR-019: Coverage producer and render path
+
 - **`generateCondensingDict(text, messages) -> CondensingDict`** (module-level in `service.py`) — the coverage producer. Walks the batch's `ModelMessage`s and reads each `.source`:
   - `EnsuredMessage` source → extract `messageId` / `sender.username` / `date.timestamp()` (a raw source message).
   - `dict`/`CondensingDict` source → union existing fields (re-condense cascade).
@@ -724,6 +798,9 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 - **`condenseContext` always-tuple return** ([`internal/services/llm/service.py`](../../internal/services/llm/service.py)) — signature: `condenseContext(messages, model, *, keepFirstN=0, keepLastN=1, condensingModel=None, condensingPrompt=None, condensingSystemPrompt=None, maxTokens=None, force=False)`. **Always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]`: first element = condensed message list (head + summaries + tail); second = `Dict[int, CondensingDict]` keyed by body-index → fully-populated `CondensingDict` (coverage computed inside via `generateCondensingDict` reading `ModelMessage.source`). When no condensing occurs the second element is `{}`. Path C (`generateTextViaLLM`) unpacks `_messages, _ = await self.condenseContext(...)` — byte-identical behaviour, ignores coverage.
 - **`renderCondensedSummary(data: CondensingDict) -> str`** — shared JSON renderer (module-level in `message_metadata.py`). **Signature narrowed to `CondensingDict`-only** (no legacy `str` branch); the Path B read site pre-wraps legacy `str` rows into `CondensingDict(text=randomContext)` before calling. Output shape: `{type:"condensed", coveredMessageIds:[...], participants:[...], dateRange:{"from":<ISO>,"to":<ISO>}, messageCount:N, summary:"..."}`. Falsy-drop mirrors `formatForLLM` (empty/absent fields omitted, never `null`); `type`+`summary` always present. Both injection sites call this (Path A at `base.py`; Path B at `ensured_message.py`'s `toModelMessageList`), replacing the raw `condensedMessage["text"]` / raw-string injections.
 - **`mergeCondensingDicts(dictList) -> CondensingDict`** (module-level in `message_metadata.py`) — unions multiple `CondensingDict`s: `text` = `"\n".join`; `messageIds` = plain `extend` (concat, **NO de-dup** — duplicates preserved across batches); `participants` = `list(set(...))` (set-unique but **unsorted**); `dateRange` = min/max; `messageCount` = sum. Used by Path B to merge all batches into a single `randomContext`.
+
+#### ADR-019: Caller consumption and the get_messages_by_ids tool
+
 - **Caller consumption (simplified)** —
   - **Path A** (`getThreadByMessageForLLM`): `condensedRet, condensingDictMap = await self.condenseContext(...)`; `condenseCache.extend(condensingDictMap.values())` (or `= list(...)` for re-condense). No parallel-list machinery.
   - **Path B** (`handleRandomMessage`): `condensedRet, condensingDictMap = await self.condenseContext(...)`; `if condensingDictMap: ensuredMessage.metadata["randomContext"] = mergeCondensingDicts(condensingDictMap.values())` (SKIP write when coverage empty — nothing meaningful to persist).
@@ -731,6 +808,8 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 - **`getChatMessagesByMessageIds` batch repo method** ([`chat_messages.py`](../../internal/database/repositories/chat_messages.py)) — portable `IN (:id0, :id1, ...)` named-placeholder expansion; early-returns `[]` on empty input; same JOIN shape as `getChatMessageByMessageId`; `ORDER BY c.date ASC`. Backs the tool.
 
 **`chat-prompt-suffix`** (`configs/00-defaults/bot-defaults.toml`, `BOT_OWNER_SYSTEM`-gated page) gained a Russian block documenting the condensed-summary JSON shape (`type:"condensed"` + the 5 field bullets) and the `get_messages_by_ids` tool reference, so the model is explicitly told originals are retrievable.
+
+#### ADR-019: Key decisions
 
 **Key decisions:**
 
@@ -747,6 +826,344 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 
 ---
 
+### ADR-020: STTService — Synchronous, Stateless STT Service and Dependency Firewall
+
+#### ADR-020: Decision and scope
+
+**Decision:** Media transcription (Speech-to-Text) is wired into the bot via a **stateless** singleton `STTService` ([`internal/services/stt/`](../../internal/services/stt/)) that owns the `lib/stt` provider lifecycle (construct / resolve proxy / `aclose`), bounds the **source bytes** of caller-supplied data before the provider call, and serves as the **final never-raise boundary** for the feature. The service exposes a single handler-time entry, `transcribeMedia(data, *, chatId) -> STTOutcome`, which awaits a thin pipeline inline and returns an immutable `STTOutcome`. **The service does NOT touch the database** — no row read/insert/cache/claim/persist/reclaim. The full `media_attachments` row lifecycle is owned by the `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task in [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py).
+
+**Why now:** `lib/stt` was built first as a bot-free library (provider-neutral models, PyAV extraction, the Yandex SpeechKit v3 wire protocol — see [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md)). This ADR records the integration-side decisions that turned the library into a wired (but default-off) service. It does not re-litigate library contracts; those live in the library spec.
+
+**Scope (this round):** `STTService` is **implemented, tested, and wired into `BaseBotHandler._processMediaV2`** — the `_transcribeMedia` background task consumes `STTService.getInstance().transcribeMedia(data, chatId=...)` (the bytes are downloaded synchronously inside `_processMediaV2` and passed in) and terminalizes the row via plain `updateMediaAttachment`. The feature remains **DEFAULT-OFF** — `[stt] enabled = false` ships the service as a no-op, and the per-chat `PARSE_ATTACHMENTS` + `TRANSCRIBE_MEDIA` settings (both default `false`) must also be on before any media is transcribed. The handler round landed as a fold-into-`_processMediaV2` extension (no standalone `STTHandler`); the bounded `downloadAttachment(maxBytes)` platform extension was **dropped**. **STT v1.1 (Object-Storage routing + statistics) is also implemented.** The Yandex provider has a co-located `YandexObjectStorage` helper and retains the `lib/stt` firewall. It additionally accepts default-off `[stt].force-mono`: enabling it advertises mono-only formats and therefore downmixes/re-encodes otherwise pass-through multi-channel input. Independently, any final mono extracted audio requests speaker labeling for inline and `uri` submissions; canonical response labels become opaque, recording-local generic tags with the result-level `SPEAKER` role. This is a provider contract, documented authoritatively in [`lib-stt-v1.md`](../design/lib-stt-v1.md), not a new service or architecture seam.
+
+#### ADR-020: Key decisions — service shape and firewall
+
+**Key decisions:**
+
+1. **Synchronous, stateless transcription** (chosen over an async in-flight registry). `transcribeMedia` awaits the full pipeline inline and returns an `STTOutcome`; it performs **no DB I/O**. Admission is **unbounded** — there is no `asyncio.timeout` around the semaphore; **the handler bounds the originating turn** (via its pipeline timeout). This fits the single-process assumption and avoids background-task / cross-turn coordination. A future async-registry design is not precluded but is not needed for v1.
+2. **`provider.stt(bytes)` is the call site** — NOT `extractAudio()` + `transcribe()` separately. `AbstractSTTProvider.stt(data)` is the never-raise entry that wraps extract + transcribe inside `lib/stt` (see [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) §4). `STTService` calls the single entry; it never drives extraction/transcription as separate steps.
+3. **Source-byte bounding survives (post-download); duration bounding moves to the handler.** `lib/stt` no longer bounds decoded PCM (a prior ratified simplification — see [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) §5). The service bounds only caller-supplied **source bytes** (`len(data) > maxSourceBytes` → `SOURCE_TOO_LARGE`); the default was raised to **1 GiB** (`1073741824`). The download itself is the handler's responsibility (the handler supplies the `data` bytes), so this check is post-download. **Duration bounding is the handler's job** — `DURATION_EXCEEDED` is reserved on the enum for the handler layer and is not currently produced (the wired `_transcribeMedia` task does not duration-gate in v1). If RSS gate-5 ([`stt-next-steps.md`](../archive/design/stt-next-steps.md) §4) fails at release, the ratified fallback is to restore a decoded-buffer cap inside `extractAudio` in `lib/stt`, **not** a service-side change.
+4. **Dependency firewall — proxy is injected, never resolved inside `lib/stt`.** `STTService` resolves the proxy via `ProxyService.resolveProxy(sttConfig, "stt")` and **injects** the resulting `ProxyConfig` into the `YandexSpeechKitProvider` constructor. `STTService` never resolves a proxy itself inside `lib/stt`, and `lib/stt` never imports `internal.*`. This mirrors `lib/openweathermap` / `lib/geocode_maps` and is load-bearing contract #1 in the library spec.
+
+#### ADR-020: Key decisions — layering and formatter
+
+5. **Never-raise layering.** `provider.stt()` never raises → `STTService.transcribeMedia` is the FINAL never-raise boundary for the feature. Every failure path returns an `STTOutcome(success=False, …)` + a structured log; `asyncio.CancelledError` propagates. **Persistence was REMOVED from the service** (the service is stateless) — the handler round owns the `media_attachments` row lifecycle (read / cache-hit / claim to `PENDING` / persist the outcome via plain `updateMediaAttachment` / terminalize). Single attachments have no concurrent writes, so last-write semantics suffice — there is no CAS.
+6. **Service-only originally; handler round landed as a fold-into-`_processMediaV2` extension.** The service shipped first as a smaller, reviewable commit (exercised by its own unit tests, no user-visible effect). The handler round (the `_processMediaV2` STT branch + `_transcribeMedia` background task + `TRANSCRIBE_MEDIA` chat gate + `CHANGELOG.md` entry) is now implemented and tested (16 tests in `tests/bot/common/handlers/test_base.py::TestProcessMediaV2STT`); `ret.task = sttTask` mirrors the image-parsing pattern (`ret.task = parseTask`); the feature stays default-off until an operator flips all gates on.
+7. **Thin formatter — structured delivery.** [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) emits one plain-text line per non-empty segment: `[Speaker#<tag>] [start..end] text` for a non-empty generic tag on a `SPEAKER` result, otherwise `[Ch#<tag>]` only for multiple distinct tags on a `CHANNEL` result, or an untagged timestamped line. Speaker labels are opaque and recording-local. The wired render path delivers the resulting description structurally as the JSON `mediaDescription` field.
+
+#### ADR-020: Error codes, lifecycle, and database
+
+**`STTErrorCode` ownership:** the shared [`STTErrorCode`](../../lib/stt/models.py) enum (9 members as of v1.1 — `OBJECT_STORAGE_ERROR` was added) is the stable failure vocabulary, but its members are produced at different layers:
+
+- **Service-produced** (produced ONLY by `STTService`): `STT_DISABLED`. `SOURCE_TOO_LARGE` is produced by the service (source-byte cap, `len(data) > maxSourceBytes`) **and** as of v1.1 also surfaced by the Yandex provider when the *extracted* payload ≥ `max-inline-bytes` and Object Storage is disabled (see [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §4.2/§4.5). (`PROVIDER_ERROR` is also produced by the service as the catch-all fallback for unexpected exceptions — structured logs distinguish a service-caught fallback from a provider-returned `PROVIDER_ERROR`.)
+- **Provider-produced** (returned inside a `TranscriptionResult(ERROR, …)` from `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`, and as of v1.1 `SOURCE_TOO_LARGE` (over inline threshold without Object Storage) + `OBJECT_STORAGE_ERROR` (Object-Storage upload failure before submit).
+- **Reserved / partially-produced at the handler layer** (not produced by the service or provider): `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. The bounded-download platform extension that would have produced `SOURCE_SIZE_UNKNOWN` was **dropped** (user decision 2026-08-03 — the wired `_transcribeMedia` task uses the existing unbounded `downloadAttachment`); `DOWNLOAD_ERROR` is emitted only as a structured log label by `_transcribeMedia` when `downloadAttachment` returns `None` (not persisted — there is no `errorCode` column); `DURATION_EXCEEDED` remains vocabulary-only (no duration gating in v1).
+
+**Lifecycle (in `main.py`):** `STTService.getInstance().initialize(configManager)` (NO `database` arg) runs AFTER proxy + rate-limiter init, BEFORE the bot application. `await STTService.getInstance().aclose()` runs as shutdown Step 2.5 (after LLM close, before DB close), wrapped in best-effort `try/except`. When `[stt] enabled = false` (the shipped default), the provider is never constructed and `aclose()` is a no-op.
+
+**Database:** NO migration, and the service itself does NO DB I/O. The existing `media_attachments` table is reused by the wired `_processMediaV2` STT branch + its `_transcribeMedia` background task: the `status` column (`MediaStatus`: `NEW → PENDING → DONE|FAILED`) carries the lifecycle and the transcript text is persisted in the existing `description` column. `_transcribeMedia` terminalizes rows via plain `MediaAttachmentsRepository.updateMediaAttachment(mediaId, status=..., description=...)` (`PENDING`→`DONE`+transcript on success | `PENDING`→`FAILED` on failure/exception). Single attachments have no concurrent writes, so last-write semantics suffice — there is **no CAS** and no `setStatusVerified` method (the former CAS helper was removed when the design was simplified). `asyncio.CancelledError` propagates (not swallowed by the broad `except Exception`) and leaves the row `PENDING` for orphan-reclaim. See [`database.md`](database.md) and [`docs/database-schema.md`](../../docs/database-schema.md).
+
+#### ADR-020: References
+
+**References:**
+
+- [`docs/design/media-transcription-stt-v1.md`](../design/media-transcription-stt-v1.md) — parent product decisions D1–D8.
+- [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) — `lib/stt` library spec (contracts, module layout, test matrix).
+- [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) — integration roadmap (handler round landed; manual release gates pending).
+- [`services.md`](services.md) §7 — `STTService` quick reference.
+- [`configuration.md`](configuration.md) §`[stt]` — config reference.
+
+---
+
+### ADR-021: HTTP layer migrated to `httpx2` (PTB via `alias_httpx()`)
+
+#### ADR-021: Decision and rationale
+
+**Decision:** Gromozeka's HTTP client layer runs on **`httpx2`** (Pydantic-org fork of `httpx 0.28.1`, API-identical) instead of `httpx`. `requirements.direct.txt` carries a single direct dependency — `httpx2[http2,socks]==2.10.0` — and the previous `httpx[http2]==0.28.1` + `httpx-socks[asyncio]==0.11.0` direct pins were removed. The frozen `requirements.txt` **genuinely lost only `httpx-socks` / `python-socks`** and gained `httpx2` / `httpcore2` / `socksio` / `truststore`. **`httpx` and `httpcore` REMAIN pinned in `requirements.txt`** as shadowed transitive dependencies of `python-telegram-bot` and `openai` — they are still installed in the venv, but at runtime `import httpx` resolves to `httpx2` process-wide via the `alias_httpx()` startup hook below, so the real `httpx`/`httpcore` packages never execute. (Any doc claiming "httpx was removed from the dependency tree" is wrong; httpx2 is what actually runs.)
+
+**Why:** upstream `encode/httpx` is on a ~20-month stable-release gap with a stalled 1.0 effort; `httpx2` ships monthly under the Pydantic organization with OIDC Trusted Publishing + Sigstore attestations and is gaining ecosystem momentum (Starlette, MCP Python SDK). httpx2 is the same code as httpx 0.28.1, so this is opportunistic maintenance/security-velocity modernization, not a rescue or a performance play. Full comparison, supply-chain assessment, and verdict live in [`docs/design/httpx2-migration-research.md`](../design/httpx2-migration-research.md); the D1–D7 design decisions and phased plan live in [`docs/design/httpx2-migration-v1.md`](../design/httpx2-migration-v1.md).
+
+#### ADR-021: Owned-code aliasing and PTB strategy
+
+**Owned code (`import httpx2 as httpx`):** all Gromozeka-owned modules that previously did `import httpx` now do `import httpx2 as httpx` (13 production + 6 test files). The `httpx.` references (`httpx.AsyncClient`, `httpx.Timeout`, `httpx.HTTPError`, `httpx.MockTransport`, `httpx.AsyncHTTPTransport`, etc.) are unchanged — the alias preserves them literally. Naming the alias `httpx` keeps the diff minimal and reviewable (decision D5 in the design doc).
+
+**PTB strategy b2 — `alias_httpx()` startup hook (load-bearing):** `python-telegram-bot` 22.8 owns its own `httpx` clients and constructs `httpx.AsyncClient` internally from `HTTPXRequest(httpx_kwargs=...)`; its source cannot be edited. To get PTB onto httpx2 without forking it, [`main.py`](../../main.py) calls `httpx2.alias_httpx()` at the very top — **before** any import that transitively pulls httpx (the first such import is `from internal.bot.telegram.application import TelegramBotApplication`, which pulls PTB). After the call, `import httpx` resolves to `httpx2` process-wide, so PTB's internal `httpx.AsyncClient` becomes an `httpx2.AsyncClient` and the object boundary disappears. The same alias call is mirrored at the top of [`tests/conftest.py`](../../tests/conftest.py) so tests see the same process-wide resolution. This is the single most order-sensitive line in the migration; moving it below any httpx-transitive import silently reverts PTB to the real (transitively-installed, still-pinned) `httpx 0.28.1` instead of `httpx2`.
+
+#### ADR-021: Proxy layer and HTTP/2 guard
+
+**Proxy layer simplification (decision D2):** [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) dropped `httpx-socks` entirely. SOCKS5 now uses httpx2's native `proxy="socks5://..."` support (the `httpx2[socks]` extra pulls `socksio`). The `_HTTPX_SOCKS_AVAILABLE` flag and the `AsyncProxyTransport` conditional import are gone. `ProxyKwargs` collapsed to a single-key `{proxy: str}` used for **both** HTTP and SOCKS5; `toKwargs()` takes no `verify` argument (the caller applies `verify=<sslContext>` at the `httpx2.AsyncClient` level uniformly). The two `"transport" not in proxyKwargs` special-cases (`lib/max_bot/client.py` `_getHttpClient` and `internal/bot/common/handlers/yandex_search.py` `_downloadUrl`) are gone — there is never a `transport` key.
+
+**HTTP/2-over-SOCKS guard (decision D3):** the web-fetch handler's old heuristic (`useHttp2 = "transport" not in proxyKwargs`) detected SOCKS *indirectly* via the transport object; after D2 it would always return `True` and silently re-enable the then-suspect HTTP/2-over-SOCKS combination. The new rule keyed off the resolved proxy type directly: `useHttp2 = self._proxyConfig.getCombined().type != ProxyType.SOCKS5`. **(2026-08-13 follow-up):** the guard was subsequently removed after source+web research established h2-over-SOCKS was never a protocol limitation — SOCKS5 is a raw TCP tunnel; HTTP/2 is negotiated via TLS ALPN entirely above the tunnel, and httpcore2's native SOCKS path supports it. The restriction was an artifact of the retired third-party `httpx-socks` transport, which did not propagate client-level `http2=True` into a user-supplied transport. ALPN degrades gracefully to HTTP/1.1 if the target server lacks h2 support.
+
+#### ADR-021: Logging, SSL, status, and references
+
+**Logging:** the `httpx` / `httpcore` logger silencers in [`main.py`](../../main.py) and [`lib/logging_utils.py`](../../lib/logging_utils.py) were replaced by `httpx2` / `httpcore2` silencers.
+
+**SSL note (truststore):** httpx2 (since 2.3.0) resolves SSL through `truststore` (OS trust store) instead of bundling `certifi` certs. Custom CA bundles (e.g. the Минцифры root CA for the Max platform-api2 endpoint) still thread through via the explicit `verify=<ssl.SSLContext>` built by `lib/max_bot/utils.buildMaxSslContext()`.
+
+**Status — code complete, manual smokes pending:** all code phases landed; `make test` 3942 passed / 11 skipped / 0 failed; `make lint` 0 pyright errors. The HTTP/2-over-SOCKS probe was resolved (closed-by-analysis on 2026-08-13 — see D3 follow-up above). The remaining operator-only manual verification gates from design doc §8 — the Минцифры-SSL-through-SOCKS smoke (verify the custom `sslContext` reaches target TLS through `proxy="socks5://..."`) and the live Telegram getMe/sendMessage round-trip through PTB over the aliased httpx2 — remain **PENDING**. The migration is not yet operationally validated end-to-end against the real Telegram/Max/Минцифры endpoints.
+
+**References:**
+
+- [`docs/design/httpx2-migration-research.md`](../design/httpx2-migration-research.md) — research, comparison, supply-chain assessment, verdict (marked ADOPTED).
+- [`docs/design/httpx2-migration-v1.md`](../design/httpx2-migration-v1.md) — design doc + D1–D7 decisions + phased plan (marked IMPLEMENTED; manual gates pending).
+- [`libraries.md`](libraries.md) §5 / §7 / §8 / §13 — the migrated client libraries and the simplified `lib/proxy` layer.
+
+---
+
+### ADR-022: SQL providers and DatabaseManager extracted to `lib/db`
+
+**Decision:** The generic SQL layer moved out of `internal/` into a bot-free `lib/db/` package: all seven provider modules (`base.py`, `sqlite3.py`, `sqlink.py`, `mysql.py`, `postgresql.py`, `utils.py`, and `__init__.py` with the `getSqlProvider` factory + `SQLProviderConfig`) now live at `lib/db/providers/` (mirroring the `lib/stt/providers/` layout), and `DatabaseManager` / `DatabaseManagerConfig` / `SQLProviderInitializationHook` live at `lib/db/manager.py`. A new `lib/db/__init__.py` re-exports the public API. `internal/database/` SURVIVES with everything bot-specific — migrations, repositories, the `Database` wrapper, `stats_storage.py`, `bayes_storage.py`, internal `utils.py` (`sqlToTypedDict`), `models.py` — and imports the SQL layer from `lib.db`. Cutover was big-bang: the old locations were deleted in the same commit the copies landed (git-mv, history preserved); there is no shim and no dual-home. Dependency direction is now `internal → lib.db → {lib.proxy, lib.utils, stdlib, 3rd-party}` — no cycles (the `make lint` `import main` gate guards this).
+
+**Why:** the provider layer and `DatabaseManager` contain zero bot knowledge but sat under `internal/`, blocking `lib/` code from using them. The concrete case is `lib/stats`: its `StatsStorage` ABC is bot-free, but the only SQL implementation (`DatabaseStatsStorage`) lives in `internal/database/stats_storage.py` as an ABC-in-lib / impl-in-internal split that existed solely because the provider layer was internal. Extracting to `lib/db` makes a `lib/stats` SQL storage possible (that move itself is a separate follow-up arc). Design doc with the D1–D8 decisions and the full consumer census: [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md).
+
+**The MessageId cut:** `providers/utils.py`'s `convertToSQLite` had the layer's single `internal.*` import (`from internal.models import MessageId` + an `isinstance` branch). It was replaced with a module-local `@runtime_checkable` Protocol (`SQLStringifiable`, `def asStr(self) -> str`) and an `isinstance(data, SQLStringifiable)` branch. `MessageId.__str__` already returned `asStr()`, so stored values are identical before and after; the Protocol keeps the explicit intent and the warning suppression without the internal import. Locked by a fail-first regression test (`tests/lib/db/providers/test_utils.py`) using a double whose `asStr()` returns `"42"` while `__str__` returns `"WRONG"`.
+
+**Known temporary deviation (mysql/postgresql):** `lib/db/providers/mysql.py` and `postgresql.py` moved AS-IS with hard module-level `import aiomysql` / `import asyncpg` (+ `# type: ignore[reportMissingImports]`), unregistered in the factory. This deviates from the repo's optional-dependency convention (module-level `try/except ImportError` + `_AVAILABLE` flag). Rationale: the drivers are not in requirements, both files are unimportable and untested today, and their class-level annotations (`Optional[aiomysql.Pool]`) evaluate at import time, making conversion non-trivial. Convert to the `_AVAILABLE` pattern only when the providers are actually wired.
+
+**Status:** Implemented (Phase 1 code arc + Phase 2/3 doc sync). `make test` green; `make check-docs` green at every arc.
+
+**References:**
+
+- [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md) — the ratified design (D1–D8), consumer census, phased plan.
+- [`database.md`](database.md) — provider section (post-rewrite).
+- [`libraries.md`](libraries.md) — the `lib/db` library entry.
+
+---
+
+### ADR-023: `internal/database/utils.py` to `lib/db/utils.py`; `DatabaseStatsStorage` to `lib/stats`
+
+**Date:** 2026-08-24 (ratified + same-day amendment: whole-module move; implementation per
+its design doc arcs)
+
+**Status:** Accepted (supersedes two scope clauses of ADR-022)
+
+**Decision:** Two chained extractions, both whole-file big-bang with no re-export shim
+(ADR-022 precedent). (1) The ENTIRE `internal/database/utils.py` module moved via git-mv to
+a bot-free [`lib/db/utils.py`](../../lib/db/utils.py) — the SQL decode trio (`sqlToTypedDict`, `sqlToCustomType`,
+`_checkType`, `FORCE_SQL_TIMEZONE`, container-type constants) plus `getCurrentTimestamp` and
+`DEFAULT_THREAD_ID`; the decode names are facade-exported from
+[`lib/db/__init__.py`](../../lib/db/__init__.py).
+Nothing survives at the internal path; `internal/database/utils.py` is deleted. Note: BOTH
+`lib/db/utils.py` (decode+timestamps) and [`lib/db/providers/utils.py`](../../lib/db/providers/utils.py) (encode:
+`convertToSQLite`) now exist — deliberate naming, disambiguated by the `providers.` segment.
+(2) `DatabaseStatsStorage` moved from `internal/database/stats_storage.py` to
+[`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py), exported from the `lib/stats` package; its constructor changed
+from `(db: Database, eventType, *, dataSource)` to `(manager: DatabaseManager, eventType, *,
+dataSource)` with per-call `manager.getProvider(dataSource=…, readonly=…)`. The
+`StatsAggregationService` factory (`createStatsStorage`) stays internal and unchanged in
+signature; migration_027's helper imports (`_hashLabels`, `truncateToDay`,
+`truncateToMonth`) were flipped in place (its header sanctions in-place edits). Stats tables
+remain owned by internal migrations (016/027/028).
+
+**Why:** ADR-022 extracted the provider layer precisely to make a `lib/stats` SQL storage
+possible; the two remaining blockers were the storage's `Database`-wrapper dependency and
+its dependence on internal decode utilities. Moving the whole utils module (user decision S2
+widened by same-day amendment, over a narrower trio-only or local-decoder alternative) keeps
+one canonical decode implementation, unblocks the parked `lib/cache`
+`GenericDatabaseCache` extraction, and makes the storage move a pure relocation.
+
+**Supersessions of ADR-022:** its "internal/database/ SURVIVES with … stats_storage.py …"
+clause is superseded by the storage move; its "internal utils.py (`sqlToTypedDict`)"
+survives-item is superseded ENTIRELY by the whole-module move (not just the decode symbols).
+ADR-022's text stands as history.
+
+Design doc: [`docs/design/lib-stats-sql-storage-extraction-v1.md`](../design/lib-stats-sql-storage-extraction-v1.md).
+
+---
+
+### ADR-024: `GenericDatabaseCache` to `lib/cache/sql_cache.py`; `clearOld` joins `CacheInterface`
+
+**Date:** 2026-08-24 (ratified with user modifications; implementation per its design doc arcs)
+
+**Status:** Implemented (code arc landed 2026-08-25; realizes the ADR-023 "unblocks lib/cache"
+clause; supersedes nothing)
+
+**Decision:** `GenericDatabaseCache` moved via git-mv from `internal/database/generic_cache.py`
+(the internal path is deleted; no re-export shim) to
+[`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) and now owns ALL `cache`-table SQL inline
+through a [`DatabaseManager`](../../lib/db/manager.py): constructor changed from
+`(db: Database, namespace: CacheType, …)` to `(manager: DatabaseManager, namespace: str, …)` with
+per-call `manager.getProvider(dataSource=…, readonly=…)`; the get/set/clear SQL was ported verbatim
+from the former `CacheRepository` quartet, including the `ttl <= 0 → None` read early-return.
+[`CacheInterface`](../../lib/cache/interface.py) gained the abstract instance method
+`clearOld(ttl: Optional[int]) -> bool` — namespace/dataSource come from the instance; `None`
+normalizes to `0` (delete all namespace entries); returns True on success including no-op, False on
+backend error, never raises — implemented by `GenericDatabaseCache` (SQL port of the former
+`clearOldCacheEntries`, cutoff `updated_at < now - ttl`),
+[`DictCache`](../../lib/cache/dict_cache.py) (direct age comparison `now - timestamp > ttl` —
+deliberately NOT the get-semantics `_isExpired` helper), and [`NullCache`](../../lib/cache/null_cache.py)
+(no-op, True). [`CacheRepository`](../../internal/database/repositories/cache.py) shrank to the
+`cache_storage` trio — the live `CacheService` persistence backing (load/persist/flush); its name
+and the `db.cache` attribute are kept. `CacheDict` was deleted from
+[`internal/database/models.py`](../../internal/database/models.py) (sole consumer was the quartet);
+the lib module keeps a local row TypedDict (stats `StatsEventDict` pattern). The weekly
+[`HandlersManager`](../../internal/bot/common/handlers/manager.py) `_cleanupOldData` sweep now
+loops `CacheType` members constructing transient per-namespace instances (~8 cheap weekly DELETEs
+replace 1; StrEnum members bind as `namespace: str`); sweep coverage narrows to the 8 known
+namespaces — accepted, since the verified writer census is exactly those 8. Adding an abstract
+method is a breaking change for any external `CacheInterface` implementor — accepted per
+single-app repo culture (all three implementors are in-repo and updated in the same arc).
+
+**Why:** closes the last ABC-in-lib / impl-in-internal split flagged by the ADR-022 follow-up audit
+and parked in the teamlead memory ("different shape, still blocked on decode trio — which has NOW
+landed in lib/db"); ADR-023 explicitly listed this extraction as unblocked by the utils move. Pure
+pattern hygiene — no lib package needs a SQL cache today (lib clients default to DictCache/
+NullCache via DI); this lets lib packages offer SQL-backed caches later without internal
+pre-wiring, and gives every CacheInterface implementation a uniform age-purge verb.
+
+**Realization, not supersession:** ADR-023's body is untouched; its "unblocks the parked
+`lib/cache` `GenericDatabaseCache` extraction" clause is hereby realized. No earlier ADR scope
+clause is contradicted by this move.
+
+Design doc: [`docs/design/lib-cache-sql-cache-extraction-v1.md`](../design/lib-cache-sql-cache-extraction-v1.md).
+
+---
+
+### ADR-025: Max webhook receiver extracted to `lib/max_webhook_receiver/` — fully standalone (own config file, own database)
+
+**Date:** 2026-08-25 (decision forks + full-database-independence amendment + full-lib-launcher amendment #2 ratified by user; implementation per its design doc arcs)
+**Status:** Implemented (code arc landed 2026-08-26, commits 622eb060..f72f026a)
+
+**Decision:** The Max webhook receiver moved out of `internal/` into a bot-free
+`lib/max_webhook_receiver/` package — the ENTIRE receiver, launcher included:
+`internal/max_webhook_receiver/` was deleted. The package holds the aiohttp app (`app.py`,
+handlers and lifecycle unchanged), `WebhookUpdatesRepository` (now `repository.py`, taking a
+`DatabaseManager` directly with `BaseRepository` inlined — it was a manager-holding ABC with
+no methods), the `WebhookUpdatesRow` TypedDict (now `models.py`), a new `schema.py` owning
+the canonical `webhook_updates` DDL, and the launcher itself (`__main__.py`, module-invocable
+like `lib.stats.stats_pages`). The receiver is fully lib-standalone: it is started with
+`./venv/bin/python3 -m lib.max_webhook_receiver --config <path> [--dotenv-file <path>]`,
+reads its OWN single TOML config file (dotenv → stdlib `tomllib` → lib-side
+`substituteEnvVars`, which moved to `lib/utils/utils.py` for the purpose — `ConfigManager`
+imports it from lib), and has ZERO internal imports. It also owns its DATABASE: the
+`[webhook-receiver.database]` section in its own config file (same shape as the bot's
+`[database]`) points it at its own file (`webhook_receiver_data.db` by default); the
+launcher constructs a bare `DatabaseManager` from that section as a pure passthrough. The
+receiver never runs the bot's migrations and never touches the bot's database: its startup
+self-heals BOTH the table and the index from `schema.py` (its database has no migration
+side, so the self-heal must be complete; the `CREATE INDEX IF NOT EXISTS` form follows the
+13-migration house precedent — MySQL activation will address it once, centrally). The bot's
+chain dropped the table via migration_029 (`DROP INDEX`/`DROP TABLE IF EXISTS`; `down()`
+recreates from the same lib-owned DDL — single-sourced with migration_019's delegated
+`up()`). The internal `Database` wrapper lost its `webhookUpdates` attribute (verified
+receiver-only consumer), `internal/database/repositories/webhook_updates.py` was deleted
+(big-bang, no shims), and the `[webhook-receiver]` `datasource` key was removed
+(separate-storage is the default now). The package `__init__.py` deliberately does not
+import `.app`: the migrations execute it transitively at bot startup, and aiohttp must stay
+out of that import chain.
+
+**Why:** the receiver is a deployment peer, not a bot feature (own process, own config
+file, own database); after ADR-022/023/024 its implementation had zero bot-side
+dependencies left in `app.py`. Full-lib standing eliminates the two-process migration race
+and the shared-SQLite write contention in one move (ADR-013 known limitations become moot),
+enforces ADR-013's "receiver is the sole writer" invariant structurally (the bot literally
+lacks the handle AND the table), keeps the deployed surface honest (one module, one config
+file, one database file), and lets either process restart without the other's schema
+involvement. Operational costs accepted: two DB files on disk (backups must cover both),
+and `secret`/`get-updates-secret` maintained in both the bot config and the receiver file
+(cross-reference comments in both example files; drift = 403s). Pointing the receiver at
+the bot's `bot_data.db` is documented as unsupported and not enforced.
+
+**Explicitly unchanged:** ADR-013's two-process architecture, the `webhook_updates` schema,
+the marker protocol, delivery semantics, TLS handling, and `lib/max_bot/client.py`. Design
+doc with the D1–D19 decisions and the full census:
+[`docs/design/lib-max-webhook-receiver-extraction-v1.md`](../design/lib-max-webhook-receiver-extraction-v1.md).
+
+---
+
+### ADR-026: Semantic sessionId Domains for `lib/ai` Calls
+
+**Date:** 2026-09-20 (design approved by user; fully implemented and reviewed)
+**Status:** Accepted
+
+#### ADR-026: Context
+
+`lib/ai` transports a per-request sessionId via a ContextVar (`_requestSessionIdVar`,
+`lib/ai/abstract.py`); the four `AbstractModel.generate*` wrappers set/reset it around each
+call (the always-set-even-`None` discipline prevents stale-session leakage across asyncio
+tasks), and all `LLMService` methods forward it verbatim. The sole consumer is the
+opencode-go provider (`lib/ai/providers/opencode_go_provider.py`), which sends it as the
+`x-opencode-session` header — mandatory since 2026-09-06, driving prompt-cache affinity and
+sticky routing. Fallback chain: request sessionId → provider `session_fallback` config →
+`DEFAULT_SESSION_ID = "gromozeka"`.
+
+A 2026-09-20 audit found only 2 of ~32 production call sites passing a proper sessionId
+(both in `llm_messages.py` via `getLLMRequestSessionId()`); every other site silently merged
+into the shared `"gromozeka"` bucket — no error, just destroyed per-conversation cache
+affinity. Scripts and the grabliarium ext module (indirect seam via
+`LLMService.getInstance().getLLMManager()`) omitted it too. The pre-existing canonical
+identity `gromozeka-<chatId>-<rootMessageId>` (chat + thread root;
+`BaseBotHandler.getLLMRequestSessionId()`, from the 2026-09-04 decision that the bot builds
+context differently for different conversations inside a chat) is correct ONLY for
+conversation-shaped flows — one-shot flows (e.g. media parsing, keyed by the media item, not
+chat+thread) needed semantically different identities.
+
+#### ADR-026: Decision — `lib/ai/session.py` foundation
+
+- `buildSessionId(*components, namespace="gromozeka")` — the single construction point for
+  session ids.
+- `sanitizeSessionIdComponent` — charset `[A-Za-z0-9._-]`, preserves dash structure (negative
+  chatIds keep the historical double dash).
+- `hashSessionIdComponent` — sha256 hex[:16] for free-text/URLs.
+- 128-char total cap with a loud `ValueError` (silent truncation would split cache buckets).
+
+`BaseBotHandler.getLLMRequestSessionId()` is reimplemented on top of `buildSessionId`,
+byte-identical to the legacy f-string for token-safe ids.
+
+#### ADR-026: Decision — semantic domains
+Sharing rule: two calls share a session ⇔ they share an evolving prompt prefix. Only
+persistent identifiers are used — never uuids/runIds (they would defeat cache affinity).
+
+- **D1 conversation/thread:** `gromozeka-<chatId>-<rootMessageId>` (compat shape) —
+  condensing, chat image gen, random-message condense, media tool.
+- **D2 one-shot content:** `gromozeka-media-<fileUniqueId>`, `gromozeka-url-<hash(url)>`,
+  `gromozeka-layout-<hash(canonicalLayoutId)>` — the same content parsed anywhere shares the
+  bucket (mirrors the per-URL/per-file result caches). When `/analyze` has no stored media id
+  (freshly downloaded media), it falls back to the analyzing command message instead:
+  `gromozeka-analyze-<chatId>-<commandMessageId>`.
+- **D3 feature-flow:** `gromozeka-<feature>-<chatId>-<messageId>` — divination reading
+  shared across its text+image calls; draw; summary per-run; the `dev-` tag for
+  `llm_replay` (deliberately NOT the conversation bucket). Divination discovery is
+  content-keyed instead: `divination-discovery-<hash(layoutId)>`.
+- **D4 user memory store:** `gromozeka-memory-<chatId>-<userId>-<threadId>` (refinement
+  tool-loop).
+- **D5 background/embeddings:** DEFERRED — no provider consumes sessionId on embeddings
+  today; revisit when a session-consuming provider gains embeddings (the auto-fallback
+  below covers them meanwhile).
+- **D6 scripts:** `gromozeka-script-<name>[-<model>]-<startTs>` with a UTC
+  `%Y%m%dT%H%M%SZ` start timestamp — per-run buckets (user decision), same-run probe
+  affinity.
+- **Extension modules:** `gromozeka-<moduleName>-<flowIdentity>`
+#### ADR-026: Defense-in-depth auto-fallback
+
+When `sessionId is None`, the five chatId-carrying `LLMService` methods resolve
+`gromozeka-auto-<chatId>` and `condenseContext` derives `gromozeka-auto-<consumerId>`, with
+`logger.debug` on fallback (user-approved). The self-identifying `auto-` tag keeps omissions
+greppable; explicit values always win. Related fix: the `/search` embedding bypass in
+`chat_search.py` was routed through `LLMService.generateEmbedding` (recovers consumerId
+stats attribution; `doRateLimit=False` since the command pre-gates).
+
+> **Amendment (during implementation):** layout extraction hashes the canonical layout id
+> rather than sanitizing it raw — `_generateLayoutId` preserves Cyrillic (raw sanitization
+> would collapse distinct names onto identical dash-runs) and is unbounded in length (the
+> cap would raise mid-flow).
+
+#### ADR-026: Consequences
+
+- Every production text/structured/image call now carries an explicit semantic session or
+  the `auto-` floor; nothing lands in the shared `"gromozeka"` bucket silently.
+- Known limitation (documented, test-pinned): `analyze_command`'s stored-media-id lookup is
+  index-aligned with successful downloads — on partial download failure the surviving item's
+  session bucket shifts deterministically (cache-affinity impact only; no crash).
+- `consumerId=str(chatId)` now flows at the three condense sites (stats attribution
+  recovered).
+- Byte-identity caveat: builder output equals the legacy f-string only for nonempty
+  token-safe ids ≤128 chars; empty/overlong now raise (documented in `lib/ai/session.py`).
+- grabliarium lives in a gitignored nested repo — its changes are tracked there, not in the
+  main repo diff.
+
+---
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph
@@ -754,7 +1171,7 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 ```
 GromozekBot (main.py)
 ├── ConfigManager (internal/config/manager.py)
-├── DatabaseManager (internal/database/manager.py)
+├── DatabaseManager (lib/db/manager.py)
 │   └── Database (internal/database/database.py)
 │       └── MigrationManager (internal/database/migrations/manager.py)
 ├── LLMManager (lib/ai/manager.py)
@@ -783,13 +1200,13 @@ GromozekBot (main.py)
                          instead of platform-api2.max.ru — see ADR-013)
 ```
 
-**Separate process — Max webhook receiver** (only when webhook mode is deployed; see ADR-013):
+**Separate process — Max webhook receiver** (only when webhook mode is deployed; see ADR-013/ADR-025):
 
 ```
-python -m internal.max_webhook_receiver  (aiohttp.web)
-├── ConfigManager (internal/config/manager.py)
-├── Database (internal/database/database.py)  [shared SQLite with the bot]
-│   └── webhookUpdates repository  →  webhook_updates table (migration_019)
+python -m lib.max_webhook_receiver --config webhook-receiver.toml  (aiohttp.web)
+├── DatabaseManager (lib/db/manager.py)  [receiver's OWN SQLite: webhook_receiver_data.db]
+│   └── WebhookUpdatesRepository (lib/max_webhook_receiver/repository.py)
+│       └── webhook_updates table (self-healed at startup; DDL owned by schema.py)
 ├── POST <webhook-path>  ← Max API webhook POSTs
 └── GET /updates          → MaxBotClient._pollingLoop() via basePollingUrl
 ```
@@ -803,13 +1220,14 @@ Services MUST be initialized in this order:
 3. `LLMManager` — third, LLMService needs it
 4. `RateLimiterManager.getInstance().loadConfig(...)` — fourth
 5. `ProxyHelper.setGlobalProxyConfig()` + `ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` — fifth. Starts global proxy lifecycle immediately via the shared event loop (`loop.run_until_complete()`). Registers CRON_JOB/DO_EXIT handlers for health checks and graceful shutdown.
-6. `BotApplication` init — which triggers:
+6. `STTService.getInstance().initialize(configManager)` — sixth (only when `[stt]` is configured; default-off is a no-op; NO `database` arg — the service is stateless). Constructed after proxy + rate-limiter init so it can resolve the STT proxy, and before the bot application. Closed as shutdown Step 2.5 (`aclose()`, best-effort try/except, after LLM close, before DB close). See ADR-020.
+7. `BotApplication` init — which triggers:
    - `HandlersManager.__init__()`:
      - `CacheService.getInstance()` + `cache.injectDatabase(db)`
      - `StorageService.getInstance()` + `storage.injectConfig(configManager)`
      - `QueueService.getInstance()`
      - All handler constructors (which get `CacheService`, `QueueService`, etc.)
-7. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
+8. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
 
 ### 2.3 What Breaks if You Modify These Files
 
@@ -949,4 +1367,4 @@ When creating or modifying database migrations, ALWAYS:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-07-18*
+*Last updated: 2026-08-02*

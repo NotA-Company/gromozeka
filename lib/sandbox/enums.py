@@ -8,6 +8,7 @@ Enums:
     RuntimeName: Identifies the programming language runtime for sandboxed execution.
     BackendName: Identifies the execution backend that runs sandboxed code.
     RunStatus: Describes the status of a sandboxed code execution run.
+    StagingPurpose: Identifies why a staged container run was started.
 """
 
 from enum import StrEnum
@@ -46,3 +47,18 @@ class RunStatus(StrEnum):
     COMPLETED = "completed"
     # The run failed or was terminated abnormally.
     FAILED = "failed"
+
+
+class StagingPurpose(StrEnum):
+    """Staging purpose enumeration for staged container runs.
+
+    Identifies why a staged container run was started. The value feeds the
+    container-name prefix (``sandbox-{purpose}-{runId}``) and the
+    ``sandbox.purpose`` container label, both of which are matched by
+    operational tooling, so the string values must stay stable.
+    """
+
+    # Staged run installing packages into the library pool.
+    INSTALL = "install"
+    # Staged run updating packages in the library pool.
+    UPDATE = "update"
