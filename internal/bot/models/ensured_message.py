@@ -1194,7 +1194,11 @@ class EnsuredMessage:
                 image bytes). In the JSON branch the ``mediaDescription`` key is
                 omitted; in the TEXT branch the ``<media-description>`` prepend is
                 suppressed even when the ``mediaContent`` attribute is already
-                populated. Default False preserves the historical render byte-for-byte.
+                populated. Default False preserves the historical wait behavior
+                and the JSON render byte-for-byte; the TEXT render follows the
+                single-source tag-per-media contract (list-shaped content renders
+                one tag per media; Max-shaped messages with a None attribute now
+                render their descriptions).
             cache: CacheService singleton for resolving compact memory IDs to content
                 in the JSON branch. ``None`` (non-chat / TEXT path) omits the
                 ``userMemories`` key — no resolution is attempted.
@@ -1215,9 +1219,10 @@ class EnsuredMessage:
             # skipped entirely (both processingInfo.awaitResult() and _awaitMedia
             # polling). Forcing the local selection to None makes the JSON
             # branch's `if v` filter drop the `mediaDescription` key; the TEXT
-            # branch is suppressed by the skipMediaDescription guard below
-            # (self.mediaContent can be pre-populated — e.g. fromDBChatMessage,
-            # addMedia — so the attribute alone must not drive the render).
+            # branch's guard reads the same local, so the prepend is
+            # suppressed too (self.mediaContent can be pre-populated — e.g.
+            # fromDBChatMessage, addMedia — so the attribute alone must not
+            # drive either render).
             mediaContent = None
         else:
             await self.updateMediaContent(db)
@@ -1305,13 +1310,21 @@ class EnsuredMessage:
 
             case LLMMessageFormat.TEXT:
                 ret = messageText
-                # skipMediaDescription must gate the attribute check: the
-                # `mediaContent` attribute can be pre-populated (fromDBChatMessage,
-                # addMedia) even on the skip path, where the local `mediaContent`
-                # selection is None — without the gate the prepend would fire and
-                # render a `<media-description>None</media-description>` block.
-                if not skipMediaDescription and self.mediaContent:
-                    ret = f"<media-description>{mediaContent}</media-description>\n\n{ret}"
+                # Single-source contract: BOTH the guard and the value read the
+                # LOCAL `mediaContent` selection. On the skip path
+                # (skipMediaDescription=True) the local is None, so nothing
+                # renders even when the `mediaContent` attribute is
+                # pre-populated (fromDBChatMessage, addMedia) — the attribute
+                # alone must not drive the render. The local is a str (the
+                # primary description under useSingleMedia) or a List[str]
+                # (per-media descriptions); multi-media renders ONE tag per
+                # media so boundaries survive multiline descriptions.
+                if mediaContent:
+                    if isinstance(mediaContent, str):
+                        ret = f"<media-description>{mediaContent}</media-description>\n\n{ret}"
+                    else:
+                        mediaTags = "".join(f"<media-description>{v}</media-description>\n" for v in mediaContent)
+                        ret = f"{mediaTags}\n{ret}"
                 if self.isQuote and self.quoteText:
                     ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
                 return ret

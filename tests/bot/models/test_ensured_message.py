@@ -23,6 +23,13 @@ the opt-in, unwired construction-time image attach — ``toModelMessage``
 never-raise boundary), ``formatForLLM`` ``skipMediaDescription=`` (including
 the TEXT-branch pre-populated-attribute trap), and the at-most-once lazy
 description resolver.
+
+TEXT media-description rendering additions
+(:class:`TestFormatForLLMTextMediaTags`): the single-source TEXT-branch
+contract — guard and value both read the LOCAL ``mediaContent`` selection —
+with one ``<media-description>`` tag per media for list-shaped content
+(previously a Python list repr, or nothing at all when the ``mediaContent``
+ATTRIBUTE was None, e.g. every Max media message).
 """
 
 import datetime
@@ -40,6 +47,7 @@ from internal.bot.models import (
     MessageSender,
     SingleMemoryDict,
 )
+from internal.bot.models.ensured_message import MediaContent
 from internal.database import Database
 from internal.database.models import MemoryType
 from internal.models import MessageId
@@ -1085,3 +1093,184 @@ class TestNativeVisionConstructionAttach:
             defaultCall = toModelMessageMock.await_args
             assert defaultCall is not None
             assert defaultCall.kwargs["nativeImages"] is False
+
+
+# ---------------------------------------------------------------------------
+# TEXT media-description rendering: single-source guard + tag-per-media
+# ---------------------------------------------------------------------------
+
+
+def _makeDescribedMediaListMessage(*descriptions: str) -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` in the Max-preprocessor media shape.
+
+    Media descriptions are attached as ``mediaList`` entries ONLY —
+    ``mediaId`` and the ``mediaContent`` ATTRIBUTE stay ``None`` (the shape
+    produced by the Max preprocessor's ``addMediaProcessingInfo(...,
+    setMediaId=False)``). Under ``useSingleMedia=False`` (or whenever the
+    attribute is None) the TEXT branch's local selection is therefore a
+    ``List[str]``.
+
+    Args:
+        descriptions: Per-media descriptions, appended to ``mediaList`` in order.
+
+    Returns:
+        A freshly constructed :class:`EnsuredMessage` with described media and
+        a None ``mediaContent`` attribute.
+    """
+    msg = _makeEnsuredMessage()
+    for index, description in enumerate(descriptions, start=1):
+        msg.mediaList.append(MediaContent(id=f"media-{index}", content=description, processingInfo=None))
+    return msg
+
+
+class TestFormatForLLMTextMediaTags:
+    """TEXT branch renders descriptions from the LOCAL selection, tag-per-media.
+
+    Ratified behavior change: the TEXT-branch guard and value both read the
+    LOCAL ``mediaContent`` (previously the guard read the ``mediaContent``
+    ATTRIBUTE while the value interpolated the LOCAL — a list repr leaked
+    into the tag for Telegram ingest, and every Max media message — attribute
+    permanently None — rendered NO descriptions at all). Consequences pinned
+    here: list-shaped locals render ONE tag per media in order; the
+    previously-invisible Max shape (attribute None + described entries) now
+    renders tags; the Telegram ingest shape (attribute populated +
+    ``useSingleMedia=False``) falls through to the list render; the skip path
+    still renders nothing (the local is None); the single-string render keeps
+    today's exact byte layout.
+    """
+
+    async def test_maxShapeIngest_tagPerMediaInOrder_noListRepr(self) -> None:
+        """List local + useSingleMedia=False → one tag per media, order preserved.
+
+        The Max ingest shape (attribute None, described entries): previously
+        rendered NOTHING (guard read the None attribute). Now each media gets
+        its own ``<media-description>`` tag in mediaList order, followed by
+        the blank-line separation — and no Python list repr artifacts.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage("a red car", "a black cat")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        expected = (
+            "<media-description>a red car</media-description>\n"
+            "<media-description>a black cat</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+
+    async def test_telegramShapeIngest_tagPerMediaInOrder_noListRepr(self) -> None:
+        """Populated attribute + useSingleMedia=False → the list local renders.
+
+        The Telegram ingest shape (attribute populated with the first media's
+        description, further described entries appended to ``mediaList``):
+        under ``useSingleMedia=False`` the selection falls to the list, so the
+        output is one tag per media in mediaList order — previously the
+        attribute guard short-circuited to the populated string while the
+        value interpolated the list, leaking a Python repr into the tag.
+
+        Returns:
+            None
+        """
+        msg = _makeEnsuredMessage()
+        msg.addMedia(mediaId="media-1", mediaContent="a red car", setMediaId=True)
+        msg.addMedia(mediaId="media-2", mediaContent="a black cat", setMediaId=False)
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        expected = (
+            "<media-description>a red car</media-description>\n"
+            "<media-description>a black cat</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+
+    async def test_maxShapeUseSingleMedia_tagsRenderWherePreviouslyNothing(self) -> None:
+        """Attribute None + described entries + useSingleMedia=True → tags render.
+
+        The previously-invisible case (e.g. Max assistant-role / partial-path
+        TEXT envelopes): with the attribute None the local selection is the
+        described list even under ``useSingleMedia=True`` — the old
+        attribute-guard rendered nothing here.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage("a red car", "a black cat")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, cache=None)
+
+        expected = (
+            "<media-description>a red car</media-description>\n"
+            "<media-description>a black cat</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+
+    async def test_singleStringAttribute_singleTagByteLayout(self) -> None:
+        """String local → exactly one tag with today's clean ``\\n\\n`` layout.
+
+        The useSingleMedia render with the attribute populated: the local IS
+        the attribute, so the output is byte-identical to the pre-change
+        form (regression pin for the clean shape).
+
+        Returns:
+            None
+        """
+        msg = _makeEnsuredMessage()
+        msg.addMedia(mediaId="media-1", mediaContent="a red square", setMediaId=True)
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, cache=None)
+
+        assert result == "<media-description>a red square</media-description>\n\nhello"
+
+    async def test_emptyList_noTags(self) -> None:
+        """Entries with no descriptions → empty list local → no tags at all.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage()
+        msg.mediaList.append(MediaContent(id="media-1", content=None, processingInfo=None))
+        msg.mediaList.append(MediaContent(id="media-2", content=None, processingInfo=None))
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        assert result == "hello"
+        assert "<media-description>" not in result
+
+    async def test_multilineDescriptions_tagBoundariesUnambiguous(self) -> None:
+        """Multiline descriptions stay inside their own tags — no joined text.
+
+        Each description carries embedded newlines; the tag-per-media render
+        keeps the boundary between the two media machine-findable (a closing
+        tag always separates the descriptions), which the old single-tag
+        list-repr form did not.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage("a red car\nwith snow", "a black cat\nsleeping")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        expected = (
+            "<media-description>a red car\nwith snow</media-description>\n"
+            "<media-description>a black cat\nsleeping</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+        # The boundary between the two media is an explicit tag pair.
+        assert "with snow</media-description>\n<media-description>a black cat" in result
