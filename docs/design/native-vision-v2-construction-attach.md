@@ -6,7 +6,7 @@ category: design
 
 **Author:** OpenCode Architect
 **Date:** 2026-09-27
-**Status:** Draft — awaiting user ratification
+**Status:** Ratified 2026-09-27 — implemented
 
 Supersedes the chat-time mechanism of
 [`native-vision-design-v1.md`](native-vision-design-v1.md) §3.4/§3.5 (the late

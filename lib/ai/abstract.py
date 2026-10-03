@@ -950,8 +950,13 @@ class AbstractModel(ABC):
         # arbitrary structured payloads, message-shaped schema examples, data
         # URIs inside ordinary text or tool results, and plain strings are
         # real sent characters and keep being counted, so text-only requests
-        # and schema data cannot bypass context sizing. The
-        # max-images-per-request cap is the real guard for image cost.
+        # and schema data cannot bypass context sizing. Image tokens are
+        # deliberately EXCLUDED from this estimator. With native-vision v2
+        # construction-time attach, per-request image cost scales with the
+        # TOTAL number of attached images across current AND retained history
+        # messages (multiple albums possible) — there is no request-wide
+        # image cap (removal ratified in ADR-028; re-adding after real-chat
+        # testing is a user follow-up).
         # According my experience, average, each token is 3-4 characters long, so use 3.5
         # For being conservative
         tokensCount = len(text) / 3.5

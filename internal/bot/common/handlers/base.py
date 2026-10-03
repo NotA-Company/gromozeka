@@ -807,6 +807,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self,
         ensuredMessage: EnsuredMessage,
         condenseThread: bool = True,
+        nativeImages: bool = False,
     ) -> Sequence[ModelMessage]:
         """
         Get the conversation thread for a message formatted for LLM processing
@@ -818,6 +819,9 @@ class BaseBotHandler(CommandHandlerMixin):
         Args:
             ensuredMessage: The message to get the thread for
             condenseThread: Whether to condense the thread if it exceeds token limits (default: True)
+            nativeImages: Opt-in construction-time image attach forwarded to every
+                ``toModelMessageList`` render site (native-vision v2 §4.7).
+                Default False keeps today's description-only rendering.
 
         Returns:
             Sequence of ModelMessage objects representing the conversation thread,
@@ -861,6 +865,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
                 cache=self.cache if needMemories else None,
                 excludeMemoryIds=set(),
+                nativeImages=nativeImages,
             )
 
         dbMessageList = await self.db.chatMessages.getChatMessagesByRootId(
@@ -904,6 +909,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     outputFormat=outputFormat,
                     cache=self.cache if needMemories else None,
                     excludeMemoryIds=set(),
+                    nativeImages=nativeImages,
                 )
                 ret.extend(mMessages)
 
@@ -953,6 +959,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 outputFormat=outputFormat,
                 cache=self.cache if needMemories else None,
                 excludeMemoryIds=excludedMemoryIds,
+                nativeImages=nativeImages,
             )
             excludedMemoryIds.update(eMessage.getMemoryIds())
             # extendleft just call appendleft for each element so we need to reverse it for proper order

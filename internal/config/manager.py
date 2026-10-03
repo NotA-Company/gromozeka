@@ -461,7 +461,6 @@ class ConfigManager:
             - image-format: Normalized storage MIME ("image/jpeg" or "image/png")
             - image-quality: JPEG quality 1-95 (ignored for PNG)
             - store-prefix: StorageService key prefix for normalized images
-            - max-images-per-request: Hard cap on images attached to one LLM request
             - ttl-days: Retention for stored vision images (enforced by a
               follow-up GC cron)
 
@@ -476,7 +475,6 @@ class ConfigManager:
                 "image-format": "image/jpeg",
                 "image-quality": 85,
                 "store-prefix": "vision/",
-                "max-images-per-request": 5,
                 "ttl-days": 30
             }
         """

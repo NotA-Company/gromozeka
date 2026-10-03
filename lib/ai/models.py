@@ -42,14 +42,26 @@ import base64
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from enum import Enum, StrEnum
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, TypeAlias
 
 import lib.utils as utils
 from lib.ai.imaging import convertImageIfNeeded
 
 logger = logging.getLogger(__name__)
+
+
+ModelMessageDescriptionResolver: TypeAlias = Callable[[], Awaitable[Optional[str]]]
+"""Type alias for the lazy media-description resolver carried by ModelMessage.
+
+An async callable taking no arguments and returning the resolved media
+description text for the source message, or ``None``/empty when nothing
+resolves. The closure is metadata only — never serialized (mirrors
+``source``) — and must be at-most-once (cached after the first invocation)
+and never raise. Its one deliberate consumer is the condenser strip
+(``stripImagesForCondensing`` in ``internal/services/llm/service.py``).
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +476,7 @@ class ModelMessage:
         {'role': 'user', 'content': 'What is the weather in London?'}
     """
 
-    __slots__ = ("role", "content", "contentKey", "toolCalls", "toolCallId", "weight", "source")
+    __slots__ = ("role", "content", "contentKey", "toolCalls", "toolCallId", "weight", "source", "descriptionResolver")
 
     def __init__(
         self,
@@ -475,6 +487,7 @@ class ModelMessage:
         toolCallId: Optional[str] = None,
         weight: Optional[int] = None,
         source: Optional[Any] = None,
+        descriptionResolver: Optional[ModelMessageDescriptionResolver] = None,
     ):
         """Initialize a model message.
 
@@ -486,6 +499,12 @@ class ModelMessage:
             toolCallId: ID of the tool call this message is responding to (default: None).
             weight: Optional weight for the message (default: None).
             source: Optional source message (default: None).
+            descriptionResolver: Optional lazy media-description resolver
+                (default: None). Metadata only, mirroring ``source``: never
+                serialized (invisible to providers, the token estimator, JSON
+                logs, and the tools-DB round-trip) and deliberately not copied
+                implicitly — its one consumer, the condenser strip, consumes
+                it without carrying it onto its output copy.
 
         Returns:
             None
@@ -497,6 +516,7 @@ class ModelMessage:
         self.toolCallId = toolCallId
         self.weight = weight
         self.source = source
+        self.descriptionResolver = descriptionResolver
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> "ModelMessage":
@@ -841,7 +861,14 @@ class ModelImagesMessage(ModelMessage):
         True
     """
 
-    def __init__(self, role: str = "user", content: str = "", images: List[bytearray] = []) -> None:
+    def __init__(
+        self,
+        role: str = "user",
+        content: str = "",
+        images: List[bytearray] = [],
+        source: Optional[object] = None,
+        descriptionResolver: Optional[ModelMessageDescriptionResolver] = None,
+    ) -> None:
         """Initialize a multi-image message.
 
         Args:
@@ -849,11 +876,16 @@ class ModelImagesMessage(ModelMessage):
             content: The text content of the message (default: "").
             images: Ordered list of image bytearrays; each becomes one
                 ``image_url`` block in list order (default: empty list).
+            source: Optional source message (default: None). Metadata only:
+                never serialized (mirrors the parent ``source`` field).
+            descriptionResolver: Optional lazy media-description resolver
+                (default: None). Metadata only: never serialized; consumed
+                at most once by the condenser strip.
 
         Returns:
             None
         """
-        super().__init__(role, content)
+        super().__init__(role=role, content=content, source=source, descriptionResolver=descriptionResolver)
         self.images = images
 
     def toDict(

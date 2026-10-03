@@ -2843,6 +2843,69 @@ class TestCondenseContextImageStripGating:
         assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
         assert set(coverage.keys()) == {0}
 
+    async def testTextOnlyCondenserInjectsResolvedDescription(self, llmService: LLMService) -> None:
+        """A text-only condenser receives the RESOLVED description, zero image payloads.
+
+        Phase A (native-vision v2 §4.6): when the stripped image message
+        carries a ``descriptionResolver``, the strip awaits it and appends
+        the resolved text wrapped in ``<media-description>`` — the TEXT
+        envelope's tag — so the condenser summarizes real descriptions
+        instead of a bare omission marker.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        description = "a red square on a green table"
+
+        async def resolver() -> Optional[str]:
+            return description
+
+        imageMessage = ModelImagesMessage(
+            role="user",
+            content="IMG ENVELOPE",
+            images=[bytearray(b"FAKE-IMG")],
+            descriptionResolver=resolver,
+        )
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": False})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        # No image message types and no serialized image payloads crossed.
+        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        # The resolver's description was injected right after the envelope
+        # text, in the TEXT envelope's tag vocabulary.
+        assert f"IMG ENVELOPE\n<media-description>{description}</media-description>" in [
+            m["content"] for m in serialized
+        ]
+        # The summary was still produced and covers the batch.
+        assert set(coverage.keys()) == {0}
+        assert coverage[0].get("text") == "summary-0"
+
 
 # ============================================================================
 # consumerId attribution Tests

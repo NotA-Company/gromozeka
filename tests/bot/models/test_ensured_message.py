@@ -16,11 +16,19 @@ Phase 5 additions: the lazy memory-resolution content tests
 ``metadata["memories"]`` are resolved to rendered content via
 ``cache.getMemoriesByIds`` — covering both cohorts, ``excludeMemoryIds``
 filtering, and the stale-ID omission contract.
+
+Native-vision v2 Phase B additions (:class:`TestNativeVisionConstructionAttach`):
+the opt-in, unwired construction-time image attach — ``toModelMessage``
+``nativeImages=`` sequencing (skip/partial/plain paths, ghost rule,
+never-raise boundary), ``formatForLLM`` ``skipMediaDescription=`` (including
+the TEXT-branch pre-populated-attribute trap), and the at-most-once lazy
+description resolver.
 """
 
 import datetime
 import json
-from unittest.mock import AsyncMock, Mock, patch
+from typing import Dict, Optional
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -35,7 +43,9 @@ from internal.bot.models import (
 from internal.database import Database
 from internal.database.models import MemoryType
 from internal.models import MessageId
-from lib.ai import ModelMessage
+from internal.services.storage.exceptions import StorageConfigError
+from internal.services.storage.service import StorageService
+from lib.ai import ModelImagesMessage, ModelMessage
 from lib.db.utils import DEFAULT_THREAD_ID
 
 
@@ -577,3 +587,501 @@ class TestRandomContextReadSite:
 
         assert len(result) == 1
         assert result[0].content == "MAIN"
+
+
+# ---------------------------------------------------------------------------
+# Native-vision v2 Phase B: construction-time image attach (opt-in, unwired)
+# ---------------------------------------------------------------------------
+
+
+def _makeMediaMessage() -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` carrying a two-image album.
+
+    Descriptions are pre-filled via ``addMedia`` (the ``fromDBChatMessage``
+    shape) so renders do not depend on DB fills; ``self.mediaContent`` is
+    deliberately pre-populated ("a red square") — exactly the attribute state
+    that makes the §4.2 TEXT-branch guard a trap on the skip path.
+
+    Returns:
+        A freshly constructed :class:`EnsuredMessage` with two described media.
+    """
+    ensuredMessage = EnsuredMessage(
+        sender=MessageSender(id=7, name="Alice", username="@alice"),
+        recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+        messageId=42,
+        date=datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText="look at these",
+    )
+    ensuredMessage.threadId = DEFAULT_THREAD_ID
+    ensuredMessage.addMedia(mediaId="media-1", mediaContent="a red square", setMediaId=True)
+    ensuredMessage.addMedia(mediaId="media-2", mediaContent="a blue circle", setMediaId=False)
+    return ensuredMessage
+
+
+def _mediaRow(mediaId: str, visionUrl: Optional[str] = None, description: str = "a red square") -> Dict[str, object]:
+    """Build a minimal ``MediaAttachmentDict``-shaped row (DONE status).
+
+    Only keys the production code reads are populated; timestamps are dummy
+    (unused on the DONE fast path of ``_awaitMedia``).
+
+    Args:
+        mediaId: Value for ``file_unique_id``.
+        visionUrl: Value for ``vision_url`` (None = describable-not-attached).
+        description: Value for ``description``.
+
+    Returns:
+        A dict shaped like a ``media_attachments`` row.
+    """
+    return {
+        "file_unique_id": mediaId,
+        "file_id": None,
+        "file_size": 3,
+        "media_type": "photo",
+        "metadata": "{}",
+        "status": "done",
+        "mime_type": "image/jpeg",
+        "local_url": None,
+        "prompt": None,
+        "description": description,
+        "vision_url": visionUrl,
+        "created_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        "updated_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+    }
+
+
+def _makeDb(rows: Dict[str, Dict[str, object]]) -> Mock:
+    """Build a Mock ``db`` whose ``mediaAttachments.getMediaAttachment`` serves the given rows.
+
+    Args:
+        rows: Mapping from media id to row dict; unknown ids return None (ghost).
+
+    Returns:
+        A Mock suitable for the ``db: Database`` parameters.
+    """
+    db = Mock()
+    db.mediaAttachments.getMediaAttachment = AsyncMock(side_effect=lambda mediaId, **kwargs: rows.get(mediaId))
+    return db
+
+
+class TestNativeVisionConstructionAttach:
+    """Phase B: opt-in construction attach on :meth:`EnsuredMessage.toModelMessage`.
+
+    Nothing in production passes ``nativeImages=True`` yet (Phase C owns the
+    wiring); these tests drive the flag directly. Covering: the §4.3
+    skip/partial/plain sequencing (bytes BEFORE render), the ghost rule, the
+    never-raise boundary around the vision attempt, the §4.2
+    ``skipMediaDescription`` render (both branches, incl. the TEXT-branch
+    pre-populated-attribute trap), and the §4.4 at-most-once lazy resolver.
+    """
+
+    async def test_constructionHappyPath_allBytesAttach_skipDescription(self) -> None:
+        """All bytes load -> ModelImagesMessage, no description rendered, no wait.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.images == [bytearray(b"IMG"), bytearray(b"IMG")]
+        assert result.source is msg
+        # Skip path: the JSON envelope carries NO mediaDescription key.
+        parsed = json.loads(result.content)
+        assert "mediaDescription" not in parsed
+        assert "mediaDescription" not in result.content
+        # The description wait never ran on the skip path...
+        updateMediaContentMock.assert_not_awaited()
+        # ...but the resolver closure exists for the condenser.
+        assert result.descriptionResolver is not None
+        # Storage consulted once per describable media, with the row's url.
+        storage.get.assert_has_calls([call("vision/media-1.jpg"), call("vision/media-2.jpg")])
+        assert storage.get.call_count == 2
+
+    async def test_constructionHappyPath_textFormat_noPrependDespitePopulatedAttribute(self) -> None:
+        """TEXT skip path: no `<media-description>` prepend even with mediaContent populated.
+
+        The §4.2 trap: ``self.mediaContent`` is pre-populated ("a red square");
+        the old attribute-only guard would prepend a description block on the
+        skip path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()),
+        ):
+            result = await msg.toModelMessage(db, format=LLMMessageFormat.TEXT, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.content == "look at these"
+        assert "<media-description>" not in result.content
+
+    async def test_formatForLLMSkipDescription_jsonOmitsKeyAndSkipsWait(self) -> None:
+        """``skipMediaDescription=True`` drops the JSON key and skips the wait.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = Mock()
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock:
+            skipped = await msg.formatForLLM(db, format=LLMMessageFormat.JSON, skipMediaDescription=True, cache=None)
+            updateMediaContentMock.assert_not_awaited()
+
+            # Control: default render waits and emits the description.
+            default = await msg.formatForLLM(db, format=LLMMessageFormat.JSON, cache=None)
+            updateMediaContentMock.assert_awaited_once()
+
+        assert "mediaDescription" not in json.loads(skipped)
+        assert json.loads(default)["mediaDescription"] == "a red square"
+
+    async def test_formatForLLMSkipDescription_textTrap_prePopulatedAttribute(self) -> None:
+        """Direct TEXT render with skip: no prepend despite populated mediaContent.
+
+        Regression for the §4.2 trap at the ``formatForLLM`` level: the guard
+        must not fire on the attribute alone.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()  # self.mediaContent == "a red square"
+        db = Mock()
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            skipped = await msg.formatForLLM(db, format=LLMMessageFormat.TEXT, skipMediaDescription=True, cache=None)
+            control = await msg.formatForLLM(db, format=LLMMessageFormat.TEXT, cache=None)
+
+        assert skipped == "look at these"
+        assert control == "<media-description>a red square</media-description>\n\nlook at these"
+
+    async def test_bytesMiss_fallsBackToPlainMessageWithDescriptionAndWait(self) -> None:
+        """Storage misses every url -> plain ModelMessage WITH description and the wait.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=None)
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(
+                EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))
+            ) as awaitMediaMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # The wait executed (updateMediaContent runs unmocked over the mocked
+        # _awaitMedia: once per mediaList entry + once for self.mediaId).
+        assert awaitMediaMock.await_count == 3
+        # The bytes load was still attempted before falling back.
+        assert storage.get.call_count == 2
+
+    async def test_partialAlbum_attachSubsetWithDescription_noResolver(self) -> None:
+        """Partially loaded album: subset attached ALONGSIDE the description; no resolver.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(side_effect=lambda key: b"IMG" if key == "vision/media-1.jpg" else None)
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()),
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.images == [bytearray(b"IMG")]
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # Envelope already carries the descriptions — no resolver needed.
+        assert result.descriptionResolver is None
+
+    async def test_ghostMedia_doesNotBlockSkip(self) -> None:
+        """A row-less (ghost) entry never blocks the skip path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb({"media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg")})  # media-2: ghost
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.images == [bytearray(b"IMG")]
+        assert "mediaDescription" not in json.loads(result.content)
+        updateMediaContentMock.assert_not_awaited()
+        assert result.descriptionResolver is not None
+
+    async def test_neverRaises_dbFetchFailure_fallsBackToDescriptionPath(self) -> None:
+        """A DB fetch exception inside the vision attempt degrades to the description path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        # Call order: _loadNativeVisionImages(media-1) raises, then the real
+        # updateMediaContent serves media-1, media-2, mediaId(media-1).
+        db = Mock()
+        db.mediaAttachments.getMediaAttachment = AsyncMock(
+            side_effect=[
+                RuntimeError("db boom"),
+                _mediaRow("media-1", description="a red square"),
+                _mediaRow("media-2", description="a blue circle"),
+                _mediaRow("media-1", description="a red square"),
+            ]
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with patch.object(StorageService, "getInstance", return_value=storage):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # If the exception had escaped the never-raise boundary, storage.get
+        # would never have been reached; reaching the description path means
+        # the boundary swallowed it.
+        storage.get.assert_not_called()
+
+    async def test_neverRaises_storageGetFailure_fallsBackToDescriptionPath(self) -> None:
+        """A storage.get exception degrades to the description path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(side_effect=RuntimeError("storage boom"))
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))),
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        assert json.loads(result.content)["mediaDescription"] == "a red square"
+
+    async def test_neverRaises_storageUninitialized_fallsBackToDescriptionPath(self) -> None:
+        """An uninitialized StorageService (StorageConfigError) degrades to the description path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(side_effect=StorageConfigError("StorageService is not initialized"))
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))),
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        assert json.loads(result.content)["mediaDescription"] == "a red square"
+
+    async def test_defaultFalse_nativeImagesAbsent_byteIdenticalAndNoLoad(self) -> None:
+        """Default call: today's exact render; the vision load is never attempted.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")  # bytes WOULD be available
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))),
+            patch.object(EnsuredMessage, "_loadNativeVisionImages", new=Mock()) as loadMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None)
+            directRender = await msg.formatForLLM(db, format=LLMMessageFormat.JSON, cache=None)
+
+        loadMock.assert_not_called()
+        storage.get.assert_not_called()
+        assert type(result) is ModelMessage
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # Byte-identity with the PRE-Phase-B render: a fixed expected string
+        # for this deterministic fixture (independent of today's renderer), so
+        # any drift in the default JSON envelope fails here.
+        expectedRender = (
+            '{"date": "2026-05-05T12:00:00+00:00", "login": "@alice", "mediaDescription": "a red square", '
+            '"messageId": 42, "name": "Alice", "text": "look at these", "type": "unknown"}'
+        )
+        assert result.content == expectedRender
+        assert result.content == directRender
+
+    async def test_resolver_atMostOnce_joinsDescriptions(self) -> None:
+        """The resolver joins descriptions, awaits the wait once, and caches.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            assert result.descriptionResolver is not None
+
+            first = await result.descriptionResolver()
+            updateMediaContentMock.assert_awaited_once()
+            assert first == "a red square\na blue circle"
+
+            # Second call: served from the closure cache, no second wait.
+            second = await result.descriptionResolver()
+            updateMediaContentMock.assert_awaited_once()
+            assert second == "a red square\na blue circle"
+
+    async def test_resolver_emptyDescriptions_resolvesNone(self) -> None:
+        """The §4.4 empty branch: no descriptions anywhere resolves to None.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        for media in msg.mediaList:
+            media.content = None  # nothing described anywhere
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            assert result.descriptionResolver is not None
+
+            resolved = await result.descriptionResolver()
+
+        assert resolved is None
+        updateMediaContentMock.assert_awaited_once()
+
+    async def test_resolver_swallowsUpdateMediaContentException(self) -> None:
+        """The resolver never raises: a failed wait resolves to None.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(
+                EnsuredMessage, "updateMediaContent", new=AsyncMock(side_effect=RuntimeError("boom"))
+            ) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            assert result.descriptionResolver is not None
+
+            resolved = await result.descriptionResolver()
+
+        assert resolved is None
+        updateMediaContentMock.assert_awaited_once()
+
+    async def test_toModelMessageList_forwardsNativeImages(self) -> None:
+        """``toModelMessageList`` forwards ``nativeImages`` 1:1 to the main message.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            new=AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ) as toModelMessageMock:
+            await msg.toModelMessageList(db=Mock(), cache=None, nativeImages=True)
+            forwardCall = toModelMessageMock.await_args
+            assert forwardCall is not None
+            assert forwardCall.kwargs["nativeImages"] is True
+
+            await msg.toModelMessageList(db=Mock(), cache=None)
+            defaultCall = toModelMessageMock.await_args
+            assert defaultCall is not None
+            assert defaultCall.kwargs["nativeImages"] is False

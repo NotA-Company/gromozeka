@@ -26,7 +26,7 @@ normalizeVisionImageStrict, VisionOutputImageFormat, _stripJpegExif) lives in
 
 import base64
 from io import BytesIO
-from typing import Tuple
+from typing import Optional, Tuple
 
 import pytest
 from PIL import Image
@@ -34,6 +34,8 @@ from PIL import Image
 from lib.ai.models import (
     ModelImageMessage,
     ModelImagesMessage,
+    ModelMessage,
+    ModelMessageDescriptionResolver,
     ModelResultStatus,
     ModelRunResult,
     ModelStructuredResult,
@@ -688,3 +690,130 @@ class TestModelImagesMessage:
         second = msg.toDict(supportedImageFormats=[_JPEG_MIME])
 
         assert first == second
+
+
+async def _resolveDescription() -> Optional[str]:
+    """Fixed-description async resolver stub for descriptionResolver tests.
+
+    Returns:
+        Optional[str]: A fixed non-empty description string.
+    """
+    return "a red square"
+
+
+# ============================================================================
+# ModelMessage.descriptionResolver — metadata-only field (native-vision v2 §4.1)
+# ============================================================================
+
+
+class TestModelMessageDescriptionResolver:
+    """Tests for the ``descriptionResolver`` metadata field (Phase A, inert).
+
+    The field mirrors ``source``: carried in-memory only and NEVER
+    serialized — absent from ``toDict`` output (hence invisible to
+    providers, the token estimator, and JSON logs via ``toLogMessage``) and
+    never read back by ``fromDict``/``fromDictList``. Defaults to ``None``
+    on every message class, and ``ModelImagesMessage.__init__`` passes the
+    ``source`` / ``descriptionResolver`` kwargs through to the parent
+    constructor.
+    """
+
+    def testDefaultsToNoneOnAllMessageClasses(self) -> None:
+        """Every message class defaults ``descriptionResolver`` to None.
+
+        Returns:
+            None
+        """
+        for message in (
+            ModelMessage(role="user", content="text"),
+            ModelImageMessage(role="user", content="text", image=bytearray(b"IMG")),
+            ModelImagesMessage(role="user", content="text", images=[bytearray(b"IMG")]),
+        ):
+            assert message.descriptionResolver is None
+
+    def testAbsentFromToDict(self) -> None:
+        """A set resolver never appears in ``toDict`` output.
+
+        Proven by equality: the serialization of a message carrying a
+        resolver is byte-identical to an otherwise-equal message without
+        one — for both the base class and the multi-image subclass payload.
+
+        Returns:
+            None
+        """
+        withResolver = ModelMessage(role="user", content="text", weight=3, descriptionResolver=_resolveDescription)
+        withoutResolver = ModelMessage(role="user", content="text", weight=3)
+        assert withResolver.toDict() == withoutResolver.toDict()
+
+        imagesWith = ModelImagesMessage(
+            role="user", content="album", images=[bytearray(b"1")], descriptionResolver=_resolveDescription
+        )
+        imagesWithout = ModelImagesMessage(role="user", content="album", images=[bytearray(b"1")])
+        assert imagesWith.toDict() == imagesWithout.toDict()
+
+    def testAbsentFromFromDictRoundTrip(self) -> None:
+        """``fromDict``/``fromDictList`` never read the resolver back.
+
+        Returns:
+            None
+        """
+        message = ModelMessage(role="user", content="text", weight=3, descriptionResolver=_resolveDescription)
+
+        restored = ModelMessage.fromDict(message.toDict())
+        assert restored.descriptionResolver is None
+
+        restoredList = ModelMessage.fromDictList([message.toDict()])
+        assert restoredList[0].descriptionResolver is None
+
+        # Deserialization must IGNORE a ``descriptionResolver`` key present in
+        # the INPUT dict (the field is never read back): a payload carrying one
+        # — hand-crafted, provider-echoed, or future-drifted JSON — must not
+        # poison the restored message.
+        poisoned = {"role": "user", "content": "text", "descriptionResolver": "should be ignored"}
+        restoredPoisoned = ModelMessage.fromDict(poisoned)
+        assert restoredPoisoned.descriptionResolver is None
+
+        restoredPoisonedList = ModelMessage.fromDictList([poisoned])
+        assert restoredPoisonedList[0].descriptionResolver is None
+
+    def testAbsentFromToLogMessage(self) -> None:
+        """A set resolver never appears in ``toLogMessage`` output.
+
+        Returns:
+            None
+        """
+        resolver: ModelMessageDescriptionResolver = _resolveDescription
+        withResolver = ModelImagesMessage(
+            role="user", content="album", images=[bytearray(b"1")], descriptionResolver=resolver
+        )
+        withoutResolver = ModelImagesMessage(role="user", content="album", images=[bytearray(b"1")])
+
+        logLine = withResolver.toLogMessage()
+
+        assert "_resolveDescription" not in logLine
+        assert logLine == withoutResolver.toLogMessage()
+
+    def testImagesMessageKwargsPassThrough(self) -> None:
+        """``ModelImagesMessage`` lands ``source``/``descriptionResolver`` on the instance.
+
+        Both kwargs are needed by Phase B's construction-time attach; this
+        pins the pass-through so a silent kwarg drop cannot reintroduce
+        itself.
+
+        Returns:
+            None
+        """
+        source = object()
+        resolver: ModelMessageDescriptionResolver = _resolveDescription
+
+        message = ModelImagesMessage(
+            role="assistant",
+            content="album",
+            images=[bytearray(b"1"), bytearray(b"2")],
+            source=source,
+            descriptionResolver=resolver,
+        )
+
+        assert message.source is source
+        assert message.descriptionResolver is resolver
+        assert message.images == [bytearray(b"1"), bytearray(b"2")]

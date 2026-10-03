@@ -28,7 +28,7 @@ import re
 from collections import deque
 from collections.abc import MutableSet, Sequence
 from enum import StrEnum
-from typing import List, Optional
+from typing import Optional
 
 import telegram
 
@@ -125,109 +125,34 @@ class LLMMessageHandler(BaseBotHandler):
 
         self.llmService = LLMService.getInstance()
 
-        # Cached config value — read once at init, requires restart to take
-        # effect. Mirrors the _sttEnabled pattern in BaseBotHandler.
-        self._maxImagesPerRequest: int = self.configManager.getVisionConfig().get(
-            "max-images-per-request", constants.DEFAULT_MAX_IMAGES_PER_REQUEST
-        )
-
     ###
-    # Native vision (design v1 §3.4/§3.5): chat-time attach of stored image
-    # bytes to the assembled LLM request.
+    # Native vision (design v2 §4.7): the attach itself happens at CONSTRUCTION
+    # time inside EnsuredMessage.toModelMessage (nativeImages= flag); the
+    # handler resolves per-request eligibility ONCE at each trigger entry and
+    # threads the resulting flag through message assembly.
     ###
 
-    async def _getVisionUrl(self, mediaId: str) -> Optional[str]:
-        """Fetch the stored vision URL for one media attachment.
+    def _nativeVisionEnabled(self, chatSettings: ChatSettingsDict) -> bool:
+        """NATIVE_VISION on AND both chat models vision-capable (fail-soft).
 
-        The ``vision_url`` column is written at receipt time by
-        ``_processMediaV2`` and never lives on the in-memory
-        ``EnsuredMessage.mediaList`` entries, so it is always re-fetched from
-        ``media_attachments`` by mediaId here (the in-memory model stays
-        untouched). There is deliberately no per-request cache: the DB
-        lookup is cheap and the same image appearing twice in one thread is
-        rare.
-
-        Args:
-            mediaId (str): Media attachment unique identifier (``file_unique_id``).
-
-        Returns:
-            Optional[str]: The StorageService key of the normalized image
-                bytes, or None when the row/URL is missing (image pre-dates
-                the feature, store failed, or TTL-collected).
-        """
-        try:
-            mediaRow = await self.db.mediaAttachments.getMediaAttachment(mediaId)
-            if mediaRow is not None:
-                return mediaRow["vision_url"]
-        except Exception as e:
-            logger.debug(f"Native vision: failed to read media attachment {mediaId}: {type(e).__name__}#{e}")
-        return None
-
-    def _loadVisionBytes(self, visionUrl: str) -> Optional[bytes]:
-        """Load normalized image bytes from the storage service.
+        One assembled message list is serialized for both the primary and the
+        fallback attempt (see ``_generateTextViaLLM``), so a text-only fallback
+        would hard-error on ``image_url`` parts. Both models must therefore
+        declare ``support_image_input`` (native-vision design v1 §3.4 rule,
+        preserved verbatim). Any resolution failure fails soft to "not
+        eligible" — the description-only status quo is always a safe answer.
 
         Args:
-            visionUrl (str): StorageService key of the stored image
-                (``vision/{sha512}.{ext}``).
-
-        Returns:
-            Optional[bytes]: The image bytes, or None when the key is absent
-                or the read fails (silently skipped — the description in the
-                envelope text is the graceful degradation).
-        """
-        try:
-            return self.storage.get(visionUrl)
-        except Exception as e:
-            logger.debug(f"Native vision: failed to load storage key {visionUrl}: {type(e).__name__}#{e}")
-            return None
-
-    async def _applyNativeVision(
-        self,
-        messages: Sequence[ModelMessage],
-        *,
-        chatSettings: ChatSettingsDict,
-    ) -> Sequence[ModelMessage]:
-        """Swap vision-eligible messages to multi-image messages.
-
-        Walks the assembled request list NEWEST to OLDEST (the current message
-        is assembled last), pairs each ``ModelMessage`` with its source
-        :class:`EnsuredMessage` (stamped into ``ModelMessage.source`` by
-        ``toModelMessage``), loads the stored normalized bytes for the source's
-        media list in album order, and replaces the plain message with a
-        :class:`ModelImagesMessage` whose text part is the existing
-        ``formatForLLM`` envelope. Eligibility is role-INDEPENDENT: any
-        source-paired message carrying stored images swaps, assistant
-        messages included (the owner wants bot-sent images attachable for
-        future image-editing support). System and tool messages have no
-        media sources, so they stay excluded naturally; the existing
-        envelope text (including media descriptions) is always preserved.
-
-        The ``max-images-per-request`` cap (cached at ``__init__``) applies
-        across the ENTIRE request: the most-recent N images are attached,
-        overflow images degrade to their text descriptions. A WARNING is
-        logged when the cap trips, because image tokens are invisible to the
-        char-based token estimator — the cap is the only real cost guard
-        (native-vision design v1 §3.4).
-
-        Args:
-            messages (Sequence[ModelMessage]): Assembled request messages
-                (system prompt, history, current message).
             chatSettings (ChatSettingsDict): Chat-specific settings; the
                 ``NATIVE_VISION`` flag and both model keys are read from here.
 
         Returns:
-            Sequence[ModelMessage]: The (possibly) updated message list — the
-                same object when nothing was swapped, a new list otherwise.
+            bool: True when stored image bytes may be attached at construction
+                time for this request.
         """
         if not chatSettings[ChatSettingsKey.NATIVE_VISION].toBool():
-            return messages
+            return False
 
-        # One assembled message list is serialized for both the primary and
-        # the fallback attempt (see ``_generateTextViaLLM``), so a text-only
-        # fallback would hard-error on ``image_url`` parts. Both models must
-        # therefore declare ``support_image_input`` (native-vision design v1
-        # §3.4). Any resolution failure fails soft to "not eligible" — the
-        # description-only status quo is always a safe answer.
         try:
             primaryModel = self.llmService.resolveModel(
                 ChatSettingsKey.CHAT_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL
@@ -239,64 +164,11 @@ class LLMMessageHandler(BaseBotHandler):
             fallbackSupportsImageInput = bool(fallbackModel.getInfo().get("support_image_input", False))
         except Exception as e:
             logger.warning(f"Native vision eligibility check failed, using descriptions only: {type(e).__name__}#{e}")
-            return messages
+            return False
         if not (primarySupportsImageInput and fallbackSupportsImageInput):
             logger.debug("Native vision is on, but chat models are not image-capable; using descriptions only")
-            return messages
-
-        maxImages = self._maxImagesPerRequest
-        result = list(messages)
-        attachedCount = 0
-        capTripped = False
-
-        # Newest → oldest: the current message (assembled last) gets the
-        # images first, then history from newest to oldest.
-        for index in range(len(result) - 1, -1, -1):
-            msg = result[index]
-            if isinstance(msg, ModelImagesMessage):
-                continue
-            source = msg.source
-            if not isinstance(source, EnsuredMessage) or not source.mediaList:
-                continue
-
-            visionUrls: List[str] = []
-            for media in source.mediaList:  # album order
-                visionUrl = await self._getVisionUrl(media.id)
-                if visionUrl:
-                    visionUrls.append(visionUrl)
-            if not visionUrls:
-                continue
-
-            # Iterate candidates in album order, consuming capacity only for
-            # successfully loaded bytes: a storage miss must not burn the slot
-            # that a later album image could use. Overflow is flagged only when
-            # a candidate is actually EXCLUDED by exhausted capacity (a failed
-            # load alone is not a cap hit).
-            images: List[bytearray] = []
-            for visionUrl in visionUrls:
-                if attachedCount + len(images) >= maxImages:
-                    capTripped = True  # this candidate (and everything older) overflows
-                    break
-                imageData = self._loadVisionBytes(visionUrl)
-                if not imageData:
-                    continue  # bytes unavailable — free slot stays for later candidates
-                images.append(bytearray(imageData))
-            if not images:
-                continue  # nothing attachable — keep the description-only text
-
-            swappedMessage = ModelImagesMessage(role=msg.role, content=msg.content, images=images)
-            swappedMessage.source = source
-            swappedMessage.weight = msg.weight
-            result[index] = swappedMessage
-            attachedCount += len(images)
-
-        if capTripped:
-            logger.warning(
-                f"Native vision: max-images-per-request cap ({maxImages}) hit; "
-                f"{attachedCount} image(s) attached, older images degraded to their text descriptions"
-            )
-
-        return result
+            return False
+        return True
 
     ###
     # Some LLM helpers
@@ -447,11 +319,6 @@ class LLMMessageHandler(BaseBotHandler):
         # For logging purposes
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-
-        # Native vision (Phase 2b): swap stored image bytes into the ONE
-        # message list before generation, so primary and fallback attempts
-        # serialize the same multipart messages.
-        messagesHistory = await self._applyNativeVision(messagesHistory, chatSettings=chatSettings)
 
         # Build the request dump ONLY when DEBUG logging is enabled:
         # image-bearing messages embed full base64 payloads, and repr()
@@ -766,6 +633,10 @@ class LLMMessageHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
+        # Native vision (v2 §4.7): eligibility resolved once per request, then
+        # threaded through every message construction below.
+        nativeVision = self._nativeVisionEnabled(chatSettings)
+
         isReplyToMyMessage = False
         eRepliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
         if eRepliedMessage is not None and eRepliedMessage.sender.id == await self.getBotId():
@@ -776,13 +647,17 @@ class LLMMessageHandler(BaseBotHandler):
 
         logger.debug("It is reply to our message, processing reply...")
         async with await self.startTyping(ensuredMessage) as typingManager:
-            # As it's resporse to our message, we need to wait for media to be processed if any
-            await ensuredMessage.updateMediaContent(self.db)
+            # As it's resporse to our message, we need to wait for media to be processed if any.
+            # Native vision (v2 §4.8): skipped when the flag is on — the wait is
+            # DEFERRED to construction, not lost: formatForLLM still performs it
+            # on the description path (only the bytes-attached skip path omits it).
+            if not nativeVision:
+                await ensuredMessage.updateMediaContent(self.db)
 
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
             injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
-            reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
+            reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage, nativeImages=nativeVision)
 
             if not reqMessages:
                 logger.error("Failed to get parent message")
@@ -804,12 +679,14 @@ class LLMMessageHandler(BaseBotHandler):
                         format=llmMessageFormat,
                         role="assistant",
                         cache=self.cache if injectMemories else None,
+                        nativeImages=nativeVision,
                     ),
                     await ensuredMessage.toModelMessage(
                         self.db,
                         format=llmMessageFormat,
                         role="user",
                         cache=self.cache if injectMemories else None,
+                        nativeImages=nativeVision,
                     ),
                 ]
 
@@ -858,6 +735,10 @@ class LLMMessageHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
+
+        # Native vision (v2 §4.7): eligibility resolved once per request, then
+        # threaded through every message construction below.
+        nativeVision = self._nativeVisionEnabled(chatSettings)
 
         mentionedMe = await self.checkEMMentionsMe(ensuredMessage)
         if mentionedMe.byName is None and mentionedMe.byNick is None:
@@ -943,6 +824,7 @@ class LLMMessageHandler(BaseBotHandler):
                                 format=llmMessageFormat,
                                 role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
                                 cache=self.cache if injectMemories else None,
+                                nativeImages=nativeVision,
                             ),
                         )
                     else:
@@ -964,6 +846,7 @@ class LLMMessageHandler(BaseBotHandler):
                                     format=llmMessageFormat,
                                     role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
                                     cache=self.cache if injectMemories else None,
+                                    nativeImages=nativeVision,
                                 ),
                             )
 
@@ -974,6 +857,7 @@ class LLMMessageHandler(BaseBotHandler):
                     format=llmMessageFormat,
                     role="user",
                     cache=self.cache if injectMemories else None,
+                    nativeImages=nativeVision,
                 ),
             )
 
@@ -1021,6 +905,12 @@ class LLMMessageHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
+
+        # Native vision (v2 §4.7): eligibility resolved once per request, then
+        # threaded through every message construction below (both the request
+        # list and the direct-condense path).
+        nativeVision = self._nativeVisionEnabled(chatSettings)
+
         if answerProbability <= 0.0:
             # logger.debug(
             #    f"answerProbability is {answerProbability} "
@@ -1054,7 +944,9 @@ class LLMMessageHandler(BaseBotHandler):
             maxTokensCoeff: float = 0.8
 
             if parentId is not None:
-                storedMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
+                storedMessages = await self.getThreadByMessageForLLM(
+                    ensuredMessage=ensuredMessage, nativeImages=nativeVision
+                )
                 # In case of condensing, keep message, last message is answer to
                 keepLastMessagesN += 1
                 # Append the random-answer context fragment to the leading system message.
@@ -1107,6 +999,7 @@ class LLMMessageHandler(BaseBotHandler):
                         role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
                         cache=self.cache if injectMemories else None,
                         excludeMemoryIds=excludedMemoryIds,
+                        nativeImages=nativeVision,
                     )
                     contextMessages.extendleft(reversed(emittedMessages))
                     # Tag every emitted ModelMessage with its source row so the
@@ -1157,6 +1050,7 @@ class LLMMessageHandler(BaseBotHandler):
                         format=llmMessageFormat,
                         cache=self.cache if injectMemories else None,
                         excludeMemoryIds=set(),
+                        nativeImages=nativeVision,
                     )
                 )
 

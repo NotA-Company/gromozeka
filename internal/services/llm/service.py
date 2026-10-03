@@ -5,6 +5,7 @@ managing tool registration and execution, and handling multi-turn conversations 
 The service supports fallback models and provides a unified interface for LLM operations.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -179,7 +180,7 @@ def _contentCarriesMediaDescription(content: str) -> bool:
     return '"mediaDescription"' in content or "<media-description>" in content
 
 
-def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
+async def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
     """Return a text-only copy of an image-bearing message for the condensing model.
 
     Image payloads are dropped while the envelope (``role`` / ``content``),
@@ -187,12 +188,21 @@ def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
     tracking (:func:`generateCondensingDict`) stays intact. Plain messages
     are returned as-is; nothing is mutated.
 
-    When the envelope text carries NO media description, a short marker
+    When the envelope text carries NO media description, the message's
+    ``descriptionResolver`` (when present) is awaited — lazily, at most once
+    per closure — to resolve the real media description; a truthy result is
+    appended wrapped in ``<media-description>...</media-description>`` (the
+    same tag the TEXT envelope uses, so the condenser reads one consistent
+    vocabulary). The resolver is deliberately NOT copied onto the stripped
+    copy: it is consumed here, so re-stripping the output can never invoke
+    it again. When no resolver exists or it resolves to nothing (timeout,
+    parse failure, pre-feature media), a short marker
     (:data:`_STRIPPED_IMAGE_MARKER` / :data:`_STRIPPED_IMAGES_MARKER_TEMPLATE`)
     is appended so a text-only condenser knows an image was there and was
     dropped deliberately — not lost. Description detection is string-based on
     the content (:func:`_contentCarriesMediaDescription`); a description-
-    bearing envelope is preserved exactly, with no marker.
+    bearing envelope is preserved exactly, with the resolver left UNINVOKED
+    and no marker appended.
 
     Whether this function is applied at all is decided by the caller
     (:meth:`LLMService.condenseContext` gates it on the condensing model's
@@ -204,13 +214,19 @@ def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
     Returns:
         ModelMessage: The same instance for plain messages, or a new plain
             :class:`ModelMessage` carrying the same envelope (plus the
-            omission marker when no description is present) without images.
+            resolved media description, or the omission marker when nothing
+            resolves) without images and without a resolver.
     """
     if not isinstance(message, (ModelImageMessage, ModelImagesMessage)):
         return message
     content = message.content
     if not _contentCarriesMediaDescription(content):
-        if isinstance(message, ModelImagesMessage):
+        resolved: Optional[str] = None
+        if message.descriptionResolver is not None:
+            resolved = await message.descriptionResolver()
+        if resolved:
+            content += f"\n<media-description>{resolved}</media-description>"
+        elif isinstance(message, ModelImagesMessage):
             imageCount = len(message.images)
             content += _STRIPPED_IMAGES_MARKER_TEMPLATE.format(
                 imageCount=imageCount, imagePlural="" if imageCount == 1 else "s"
@@ -1330,7 +1346,10 @@ class LLMService:
         except Exception:  # noqa: BLE001 — the capability probe must never break condensing
             logger.warning("Failed to probe condensing model vision capability; treating the condenser as text-only")
         if not condensingModelSupportsImages:
-            body = [stripImagesForCondensing(v) for v in body]
+            # asyncio.gather: concurrent resolver waits for multiple pending
+            # albums (worst case one wait window, not N serial ones), order
+            # preserved.
+            body = list(await asyncio.gather(*(stripImagesForCondensing(v) for v in body)))
 
         if condensingPrompt is None:
             condensingPrompt = (

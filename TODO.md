@@ -15,6 +15,7 @@
 - [ ] repost\link to message from publich channel
 - [ ] Image search, search by image, download image and see it
 - [ ] add gpt-image-2.5
+- [ ] `internal.services.queue_service.service:226 - There are 1 left, awaiting...` - wait with tryN seconds (max - 10)
 - [ ] `Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:`
 - [ ] gifs from sandbox sent as static image
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
