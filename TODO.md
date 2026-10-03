@@ -10,6 +10,11 @@
 - [ ] vision: add storage service choosing
 - [ ] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)
 
+- [ ] send-sticker tool: semantic-search by description
+- [ ] llm-call: retry on timeout (up to X times, do not reject just cal again)
+- [ ] repost\link to message from publich channel
+- [ ] Image search, search by image, download image and see it
+- [ ] add gpt-image-2.5
 - [ ] `Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:`
 - [ ] gifs from sandbox sent as static image
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
