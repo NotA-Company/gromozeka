@@ -5,6 +5,6 @@ This package provides a unified interface for storing and retrieving binary obje
 across multiple backend implementations (Null, Filesystem, S3).
 """
 
-from .service import StorageService
+from .service import StorageScope, StorageService
 
-__all__ = ["StorageService"]
+__all__ = ["StorageScope", "StorageService"]

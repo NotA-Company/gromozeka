@@ -69,7 +69,7 @@ from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
-from internal.services.storage import StorageService
+from internal.services.storage import StorageScope, StorageService
 from internal.services.stt import STTService
 from lib.ai import (
     ModelImageMessage,
@@ -190,7 +190,14 @@ class BaseBotHandler(CommandHandlerMixin):
             )
             self._visionImageFormat = VisionOutputImageFormat.JPEG
         self._visionImageQuality: int = visionConfig.get("image-quality", 85)
-        self._visionStorePrefix: str = visionConfig.get("store-prefix", "vision/")
+        # Vision-scoped storage instance (scoped-storage design v1 §4.4):
+        # normalized images land in the vision store under bare keys. The
+        # HandlersManager injects this scope before the handler pipeline is
+        # built; handlers constructed standalone may hold an uninitialized
+        # instance — every consumer (_storeVisionImage /
+        # _loadNativeVisionImages) is fail-soft and degrades exactly as it
+        # does for any other storage failure.
+        self.visionStorage = StorageService.getInstance(StorageScope.VISION)
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -2209,11 +2216,15 @@ class BaseBotHandler(CommandHandlerMixin):
           orphan storage object (acceptable), but ``vision_url`` is never
           published before the object exists.
 
-        Normalization parameters (dimension, output format, quality) and the
-        storage prefix come from the vision settings cached in ``__init__``
+        Normalization parameters (dimension, output format, quality) come
+        from the vision settings cached in ``__init__``
         (``_visionMaxImageDimension`` / ``_visionImageFormat`` /
-        ``_visionImageQuality`` / ``_visionStorePrefix``) — no per-call
-        config reads.
+        ``_visionImageQuality``) — no per-call config reads. The object is
+        written to the vision-scoped store (``visionStorage``, configured
+        from ``[storage.storages.vision]``) under the BARE content key
+        ``{sha512}.{ext}`` — there is no app-layer prefix; separation from
+        the attachments store is achieved by backend placement (scoped-
+        storage design v1 §4.4).
 
         Args:
             chatId: Chat the media belongs to (for the warning log line).
@@ -2231,10 +2242,10 @@ class BaseBotHandler(CommandHandlerMixin):
             for reuse by the parse path.
         """
         try:
-            if self.storage.backendType == "null":
+            if self.visionStorage.backendType == "null":
                 logger.warning(
-                    f"Native-vision store failed for chat {chatId}: storage backend is 'null' — "
-                    "configure a real storage backend to use native-vision"
+                    f"Native-vision store failed for chat {chatId}: vision storage backend is 'null' — "
+                    "configure [storage.storages.vision] to use native-vision"
                 )
                 return (None, None)
 
@@ -2276,10 +2287,10 @@ class BaseBotHandler(CommandHandlerMixin):
             normalizedBytes, normalizedMime = normalized
             ext = normalizedMime.split("/")[-1]
             sha512 = hashlib.sha512(normalizedBytes).hexdigest()
-            key = f"{self._visionStorePrefix}{sha512}.{ext}"
+            key = f"{sha512}.{ext}"
             # Content dedup: store only when not already present, mirroring storeAttachment.
-            if not self.storage.exists(key):
-                self.storage.store(key, normalizedBytes)
+            if not self.visionStorage.exists(key):
+                self.visionStorage.store(key, normalizedBytes)
             # Store-then-write: the write below may still fail (leaving an
             # orphan storage object — acceptable), but vision_url is never
             # published before the object exists.

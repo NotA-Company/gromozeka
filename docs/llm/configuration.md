@@ -85,17 +85,16 @@ if lmRetText.strip().strip("`").strip() == "<skip>":
 On `SKIPPED_BY_MODEL`, `handleRandomMessage` returns `False` → `newMessageHandler` falls through to `HandlerResultStatus.NEXT` (nothing is sent). Only `random-answer-prompt` asks for `<skip>`, but the check is global in `_sendLLMChatMessage`; see [`handlers.md`](handlers.md) "Random-answer context & model abstention" for the full `LLMReplyOutcome` plumbing.
 
 #### `[bot.vision]`
-Native-vision receipt/store settings (ADR-027 receipt side + ADR-028 chat-time side; full feature flow in [`handlers.md`](handlers.md) §9 "Native Vision"). **File:** [`configs/00-defaults/vision.toml`](../../configs/00-defaults/vision.toml). Read via `ConfigManager.getVisionConfig()` (returns `VisionConfigDict` — defined in [`internal/config/models.py`](../../internal/config/models.py), the designated home for future config TypedDicts; `manager.py` imports it from there): the raw table when the section is present, exactly `{}` when it is missing — the getter does no default-merging; consumers apply the documented defaults via `.get(key, default)` at each use site (see §3), and the receipt handler (`BaseBotHandler`) caches the values once at `__init__`. Five keys (the v1 `max-images-per-request` cap key was removed by ADR-028 — there is no request-wide image cap; albums attach in full).
+Native-vision receipt/store settings (ADR-027 receipt side + ADR-028 chat-time side + ADR-029 scoped vision store; full feature flow in [`handlers.md`](handlers.md) §9 "Native Vision"). **File:** [`configs/00-defaults/vision.toml`](../../configs/00-defaults/vision.toml). Read via `ConfigManager.getVisionConfig()` (returns `VisionConfigDict` — defined in [`internal/config/models.py`](../../internal/config/models.py), the designated home for future config TypedDicts; `manager.py` imports it from there): the raw table when the section is present, exactly `{}` when it is missing — the getter does no default-merging; consumers apply the documented defaults via `.get(key, default)` at each use site (see §3), and the receipt handler (`BaseBotHandler`) caches the values once at `__init__`. Four keys (the v1 `max-images-per-request` cap key was removed by ADR-028 — there is no request-wide image cap; the v1 `store-prefix` key was removed by ADR-029 — vision objects live in their own scoped storage under bare `{sha512}.{ext}` keys).
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `max-image-dimension` | int | `2048` | Cap on the normalized image's long side (LANCZOS downscale, never upscaled; `0` disables resizing) |
 | `image-format` | str | `"image/jpeg"` | Re-encode format for stored vision bytes (`"image/jpeg"`/`"image/png"`; converted to the `VisionOutputImageFormat` enum once at handler init — an invalid value warns and falls back to JPEG) |
 | `image-quality` | int | `85` | JPEG quality of the re-encode |
-| `store-prefix` | str | `"vision/"` | StorageService key prefix — objects stored as `{store-prefix}{sha512}.{ext}` (content dedup) |
 | `ttl-days` | int | `30` | **Target retention only** — the TTL-GC cleanup cron is a follow-up and does not exist yet; stored objects are retained until it lands |
 
-**`native-vision` chat setting** (owner page in `/configure`, Bool, default `false`): the per-chat master gate — an independent, parallel gate to `parse-attachments` (neither implies the other). Requires a configured (non-null) storage backend: on a null backend the feature fail-softs in 2 layers (a per-occurrence process-time WARNING at receipt, then description fallback) — `/configure` itself stays generic and emits no per-setting warning. Eligibility at chat time additionally requires both `CHAT_MODEL` and `FALLBACK_MODEL` to declare `support_image_input`.
+**`native-vision` chat setting** (owner page in `/configure`, Bool, default `false`): the per-chat master gate — an independent, parallel gate to `parse-attachments` (neither implies the other). Requires a configured (non-null) vision storage — the `[storage.storages.vision]` table (see §`[storage]`; an absent table resolves to a null backend and the feature stores nothing): on a null backend the feature fail-softs in 2 layers (a per-occurrence process-time WARNING at receipt naming `[storage.storages.vision]`, then description fallback) — `/configure` itself stays generic and emits no per-setting warning. Eligibility at chat time additionally requires both `CHAT_MODEL` and `FALLBACK_MODEL` to declare `support_image_input`.
 ### `[database]`
 
 | Key | Type | Purpose |
@@ -348,7 +347,6 @@ openweathermap = "<limiter-name>"
 | `rotate` | bool | Enable log rotation |
 
 ### `[storage]`
-
 ```toml
 [storage]
 type = "fs"  # "fs", "s3", "null"
@@ -371,6 +369,12 @@ prefix = "objects/"
 - `fs` — filesystem storage
 - `s3` — AWS S3 or compatible (e.g., MinIO, Yandex Object Storage)
 
+**Named storages `[storage.storages.NAME]`** (ADR-029, scoped `StorageService` instances): optional per-feature storages, each table shaped **exactly like `[storage]`** — a `type` key plus the optional `.fs`/`.s3` sub-tables with the same keys, and nothing else. The top-level `[storage]` table remains the DEFAULT scope (the attachments store); a named table is selected via `StorageService.getInstance(StorageScope.NAME)` / `injectConfig(configManager, scope=...)`. Today the only sanctioned named storage is `vision` (`[storage.storages.vision]`, consumed by native vision — see §`[bot.vision]`). Semantics:
+
+- **Absent table** → that scope silently resolves to a `NullStorageBackend` (feature off). There is deliberately **no inheritance** from `[storage]` — every scope's backend is fully determined by its own table.
+- **Present but malformed table** → `StorageConfigError` at inject time → **startup crash**, exact parity with a bad default `[storage]` table.
+- **No app-layer prefix key exists**: separation from the default store comes from backend placement ONLY — a different fs `base-dir`, or a different bucket, optionally plus the existing backend-level s3 `prefix` (the only prefix).
+- A commented-out example ships in [`configs/00-defaults/storage.toml`](../../configs/00-defaults/storage.toml); a deployment enables a named storage by adding a real table in its `configs/local/` overlay (deep-merge).
 ### `[openweathermap]`
 
 | Key | Type | Purpose |
@@ -1064,14 +1068,14 @@ global-ratelimiter-queue = "stt-global"
 | `getBotToken()` | `str` | Bot API token (exits if missing) |
 | `getOpenWeatherMapConfig()` | `Dict[str, Any]` | `[openweathermap]` section |
 | `getYandexSearchConfig()` | `Dict[str, Any]` | `[yandex-search]` section |
-| `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section |
+| `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section (includes any nested `[storage.storages.*]` named-storage tables — there is deliberately no dedicated named-storage accessor; `StorageService.injectConfig(..., scope=...)` reads them out of this dict — ADR-029) |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
 | `getStatsPagesConfig()` | `Dict[str, Any]` | `[stats.pages]` child section via an inline nested lookup (`self.get("stats", {})` → `.get("pages", {})`; `get()` is literal-key-only, no dot navigation); returns `{}` when missing; consumed by `StatsHandler` |
 | `getProxyConfig()` | `ProxyConfigDict` | `[proxy]` section (typed `TypedDict` from [`lib/proxy`](../../lib/proxy/__init__.py)) |
 | `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
 | `getSttConfig()` | `Dict[str, Any]` | `[stt]` section (returns `{}` when missing); consumed by `STTService.initialize()` |
-| `getVisionConfig()` | `VisionConfigDict` | `[bot.vision]` section — returns the raw table when present, `{}` when the section is missing (no default-merging in the getter; consumers apply the documented defaults via `.get(key, default)` at each use site — see `[bot.vision]` above); typed dict defined in [`internal/config/models.py`](../../internal/config/models.py) with FIVE keys (`max-image-dimension`, `image-format`, `image-quality`, `store-prefix`, `ttl-days` — the `max-images-per-request` key was removed by ADR-028); consumed by the native-vision receipt path (cached once at `BaseBotHandler.__init__`) |
+| `getVisionConfig()` | `VisionConfigDict` | `[bot.vision]` section — returns the raw table when present, `{}` when the section is missing (no default-merging in the getter; consumers apply the documented defaults via `.get(key, default)` at each use site — see `[bot.vision]` above); typed dict defined in [`internal/config/models.py`](../../internal/config/models.py) with FOUR keys (`max-image-dimension`, `image-format`, `image-quality`, `ttl-days` — `max-images-per-request` was removed by ADR-028 and `store-prefix` by ADR-029); consumed by the native-vision receipt path (cached once at `BaseBotHandler.__init__`) |
 
 ---
 ## 4. Adding Configuration

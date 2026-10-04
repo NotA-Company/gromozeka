@@ -62,7 +62,7 @@ from internal.database.models import CacheType, MessageCategory
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
-from internal.services.storage import StorageService
+from internal.services.storage import StorageScope, StorageService
 from lib import utils
 from lib.cache import GenericDatabaseCache
 from lib.rate_limiter.manager import RateLimiterManager
@@ -407,7 +407,8 @@ class HandlersManager(CommandHandlerGetterInterface):
         commandStatsStorage: Stats storage for command events
         _commands: Cached dictionary mapping command names to handler info
         cache: Cache service for storing chat settings and user data
-        storage: Storage service for file operations
+        storage: Storage service (default scope) for file operations
+        visionStorage: Storage service for the vision-scoped store
         queueService: Queue service for delayed task execution
         maxTasks: Maximum number of concurrent handler tasks
         maxTasksPerChat: Maximum number of queued messages per chat
@@ -451,8 +452,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
 
         self.cache = CacheService.getInstance()
-        self.storage = StorageService.getInstance()
-        self.storage.injectConfig(self.configManager)
+
+        for storageVariant in StorageScope:
+            storage = StorageService.getInstance(storageVariant)
+            storage.injectConfig(self.configManager, scope=storageVariant)
 
         self.queueService = QueueService.getInstance()
         # Initialize default Chat Settings

@@ -1,13 +1,16 @@
 """
-Storage service: Singleton service for object storage operations
+Storage service: Scoped singleton service for object storage operations
 
-This module provides a singleton service that manages object storage operations
-through pluggable backend implementations (filesystem, S3, null).
+This module provides per-scope singleton services that manage object storage
+operations through pluggable backend implementations (filesystem, S3, null).
+Each sanctioned scope (see StorageScope) resolves to its own StorageService
+instance, configured from its own config table.
 """
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Optional, Union
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .backends.abstract import AbstractStorageBackend
 from .backends.filesystem import FSStorageBackend
@@ -21,13 +24,117 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class StorageScope(StrEnum):
+    """
+    Sanctioned storage scopes.
+
+    Each member names a ``[storage.storages.{value}]`` config table; the
+    DEFAULT scope is the exception — it reads the top-level ``[storage]``
+    table (its long-standing home, kept for backward compatibility). This is
+    the closed set of sanctioned scopes at design time: adding a new storage
+    later means adding one enum member plus its config table.
+
+    Attributes:
+        DEFAULT: The default store (top-level ``[storage]`` table; the
+            long-standing attachments store). Argless ``getInstance()`` /
+            ``injectConfig(configManager)`` calls resolve here.
+        VISION: The native-vision store (``[storage.storages.vision]``
+            table). An absent table resolves to a null backend (feature
+            off); a present-but-malformed table crashes at inject time,
+            with parity to the default table.
+    """
+
+    DEFAULT = "default"
+    VISION = "vision"
+
+
+def _buildBackend(
+    config: Dict[str, Any],
+    # Inherited-``Any`` exception (Phase 1 review precedent, same pattern as
+    # ``ModelImagesMessage.toDict``'s overrides): the parameter type is forced
+    # by ``ConfigManager.getStorageConfig()``'s declared
+    # ``Dict[str, Any]`` return contract — this helper is the behavior-
+    # preserving extraction of the old inline if/elif chain (scoped-storage
+    # design v1 §4.3), and re-typing it to ``Dict[str, object]`` would trip
+    # pyright on the un-narrowed ``.get`` calls below without adding safety.
+) -> AbstractStorageBackend:
+    """
+    Build a storage backend from a storage config table.
+
+    Shared validation/backend-construction chain used for the default
+    ``[storage]`` table and for every named ``[storage.storages.*]`` table —
+    both paths must validate identically (bad named config crashes startup
+    exactly like a bad default config).
+
+    Args:
+        config: Storage configuration dictionary with the same shape as the
+            ``[storage]`` table
+
+    Returns:
+        The configured backend instance
+
+    Raises:
+        StorageConfigError: If configuration is invalid or backend creation fails
+    """
+    storageType = config.get("type")
+    if not storageType:
+        raise StorageConfigError("Storage type is not specified in configuration")
+
+    # Create appropriate backend based on type
+    if storageType == "null":
+        backend: AbstractStorageBackend = NullStorageBackend()
+        logger.info("Initialized NullStorageBackend")
+
+    elif storageType == "fs":
+        fsConfig = config.get("fs")
+        if not fsConfig:
+            raise StorageConfigError("Filesystem storage configuration is missing")
+
+        baseDir = fsConfig.get("base-dir")
+        if not baseDir:
+            raise StorageConfigError("Filesystem base-dir is not specified")
+
+        backend = FSStorageBackend(baseDir)
+        logger.info(f"Initialized FSStorageBackend with base-dir: {baseDir}")
+
+    elif storageType == "s3":
+        s3Config = config.get("s3")
+        if not s3Config:
+            raise StorageConfigError("S3 storage configuration is missing")
+
+        # Validate required S3 parameters
+        requiredParams = ["endpoint", "region", "key-id", "key-secret", "bucket"]
+        missingParams = [p for p in requiredParams if not s3Config.get(p)]
+        if missingParams:
+            raise StorageConfigError(f"S3 configuration missing required parameters: {', '.join(missingParams)}")
+
+        backend = S3StorageBackend(
+            endpoint=s3Config["endpoint"],
+            region=s3Config["region"],
+            keyId=s3Config["key-id"],
+            keySecret=s3Config["key-secret"],
+            bucket=s3Config["bucket"],
+            prefix=s3Config.get("prefix", ""),
+        )
+        logger.info(f"Initialized S3StorageBackend with bucket: {backend.bucket}, " f"prefix: {backend.prefix}")
+
+    else:
+        raise StorageConfigError(f"Unknown storage type: {storageType}")
+
+    return backend
+
+
 class StorageService:
     """
-    Singleton service for object storage operations.
+    Scoped singleton service for object storage operations.
 
     This service provides a unified interface for storing and retrieving binary objects
     using different backend implementations. The backend is configured at initialization
     time through the injectConfig method.
+
+    One instance exists per StorageScope (see the ``_instances`` registry);
+    the DEFAULT scope is the instance every arg-less ``getInstance()`` call
+    has always received, so existing call sites are unaffected.
 
     Supported backends:
     - null: No-op backend for testing
@@ -37,6 +144,10 @@ class StorageService:
     Usage:
         storage = StorageService.getInstance()
         storage.injectConfig(configManager)
+
+        # Scoped access (e.g. the native-vision store)
+        vision = StorageService.getInstance(StorageScope.VISION)
+        vision.injectConfig(configManager, scope=StorageScope.VISION)
 
         # Store and retrieve objects
         storage.store("my-key", b"data")
@@ -48,32 +159,43 @@ class StorageService:
         keys = storage.list(prefix="prefix-", limit=10)
 
     Thread Safety:
-        The singleton instance creation is thread-safe using RLock.
+        Per-scope singleton instance creation is thread-safe using RLock.
         Individual backend operations depend on backend implementation.
     """
 
-    _instance: Union["StorageService", None] = None
+    _instances: Dict[str, "StorageService"] = {}
     _lock = threading.RLock()
 
-    def __new__(cls) -> "StorageService":
+    def __new__(cls, scope: StorageScope = StorageScope.DEFAULT) -> "StorageService":
         """
-        Create or return singleton instance with thread safety.
+        Create or return the per-scope singleton instance with thread safety.
+
+        Args:
+            scope: The storage scope identifying which instance to return.
+                Must be a StorageScope member (no string coercion — a raw
+                string fails fast on ``scope.value`` by design)
 
         Returns:
-            The singleton StorageService instance
+            The StorageService instance registered for the given scope
         """
         with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-            return cls._instance
+            if scope.value not in cls._instances:
+                cls._instances[scope.value] = super().__new__(cls)
+            return cls._instances[scope.value]
 
-    def __init__(self):
+    def __init__(self, scope: StorageScope = StorageScope.DEFAULT) -> None:
         """
         Initialize storage service.
 
-        Only runs once due to singleton pattern. Sets up:
+        Only runs once per scoped instance due to the scoped singleton pattern.
+        The ``scope`` parameter is accepted (Python forwards ``__new__``'s
+        arguments to ``__init__``) but intentionally unused: per-instance
+        state is identical for every scope. Sets up:
         - Backend placeholder (None until injectConfig is called)
         - Initialization flag
+
+        Args:
+            scope: The storage scope this instance was created for (unused)
         """
         if not hasattr(self, "initialized"):
             self.backend: AbstractStorageBackend | None = None
@@ -81,30 +203,40 @@ class StorageService:
             logger.info("StorageService created, awaiting configuration")
 
     @classmethod
-    def getInstance(cls) -> "StorageService":
+    def getInstance(cls, scope: StorageScope = StorageScope.DEFAULT) -> "StorageService":
         """
-        Get singleton instance.
+        Get the singleton instance for the given scope.
+
+        Args:
+            scope: The storage scope (default: StorageScope.DEFAULT — the
+                same instance every existing arg-less call site receives)
 
         Returns:
-            The singleton StorageService instance
+            The StorageService instance for the given scope
         """
-        return cls()
+        return cls(scope)
 
-    def injectConfig(self, configManager: "ConfigManager") -> None:
+    def injectConfig(self, configManager: "ConfigManager", scope: StorageScope = StorageScope.DEFAULT) -> None:
         """
-        Initialize service with configuration from ConfigManager.
+        Initialize this scope's instance with configuration from ConfigManager.
 
-        Reads storage configuration and creates the appropriate backend based on
-        the configured type. This method should be called once during application
+        For the DEFAULT scope, reads the top-level ``[storage]`` table. For
+        any other scope, reads the ``[storage.storages.{scope.value}]`` table:
+        an absent table silently resolves to a null backend (feature off),
+        while a present table is validated exactly like the default one (bad
+        config raises, never falls back).
+
+        This method should be called once per scope during application
         initialization.
 
         Args:
             configManager: The configuration manager containing storage settings
+            scope: The storage scope to configure (default: StorageScope.DEFAULT)
 
         Raises:
             StorageConfigError: If configuration is invalid or backend creation fails
 
-        Configuration format:
+        Configuration format (identical for the default and every named table):
             {
                 "type": "fs",  # or "null" or "s3"
                 "fs": {"base-dir": "./storage/objects"},
@@ -119,64 +251,30 @@ class StorageService:
             }
         """
         try:
-            # Get storage configuration from ConfigManager
-            config = configManager.getStorageConfig()  # pyright: ignore[reportAttributeAccessIssue]
+            if scope is StorageScope.DEFAULT:
+                # Get the default storage configuration from ConfigManager
+                config = configManager.getStorageConfig()  # pyright: ignore[reportAttributeAccessIssue]
 
-            if not config:
-                raise StorageConfigError("Storage configuration is missing")
-
-            storageType = config.get("type")
-            if not storageType:
-                raise StorageConfigError("Storage type is not specified in configuration")
-
-            # Create appropriate backend based on type
-            if storageType == "null":
-                self.backend = NullStorageBackend()
-                logger.info("Initialized NullStorageBackend")
-
-            elif storageType == "fs":
-                fsConfig = config.get("fs")
-                if not fsConfig:
-                    raise StorageConfigError("Filesystem storage configuration is missing")
-
-                baseDir = fsConfig.get("base-dir")
-                if not baseDir:
-                    raise StorageConfigError("Filesystem base-dir is not specified")
-
-                self.backend = FSStorageBackend(baseDir)
-                logger.info(f"Initialized FSStorageBackend with base-dir: {baseDir}")
-
-            elif storageType == "s3":
-                s3Config = config.get("s3")
-                if not s3Config:
-                    raise StorageConfigError("S3 storage configuration is missing")
-
-                # Validate required S3 parameters
-                requiredParams = ["endpoint", "region", "key-id", "key-secret", "bucket"]
-                missingParams = [p for p in requiredParams if not s3Config.get(p)]
-                if missingParams:
-                    raise StorageConfigError(
-                        f"S3 configuration missing required parameters: {', '.join(missingParams)}"
-                    )
-
-                self.backend = S3StorageBackend(
-                    endpoint=s3Config["endpoint"],
-                    region=s3Config["region"],
-                    keyId=s3Config["key-id"],
-                    keySecret=s3Config["key-secret"],
-                    bucket=s3Config["bucket"],
-                    prefix=s3Config.get("prefix", ""),
-                )
-                logger.info(
-                    f"Initialized S3StorageBackend with bucket: {self.backend.bucket}, "
-                    f"prefix: {self.backend.prefix}"
-                )
-
+                if not config:
+                    raise StorageConfigError("Storage configuration is missing")
             else:
-                raise StorageConfigError(f"Unknown storage type: {storageType}")
+                # Named scope: read [storage.storages.{scope.value}] out of the
+                # whole [storage] table (deep-merged by the config loader)
+                storages = configManager.getStorageConfig().get(
+                    "storages", {}
+                )  # pyright: ignore[reportAttributeAccessIssue]
+                config = storages.get(scope.value) if isinstance(storages, dict) else None
 
+                if config is None:
+                    # Absent named storage = feature explicitly off, NOT an error
+                    self.backend = NullStorageBackend()
+                    self.initialized = True
+                    logger.info(f"StorageService scope '{scope.value}' not configured; using NullStorageBackend")
+                    return
+
+            self.backend = _buildBackend(config)
             self.initialized = True
-            logger.info(f"StorageService initialized with {storageType} backend")
+            logger.info(f"StorageService scope '{scope.value}' initialized with {config.get('type')} backend")
 
         except StorageConfigError:
             raise

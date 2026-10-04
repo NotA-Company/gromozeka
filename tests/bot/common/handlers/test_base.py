@@ -18,6 +18,7 @@ lock acquisition can be spied on.
 
 import asyncio
 import datetime
+import hashlib
 import logging
 import types
 from io import BytesIO
@@ -28,6 +29,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from PIL import Image
 
+from internal.bot.common.handlers.manager import HandlersManager
 from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
 from internal.bot.models import (
     BotProvider,
@@ -51,7 +53,8 @@ from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm.service import LLMService
 from internal.services.queue_service import QueueService
-from internal.services.storage import StorageService
+from internal.services.storage import StorageScope, StorageService
+from internal.services.storage.exceptions import StorageConfigError
 from internal.services.stt import STTOutcome, STTService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
 from lib.ai.imaging import VisionOutputImageFormat
@@ -769,12 +772,12 @@ class TestProcessMediaV2STT:
             None.
         """
         STTService._instance = None
-        StorageService._instance = None
+        StorageService._instances.clear()
         QueueService._instance = None
         CacheService._instance = None
         yield
         STTService._instance = None
-        StorageService._instance = None
+        StorageService._instances.clear()
         QueueService._instance = None
         CacheService._instance = None
 
@@ -1673,9 +1676,10 @@ class TestProcessMediaV2Vision:
     2. **Download sharing**: bytes are downloaded at most once per message —
        the vision branch reuses the save-path download, and the parse path
        reuses the vision download.
-    3. **Store**: normalized (JPEG) bytes land under ``vision/{sha512}.jpeg``
-       with content dedup; ``vision_url`` is written synchronously after the
-       row upsert; ``local_url`` is untouched.
+    3. **Store**: normalized (JPEG) bytes land under the BARE key
+       ``{sha512}.jpeg`` in the vision-scoped store (no app-layer prefix —
+       scoped-storage design v1 §4.4) with content dedup; ``vision_url`` is
+       written synchronously after the row upsert; ``local_url`` is untouched.
     4. **Fail-soft**: null backend / storage errors produce a WARNING
        rate-limited once per chat, never an exception, and never a media
        status change.
@@ -1703,11 +1707,11 @@ class TestProcessMediaV2Vision:
         "max-image-dimension": 2048,
         "image-format": "image/jpeg",
         "image-quality": 85,
-        "store-prefix": "vision/",
         "max-images-per-request": 5,
         "ttl-days": 30,
     }
-    """``[bot.vision]`` config served by the mocked ConfigManager."""
+    """``[bot.vision]`` config served by the mocked ConfigManager (no
+    store-prefix — the app-layer prefix is deleted; scoped-storage v1 §4.4)."""
 
     @staticmethod
     def _makeImageBytes(
@@ -1761,20 +1765,32 @@ class TestProcessMediaV2Vision:
 
     @staticmethod
     def _makeMockConfigManager(
-        *, storageType: str, storageBaseDir: str, visionConfig: Optional[Dict[str, object]] = None
+        *,
+        storageType: str,
+        storageBaseDir: str,
+        visionConfig: Optional[Dict[str, object]] = None,
+        visionBaseDir: Optional[str] = None,
     ) -> Mock:
         """Build a ``ConfigManager`` stub with vision + storage config.
 
         ``BaseBotHandler.__init__`` caches ``_sttEnabled`` from
         ``getSttConfig()`` AND the native-vision settings from
         ``getVisionConfig()`` at construction; ``StorageService.injectConfig``
-        reads ``getStorageConfig()`` — all must be wired before construction.
+        reads ``getStorageConfig()`` for BOTH scopes — all must be wired
+        before construction. The fs variant carries a ``[storage.storages.
+        vision]`` table so the VISION scope resolves to a real fs backend;
+        the null variant carries no ``storages`` table, so the vision scope
+        silently resolves to the null backend (feature off).
 
         Args:
             storageType: "fs" or "null" (the two backends these tests use).
-            storageBaseDir: Base dir for the fs backend (ignored for null).
+            storageBaseDir: Base dir for the default-scope fs backend
+                (ignored for null).
             visionConfig: Optional override for the ``[bot.vision]`` table;
                 defaults to the class's standard :data:`_VISION_CONFIG`.
+            visionBaseDir: Base dir for the vision-scope fs backend;
+                defaults to a ``vision/`` subdirectory of *storageBaseDir*
+                (separation via backend placement — scoped-storage v1 §4.4).
 
         Returns:
             A ``Mock`` serving controlled vision/storage config dicts.
@@ -1785,9 +1801,20 @@ class TestProcessMediaV2Vision:
         if visionConfig is None:
             visionConfig = dict(TestProcessMediaV2Vision._VISION_CONFIG)
         cm.getVisionConfig = Mock(return_value=visionConfig)
+        if visionBaseDir is None:
+            visionBaseDir = str(Path(storageBaseDir) / "vision")
         if storageType == "fs":
-            cm.getStorageConfig = Mock(return_value={"type": "fs", "fs": {"base-dir": storageBaseDir}})
+            cm.getStorageConfig = Mock(
+                return_value={
+                    "type": "fs",
+                    "fs": {"base-dir": storageBaseDir},
+                    "storages": {"vision": {"type": "fs", "fs": {"base-dir": visionBaseDir}}},
+                }
+            )
         else:
+            # No [storage.storages] table: the vision scope resolves to the
+            # null backend (absent named storage = feature off) while the
+            # default scope is configured null directly.
             cm.getStorageConfig = Mock(return_value={"type": "null"})
         cm.get = Mock(return_value={})
         return cm
@@ -1803,12 +1830,12 @@ class TestProcessMediaV2Vision:
             None.
         """
         STTService._instance = None
-        StorageService._instance = None
+        StorageService._instances.clear()
         QueueService._instance = None
         CacheService._instance = None
         yield
         STTService._instance = None
-        StorageService._instance = None
+        StorageService._instances.clear()
         QueueService._instance = None
         CacheService._instance = None
 
@@ -1819,33 +1846,43 @@ class TestProcessMediaV2Vision:
         *,
         storageType: str = "fs",
         visionConfig: Optional[Dict[str, object]] = None,
+        visionBaseDir: Optional[str] = None,
     ) -> UserMemoriesHandler:
         """Construct a handler wired to a real in-memory DB and a real StorageService.
 
         Resets ``CacheService``, injects the test database into it, configures
-        the ``StorageService`` singleton (fs backend under *tmpPath*, or the
-        null backend), then constructs the handler.
+        BOTH storage scopes (default fs backend under *tmpPath* plus the
+        vision-scoped fs backend under *visionBaseDir* — or null backends),
+        then constructs the handler.
 
         Args:
             testDatabase: Fresh in-memory :class:`Database` (``testDatabase``
                 fixture).
-            tmp_path: pytest tmp dir used as the fs backend base-dir.
+            tmp_path: pytest tmp dir used as the default-scope fs base-dir.
             storageType: "fs" or "null".
             visionConfig: Optional override for the ``[bot.vision]`` table
                 served to ``BaseBotHandler.__init__``.
+            visionBaseDir: Base dir for the vision-scope fs backend;
+                defaults to a ``vision/`` subdirectory of *tmp_path*.
 
         Returns:
-            A handler whose ``self.db`` is *testDatabase* and whose
-            ``self.storage`` is the configured singleton.
+            A handler whose ``self.db`` is *testDatabase*, whose
+            ``self.storage`` is the configured default-scope singleton and
+            whose ``self.visionStorage`` is the configured vision-scope
+            singleton.
         """
         CacheService._instance = None
         cache = CacheService.getInstance()
         await cache.injectDatabase(testDatabase)
 
         configManager = self._makeMockConfigManager(
-            storageType=storageType, storageBaseDir=str(tmpPath), visionConfig=visionConfig
+            storageType=storageType,
+            storageBaseDir=str(tmpPath),
+            visionConfig=visionConfig,
+            visionBaseDir=visionBaseDir,
         )
         StorageService.getInstance().injectConfig(configManager)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
         return UserMemoriesHandler(
             configManager=configManager,
             database=testDatabase,
@@ -1872,16 +1909,19 @@ class TestProcessMediaV2Vision:
 
     @staticmethod
     def _assertVisionKeyShape(key: str, *, ext: str = "jpeg") -> None:
-        """Assert a storage key matches ``vision/{sha512}.{ext}``.
+        """Assert a storage key is the BARE ``{sha512}.{ext}`` form.
+
+        Scoped-storage design v1 §4.4: no app-layer prefix exists anymore —
+        the key is the bare content hash plus extension, living at the root
+        of the vision-scoped store.
 
         Args:
             key: The key to check.
             ext: Expected file extension.
         """
-        prefix = TestProcessMediaV2Vision._VISION_CONFIG["store-prefix"]
-        assert key.startswith(str(prefix))
+        assert "/" not in key
         assert key.endswith(f".{ext}")
-        shaPart = key[len(str(prefix)) : -len(f".{ext}")]
+        shaPart = key[: -len(f".{ext}")]
         assert len(shaPart) == 128
         assert all(c in "0123456789abcdef" for c in shaPart)
 
@@ -1995,7 +2035,7 @@ class TestProcessMediaV2Vision:
         assert row["local_url"] is None
         assert row["status"] == MediaStatus.DONE
 
-        stored = handler.storage.get(visionUrl)
+        stored = handler.visionStorage.get(visionUrl)
         assert stored is not None
         with Image.open(BytesIO(stored)) as img:
             assert img.format == "JPEG"
@@ -2086,7 +2126,7 @@ class TestProcessMediaV2Vision:
         def brokenStore(key: str, data: bytes) -> None:
             raise RuntimeError("disk on fire")
 
-        handler.storage.store = brokenStore  # type: ignore[method-assign]
+        handler.visionStorage.store = brokenStore  # type: ignore[method-assign]
 
         with caplog.at_level(logging.WARNING):
             await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
@@ -2170,7 +2210,7 @@ class TestProcessMediaV2Vision:
         assert row["vision_url"] is not None
         visionUrl = str(row["vision_url"])
         self._assertVisionKeyShape(visionUrl, ext="jpeg")
-        stored = handler.storage.get(visionUrl)
+        stored = handler.visionStorage.get(visionUrl)
         assert stored is not None
         with Image.open(BytesIO(stored)) as img:
             assert img.format == "JPEG"
@@ -2266,8 +2306,8 @@ class TestProcessMediaV2Vision:
             tmp_path: pytest tmp dir for the fs storage backend.
         """
         handler = await self._makeHandler(testDatabase, tmp_path)
-        storeSpy = Mock(side_effect=handler.storage.store)
-        handler.storage.store = storeSpy  # type: ignore[method-assign]
+        storeSpy = Mock(side_effect=handler.visionStorage.store)
+        handler.visionStorage.store = storeSpy  # type: ignore[method-assign]
 
         await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
         await self._processImage(handler, mediaId=f"{self._MEDIA_ID}-2", data=self._makeImageBytes())
@@ -2616,8 +2656,8 @@ class TestProcessMediaV2Vision:
             monkeypatch: pytest fixture for temporary attribute patching.
         """
         handler = await self._makeHandler(testDatabase, tmp_path)
-        storeSpy = Mock(side_effect=handler.storage.store)
-        handler.storage.store = storeSpy  # type: ignore[method-assign]
+        storeSpy = Mock(side_effect=handler.visionStorage.store)
+        handler.visionStorage.store = storeSpy  # type: ignore[method-assign]
 
         original = self._makeImageBytes()
         oversizedHeader = Mock()
@@ -2647,10 +2687,12 @@ class TestProcessMediaV2Vision:
     async def test_initCachesVisionSettings(self, testDatabase: Database, tmp_path: Path) -> None:
         """``BaseBotHandler.__init__`` reads the vision config ONCE and stores it.
 
-        The four receipt-time settings (dimension, output format, quality,
-        store prefix) are cached as attributes; ``_storeVisionImage`` uses
-        them without per-call config reads. The raw ``image-format`` string
-        is converted to the enum exactly once at construction.
+        The three receipt-time settings (dimension, output format, quality)
+        are cached as attributes; ``_storeVisionImage`` uses them without
+        per-call config reads. The raw ``image-format`` string is converted
+        to the enum exactly once at construction. There is no cached store
+        prefix anymore (scoped-storage design v1 §4.4 deleted it): the
+        handler instead caches the vision-scoped storage instance.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2662,6 +2704,7 @@ class TestProcessMediaV2Vision:
 
         configManager = self._makeMockConfigManager(storageType="fs", storageBaseDir=str(tmp_path))
         StorageService.getInstance().injectConfig(configManager)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
         handler = UserMemoriesHandler(
             configManager=configManager,
             database=testDatabase,
@@ -2672,7 +2715,8 @@ class TestProcessMediaV2Vision:
         assert handler._visionMaxImageDimension == 2048
         assert handler._visionImageFormat is VisionOutputImageFormat.JPEG
         assert handler._visionImageQuality == 85
-        assert handler._visionStorePrefix == "vision/"
+        assert handler.visionStorage is StorageService.getInstance(StorageScope.VISION)
+        assert handler.visionStorage.backendType == "fs"
 
     async def test_initBadImageFormatString_warnsAndFallsBackToJpeg(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -2699,6 +2743,7 @@ class TestProcessMediaV2Vision:
             storageType="fs", storageBaseDir=str(tmp_path), visionConfig=badConfig
         )
         StorageService.getInstance().injectConfig(configManager)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
 
         with caplog.at_level(logging.WARNING):
             handler = UserMemoriesHandler(
@@ -2717,6 +2762,135 @@ class TestProcessMediaV2Vision:
         assert row is not None
         assert row["vision_url"] is not None
         assert str(row["vision_url"]).endswith(".jpeg")
+
+    # ------------------------------------------------------------------
+    # Scoped-storage Phase 2: bare keys in the vision-scoped store only
+    # ------------------------------------------------------------------
+
+    async def test_visionStoreRoundTrip_bareKeyInVisionStore_readBackByLoadNativeVisionImages(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """Store→read integration through the vision scope (§8 Phase 2 coverage).
+
+        ``_storeVisionImage`` publishes the BARE ``{sha512}.{ext}`` key in
+        the vision-scoped store — the default (attachments) store must NOT
+        hold it — and ``_loadNativeVisionImages`` reads the bytes back
+        through the same scope. Everything below runs against the REAL fs
+        backends and the real production read path (no storage doubles, no
+        ``getInstance`` patching).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir hosting the two fs store dirs.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is not None
+        visionUrl = str(row["vision_url"])
+        self._assertVisionKeyShape(visionUrl)
+
+        # The object lives in the vision-scoped store, not the default one.
+        assert handler.visionStorage.exists(visionUrl) is True
+        assert handler.storage.exists(visionUrl) is False
+
+        # Production read path: the real vision-scope instance, unpatched.
+        message = self._makeEnsuredMessage()
+        message.addMedia(self._MEDIA_ID, setMediaId=False)
+        attachedImages, allAttached = await message._loadNativeVisionImages(testDatabase)
+
+        assert allAttached is True
+        assert len(attachedImages) == 1
+        with Image.open(BytesIO(bytes(attachedImages[0]))) as img:
+            assert img.format == "JPEG"
+        # The digest in the bare key is computed over the NORMALIZED bytes the
+        # read path returned — not over the original PNG input (which encodes
+        # differently, so a hash-the-original regression fails this equality).
+        assert visionUrl == f"{hashlib.sha512(bytes(attachedImages[0])).hexdigest()}.jpeg"
+
+    async def test_scopeIsolation_visionAndAttachmentWritesLandInDistinctStores(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """Isolation regression: attachment and vision writes hit disjoint stores.
+
+        Default scope fs on one dir, vision scope fs on another (separation
+        via backend placement — scoped-storage design v1 §4.4/§8 Phase 2):
+        the save-attachments write (``storeAttachment``) lands ONLY in the
+        default dir and the vision write lands ONLY in the vision dir, under
+        its bare key. Cross-store reads miss by design (ratified decision 3:
+        no migration, no dual-read fallback).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir hosting the two distinct store dirs.
+        """
+        defaultDir = tmp_path / "attachments-store"
+        visionDir = tmp_path / "vision-store"
+        handler = await self._makeHandler(testDatabase, defaultDir, visionBaseDir=str(visionDir))
+
+        await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes(), saveAttachments=True)
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["local_url"] is not None  # save-attachments gate was on
+        assert row["vision_url"] is not None
+        localUrl = str(row["local_url"])
+        visionUrl = str(row["vision_url"])
+        self._assertVisionKeyShape(visionUrl)
+
+        # Attachment bytes: default store only.
+        assert handler.storage.exists(localUrl) is True
+        assert handler.visionStorage.exists(localUrl) is False
+        assert (defaultDir / localUrl).is_file()
+        assert not (visionDir / localUrl).exists()
+
+        # Vision bytes: vision store only, under the bare key.
+        assert handler.visionStorage.exists(visionUrl) is True
+        assert handler.storage.exists(visionUrl) is False
+        assert (visionDir / visionUrl).is_file()
+        assert not (defaultDir / visionUrl).exists()
+
+        # Cross-store byte reads miss (the ratified no-fallback consequence).
+        assert handler.storage.get(visionUrl) is None
+        assert handler.visionStorage.get(localUrl) is None
+
+
+class TestHandlersManagerVisionScopeInject:
+    """Pins the vision-scope wiring in ``HandlersManager.__init__`` (Phase 2).
+
+    Per scoped-storage design v1 §4.3: the manager injects the VISION scope
+    right after the default one, and a present-but-malformed
+    ``[storage.storages.vision]`` table must crash construction with
+    ``StorageConfigError`` (ratified decision 4 — startup parity with a bad
+    default table). An ABSENT table resolves to the null backend without
+    raising (covered at the service level and exercised end-to-end by the
+    real ``HandlersManager`` constructions in ``test_stats.py``). The raise
+    happens BEFORE the handler pipeline is built, so no handler stubbing is
+    needed here.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _resetStorageScopes(self) -> Generator[None, None, None]:
+        """Reset the ``StorageService`` scope registry around every test.
+
+        Yields:
+            None.
+        """
+        StorageService._instances.clear()
+        yield
+        StorageService._instances.clear()
+
+    def test_badVisionNamedTable_crashesConstruction(self) -> None:
+        """A malformed ``[storage.storages.vision]`` table aborts manager construction."""
+        configManager = Mock()
+        configManager.getStorageConfig = Mock(
+            return_value={"type": "null", "storages": {"vision": {"type": "unknown"}}}
+        )
+
+        with pytest.raises(StorageConfigError):
+            HandlersManager(configManager=configManager, database=Mock(), botProvider=BotProvider.TELEGRAM)
 
 
 class _ModelInfoDict(TypedDict, total=False):

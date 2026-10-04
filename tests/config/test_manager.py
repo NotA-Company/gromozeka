@@ -1023,7 +1023,6 @@ token = "test_token"
 max-image-dimension = 2048
 image-format = "image/jpeg"
 image-quality = 85
-store-prefix = "vision/"
 ttl-days = 30
 """
         configPath = createConfigFile(tempDir, "config.toml", config)
@@ -1035,7 +1034,6 @@ ttl-days = 30
             "max-image-dimension": 2048,
             "image-format": "image/jpeg",
             "image-quality": 85,
-            "store-prefix": "vision/",
             "ttl-days": 30,
         }
         assert visionConfig == expected

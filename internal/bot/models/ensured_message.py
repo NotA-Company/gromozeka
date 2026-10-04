@@ -34,7 +34,7 @@ import lib.utils as utils
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.models import MessageId, MessageType
-from internal.services.storage.service import StorageService
+from internal.services.storage import StorageScope, StorageService
 from lib.ai.models import ModelImagesMessage, ModelMessage, ModelMessageDescriptionResolver
 
 from .enums import LLMMessageFormat
@@ -1085,7 +1085,7 @@ class EnsuredMessage:
             loaded AND every non-ghost entry loaded.
         """
         try:
-            storage = StorageService.getInstance()
+            storage = StorageService.getInstance(StorageScope.VISION)
             attachedImages: List[bytearray] = []
             describableCount = 0
             for media in self.mediaList:

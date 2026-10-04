@@ -4,13 +4,13 @@ A unified interface for storing and retrieving binary objects across multiple ba
 
 ## Overview
 
-The Storage Service provides a singleton service that manages object storage operations through pluggable backend implementations. It follows the same patterns as other services in the project (CacheService, LLMService) and integrates seamlessly with the ConfigManager.
+The Storage Service provides scoped singleton services that manage object storage operations through pluggable backend implementations: one instance per `StorageScope` member (`DEFAULT`, `VISION`), held in the per-scope `_instances` registry. The `DEFAULT` scope reads the top-level `[storage]` table (the long-standing attachments store); every other scope reads its own `[storage.storages.{scope}]` table. The service follows the same patterns as other services in the project (CacheService, LLMService) and integrates seamlessly with the ConfigManager.
 
 **Key Features:**
 - 🔌 **Pluggable Backends**: Support for Null, Filesystem, and S3 storage
 - 🔒 **Security**: Automatic key sanitization to prevent path traversal attacks
 - 🎯 **Simple API**: Consistent interface across all backends
-- 🧵 **Thread-Safe**: Singleton pattern with RLock for thread safety
+- 🧵 **Thread-Safe**: Scoped singletons (one per `StorageScope`) with RLock for thread safety
 - ⚙️ **Configuration-Driven**: Easy backend switching via configuration files
 - 📝 **Comprehensive Logging**: Detailed logging for debugging and monitoring
 
@@ -19,13 +19,17 @@ The Storage Service provides a singleton service that manages object storage ope
 ### Basic Usage
 
 ```python
-from internal.services.storage import StorageService
+from internal.services.storage import StorageService, StorageScope
 from internal.config.manager import ConfigManager
 
-# Initialize the service
+# Initialize the service (default scope — the attachments store)
 configManager = ConfigManager()
 storage = StorageService.getInstance()
 storage.injectConfig(configManager)
+
+# Scoped access (e.g. the native-vision store; see Named Storages below)
+visionStorage = StorageService.getInstance(StorageScope.VISION)
+visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
 
 # Store binary data
 storage.store("my-document.pdf", pdfData)
@@ -126,30 +130,66 @@ bucket = "gromozeka"
 prefix = ""
 ```
 
+### Named Storages (Scoped Instances)
+
+Optional per-feature storages under `[storage.storages.NAME]`, each shaped **exactly like the default `[storage]` table** — a `type` key plus the optional `.fs`/`.s3` sub-tables with the same keys, and nothing else (there is no app-layer prefix key; separation from the default store comes from backend placement only — a different fs `base-dir` or a different bucket, with the backend-level s3 `prefix` as the only remaining prefix).
+
+```toml
+# [storage.storages.vision] — the native-vision store
+# (today the only sanctioned named storage; see the StorageScope StrEnum)
+[storage.storages.vision]
+type = "fs"
+
+[storage.storages.vision.fs]
+base-dir = "storage/vision"
+
+# S3 instead of fs:
+# [storage.storages.vision.s3]
+# endpoint = "https://s3.amazonaws.com"
+# region = "us-east-1"
+# key-id = "${AWS_ACCESS_KEY_ID}"
+# key-secret = "${AWS_SECRET_ACCESS_KEY}"
+# bucket = "your-bucket"
+# prefix = "vision/"    # backend-level s3 prefix — the ONLY prefix that exists here
+```
+
+**Semantics:**
+
+- An **absent** named table resolves to a silent `NullStorageBackend` — the feature stores nothing (feature off, not an error).
+- A **present-but-malformed** table raises `StorageConfigError` at `injectConfig()` time and aborts startup, exactly like a bad default `[storage]` table.
+- A named storage is selected via `StorageService.getInstance(StorageScope.NAME)` + `injectConfig(configManager, scope=StorageScope.NAME)`; arg-less `getInstance()` / `injectConfig(configManager)` calls still address the default attachments store.
+- `StorageScope` is the closed set of sanctioned scopes: adding a storage later means one enum member plus its config table.
+
 ## API Reference
 
 ### StorageService
 
-The main singleton service class.
-
-#### getInstance() -> StorageService
-
-Get the singleton instance.
+The scoped singleton service class: one instance per `StorageScope`, from the class-level `_instances` registry. Both `StorageService` and `StorageScope` are re-exported from the package root:
 
 ```python
-storage = StorageService.getInstance()
+from internal.services.storage import StorageService, StorageScope
 ```
 
-#### injectConfig(configManager: ConfigManager) -> None
+#### getInstance(scope: StorageScope = StorageScope.DEFAULT) -> StorageService
 
-Initialize the service with configuration. Must be called once before using the service.
+Get the singleton instance for the given scope. Arg-less calls return the DEFAULT-scope instance (the attachments store) — every pre-existing call site is unchanged.
 
 ```python
-storage.injectConfig(configManager)
+storage = StorageService.getInstance()                           # default scope
+visionStorage = StorageService.getInstance(StorageScope.VISION)  # vision scope
+```
+
+#### injectConfig(configManager: ConfigManager, scope: StorageScope = StorageScope.DEFAULT) -> None
+
+Initialize this scope's instance with configuration. Must be called once per scope before using that instance. The DEFAULT scope reads the top-level `[storage]` table; any other scope reads its `[storage.storages.{scope.value}]` table — an absent table silently resolves to a null backend (feature off), while a present table is validated exactly like the default one (bad config raises, never falls back).
+
+```python
+storage.injectConfig(configManager)                                  # default scope
+visionStorage.injectConfig(configManager, scope=StorageScope.VISION)  # vision scope
 ```
 
 **Raises:**
-- StorageConfigError: If configuration is invalid or backend creation fails
+- StorageConfigError: If configuration is invalid or backend creation fails (an absent NAMED table does not raise — it resolves to the null backend)
 
 #### store(key: str, data: bytes) -> None
 
@@ -407,6 +447,8 @@ tests/services/storage/
 
 ### Writing Tests
 
+**Resetting the scoped singletons:** `StorageService` keeps one instance per `StorageScope` in the class-level `_instances` registry — reset ALL scopes in fixtures with `StorageService._instances.clear()` (not `_instance = None`).
+
 **Example Test:**
 
 ```python
@@ -433,7 +475,7 @@ def test_invalid_key_raises_error(storage_service):
 
 ## Implementation Files
 
-- service.py - Main StorageService singleton
+- service.py - StorageService scoped singletons + the `StorageScope` StrEnum
 - exceptions.py - Exception classes
 - utils.py - Key sanitization utilities
 - backends/abstract.py - Abstract backend interface
@@ -459,6 +501,7 @@ Potential features for future versions:
 ## Related Documentation
 
 - Design Document: docs/archive/design/storage-service-design-v1.md
+- Scoped-Storage Design: docs/design/scoped-storage-design-v1.md
 - Usage Examples: docs/examples/storage-service-usage.md
 - ConfigManager: internal/config/manager.py
 

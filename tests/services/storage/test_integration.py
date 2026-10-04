@@ -11,15 +11,17 @@ from unittest.mock import Mock
 
 import pytest
 
+from internal.services.storage import StorageScope
+from internal.services.storage.backends.filesystem import FSStorageBackend
 from internal.services.storage.service import StorageService
 
 
 @pytest.fixture(autouse=True)
 def resetStorageServiceSingleton():
     """Reset StorageService singleton before each test"""
-    StorageService._instance = None
+    StorageService._instances.clear()
     yield
-    StorageService._instance = None
+    StorageService._instances.clear()
 
 
 @pytest.fixture
@@ -216,7 +218,7 @@ class TestStorageServicePersistence:
         service1.injectConfig(mockConfigManager)
         service1.store("persistent-key", b"persistent data")
 
-        StorageService._instance = None
+        StorageService._instances.clear()
 
         service2 = StorageService.getInstance()
         service2.injectConfig(mockConfigManager)
@@ -312,3 +314,31 @@ class TestStorageServiceKeySanitization:
 
             retrieved = service.get(originalKey)
             assert retrieved == data
+
+
+class TestStorageServiceScopedIntegration:
+    """Integration tests for scoped StorageService instances"""
+
+    def testScopedRoundtripVisionFS(self, mockConfigManager, tmp_path):
+        """Test a store→get→exists roundtrip through the vision-scoped instance with a real FS backend"""
+        visionDir = tmp_path / "vision"
+        visionDir.mkdir()
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "null",
+            "storages": {"vision": {"type": "fs", "fs": {"base-dir": str(visionDir)}}},
+        }
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert isinstance(vision.backend, FSStorageBackend)
+
+        key = "vision-image.txt"
+        data = b"vision data"
+        vision.store(key, data)
+
+        assert vision.exists(key) is True
+        assert vision.get(key) == data
+
+        # The object must live in the vision-scoped base dir
+        assert (visionDir / key).exists()

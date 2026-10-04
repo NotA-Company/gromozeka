@@ -460,7 +460,6 @@ class ConfigManager:
               (never upscales; 0 disables resizing)
             - image-format: Normalized storage MIME ("image/jpeg" or "image/png")
             - image-quality: JPEG quality 1-95 (ignored for PNG)
-            - store-prefix: StorageService key prefix for normalized images
             - ttl-days: Retention for stored vision images (enforced by a
               follow-up GC cron)
 
@@ -474,7 +473,6 @@ class ConfigManager:
                 "max-image-dimension": 2048,
                 "image-format": "image/jpeg",
                 "image-quality": 85,
-                "store-prefix": "vision/",
                 "ttl-days": 30
             }
         """

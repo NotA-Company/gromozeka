@@ -26,7 +26,6 @@ VisionConfigDict = TypedDict(
         "max-image-dimension": int,
         "image-format": str,
         "image-quality": int,
-        "store-prefix": str,
         "ttl-days": int,
     },
     total=False,

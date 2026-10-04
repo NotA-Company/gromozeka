@@ -9,18 +9,20 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from internal.services.storage import StorageScope
 from internal.services.storage.backends.filesystem import FSStorageBackend
 from internal.services.storage.backends.null import NullStorageBackend
+from internal.services.storage.backends.s3 import S3StorageBackend
 from internal.services.storage.exceptions import StorageConfigError, StorageKeyError
-from internal.services.storage.service import StorageService
+from internal.services.storage.service import StorageService, _buildBackend
 
 
 @pytest.fixture(autouse=True)
 def resetStorageServiceSingleton():
     """Reset StorageService singleton before each test"""
-    StorageService._instance = None
+    StorageService._instances.clear()
     yield
-    StorageService._instance = None
+    StorageService._instances.clear()
 
 
 @pytest.fixture
@@ -481,3 +483,264 @@ class TestStorageServiceRealWorldScenarios:
         mockConfigManager.getStorageConfig.return_value = {"type": "fs", "fs": {"base-dir": str(tmp_path)}}
         service.injectConfig(mockConfigManager)
         assert isinstance(service.backend, FSStorageBackend)
+
+
+class TestStorageServiceScopedInstances:
+    """Test per-scope StorageService instances (scoped-storage design v1, Phase 1)"""
+
+    def testDistinctInstancePerScope(self):
+        """Test that each scope gets its own distinct instance"""
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        assert default is not vision
+
+    def testSameInstancePerScopeAcrossCalls(self):
+        """Test that repeated calls for the same scope return the same instance"""
+        vision1 = StorageService.getInstance(StorageScope.VISION)
+        vision2 = StorageService.getInstance(StorageScope.VISION)
+        default1 = StorageService.getInstance(StorageScope.DEFAULT)
+        default2 = StorageService.getInstance(StorageScope.DEFAULT)
+
+        assert vision1 is vision2
+        assert default1 is default2
+
+    def testArglessGetInstanceIsDefaultScope(self):
+        """Test that argless getInstance() IS the DEFAULT-scope instance (backward-compat pin)"""
+        assert StorageService.getInstance() is StorageService.getInstance(StorageScope.DEFAULT)
+
+    def testDirectConstructionIsDefaultScope(self):
+        """Test that direct StorageService() returns the registered default-scope instance"""
+        assert StorageService() is StorageService.getInstance(StorageScope.DEFAULT)
+
+    def testScopedInstanceStartsUninitialized(self, mockConfigManager):
+        """Test that a new scope starts uninitialized even when the default scope is configured"""
+        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        assert vision.initialized is False
+        assert vision.backend is None
+        assert default.initialized is True
+
+    def testPerScopeInjectConfig(self, mockConfigManager, tmp_path):
+        """Test that each scope reads its own config table"""
+        visionDir = tmp_path / "vision"
+        visionDir.mkdir()
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "null",
+            "storages": {
+                "vision": {"type": "fs", "fs": {"base-dir": str(visionDir)}},
+            },
+        }
+
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        vision = StorageService.getInstance(StorageScope.VISION)
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert default.backendType == "null"
+        assert vision.backendType == "fs"
+
+    def testAbsentNamedStorageResolvesToNullBackend(self, mockConfigManager):
+        """Test that an absent named table silently resolves to a null backend (no raise)"""
+        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)  # must not raise
+
+        assert vision.initialized is True
+        assert isinstance(vision.backend, NullStorageBackend)
+        assert vision.backendType == "null"  # public introspection (Gate-1 fold)
+
+    def testEmptyStoragesTableResolvesToNullBackend(self, mockConfigManager):
+        """Test that an empty storages mapping also resolves to a null backend"""
+        mockConfigManager.getStorageConfig.return_value = {"type": "null", "storages": {}}
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert vision.initialized is True
+        assert isinstance(vision.backend, NullStorageBackend)
+        assert vision.backendType == "null"  # public introspection (Gate-1 fold)
+
+    @pytest.mark.parametrize(
+        "namedConfig, expectedMessage",
+        [
+            ({}, "Storage type is not specified in configuration"),
+            ({"type": "unknown"}, "Unknown storage type: unknown"),
+            ({"type": "fs"}, "Filesystem storage configuration is missing"),
+            ({"type": "fs", "fs": {}}, "Filesystem storage configuration is missing"),
+            ({"type": "fs", "fs": {"unrelated": "value"}}, "Filesystem base-dir is not specified"),
+            ({"type": "s3"}, "S3 storage configuration is missing"),
+            (
+                {"type": "s3", "s3": {"endpoint": "https://s3.amazonaws.com"}},
+                "S3 configuration missing required parameters: region, key-id, key-secret, bucket",
+            ),
+        ],
+        ids=[
+            "present-but-empty",
+            "unknown-type",
+            "fs-missing-fs-table",
+            "fs-empty-table",
+            "fs-nonempty-missing-base-dir",
+            "s3-missing-s3-table",
+            "s3-partial-params-missing",
+        ],
+    )
+    def testBadNamedStorageRaisesConfigError(self, mockConfigManager, namedConfig, expectedMessage):
+        """Test that a present-but-malformed named table raises StorageConfigError
+
+        with the EXACT default-scope message (Gate-1 review fold: validation
+        parity between scopes is asserted on the message text, not just the
+        exception type).
+
+        Args:
+            mockConfigManager: Mock ConfigManager fixture.
+            namedConfig: Malformed ``[storage.storages.vision]`` table.
+            expectedMessage: The exact ``StorageConfigError`` message.
+        """
+        mockConfigManager.getStorageConfig.return_value = {"type": "null", "storages": {"vision": namedConfig}}
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        with pytest.raises(StorageConfigError) as excInfo:
+            vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert str(excInfo.value) == expectedMessage
+
+    def testReinjectIndependenceAcrossScopes(self, mockConfigManager, tmp_path):
+        """Test that re-injecting one scope does not disturb another scope's backend
+
+        Gate-1 review fold: the untouched scope must keep the SAME backend
+        OBJECT (identity, not merely the same backend class), asserted from
+        references saved BEFORE the other scope's re-inject.
+        """
+        visionDir = tmp_path / "vision"
+        defaultDir = tmp_path / "default"
+        visionDir.mkdir()
+        defaultDir.mkdir()
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "fs",
+            "fs": {"base-dir": str(defaultDir)},
+            "storages": {"vision": {"type": "fs", "fs": {"base-dir": str(visionDir)}}},
+        }
+
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        vision = StorageService.getInstance(StorageScope.VISION)
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        # Save backend references BEFORE any re-inject.
+        visionBackendBefore = vision.backend
+        defaultBackendBefore = default.backend
+
+        # Re-inject the default scope as null; vision must keep its backend object
+        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
+        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+
+        assert default.backend is not defaultBackendBefore  # default's backend was replaced
+        assert vision.backend is visionBackendBefore  # identity: same object, untouched
+        assert isinstance(vision.backend, FSStorageBackend)
+        assert vision.backend.baseDir == visionDir
+        assert isinstance(default.backend, NullStorageBackend)
+
+        # And re-injecting vision must not disturb the default scope
+        defaultBackendAfterDefaultReinject = default.backend
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "null",
+            "storages": {"vision": {"type": "null"}},
+        }
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert vision.backend is not visionBackendBefore  # vision's backend was replaced
+        assert default.backend is defaultBackendAfterDefaultReinject  # identity: same object
+        assert isinstance(vision.backend, NullStorageBackend)
+        assert isinstance(default.backend, NullStorageBackend)
+
+
+class TestBuildBackend:
+    """Test the shared _buildBackend validation chain (used by both scopes)"""
+
+    @pytest.mark.parametrize(
+        "config, expectedMessage",
+        [
+            ({}, "Storage type is not specified in configuration"),
+            ({"type": "unknown"}, "Unknown storage type: unknown"),
+            ({"type": "fs"}, "Filesystem storage configuration is missing"),
+            ({"type": "fs", "fs": {}}, "Filesystem storage configuration is missing"),  # empty dict = missing
+            ({"type": "fs", "fs": {"unrelated": "value"}}, "Filesystem base-dir is not specified"),
+            ({"type": "s3"}, "S3 storage configuration is missing"),
+            (
+                # Non-empty table (only the optional prefix) so the required-
+                # params branch (not the missing-s3 branch) produces the
+                # complete ordered list.
+                {"type": "s3", "s3": {"prefix": "some-prefix/"}},
+                "S3 configuration missing required parameters: endpoint, region, key-id, key-secret, bucket",
+            ),
+            (
+                {"type": "s3", "s3": {"endpoint": "https://s3.amazonaws.com"}},
+                "S3 configuration missing required parameters: region, key-id, key-secret, bucket",
+            ),
+        ],
+        ids=[
+            "missing-type",
+            "unknown-type",
+            "fs-missing-fs-table",
+            "fs-empty-table",
+            "fs-nonempty-missing-base-dir",
+            "s3-missing-s3-table",
+            "s3-all-params-missing",
+            "s3-partial-params-missing",
+        ],
+    )
+    def testBuildBackendInvalidConfigRaises(self, config, expectedMessage):
+        """Test that invalid config raises StorageConfigError with the EXACT message
+
+        Gate-1 review fold: substring ``match=`` assertions were too loose —
+        the exact ``str(exc.value)`` is pinned, including the complete
+        ordered S3 missing-parameter list.
+
+        Args:
+            config: Malformed storage config table.
+            expectedMessage: The exact ``StorageConfigError`` message.
+        """
+        with pytest.raises(StorageConfigError) as excInfo:
+            _buildBackend(config)
+
+        assert str(excInfo.value) == expectedMessage
+
+    def testBuildBackendNull(self):
+        """Test null backend construction through the shared chain"""
+        assert isinstance(_buildBackend({"type": "null"}), NullStorageBackend)
+
+    def testBuildBackendFS(self, tmp_path):
+        """Test fs backend construction through the shared chain"""
+        backend = _buildBackend({"type": "fs", "fs": {"base-dir": str(tmp_path)}})
+
+        assert isinstance(backend, FSStorageBackend)
+        assert backend.baseDir == tmp_path
+
+    def testBuildBackendS3(self):
+        """Test s3 backend construction through the shared chain"""
+        backend = _buildBackend(
+            {
+                "type": "s3",
+                "s3": {
+                    "endpoint": "https://s3.amazonaws.com",
+                    "region": "us-east-1",
+                    "key-id": "test-key-id",
+                    "key-secret": "test-key-secret",
+                    "bucket": "test-bucket",
+                    "prefix": "test-prefix/",
+                },
+            }
+        )
+
+        assert isinstance(backend, S3StorageBackend)
+        assert backend.bucket == "test-bucket"
+        assert backend.prefix == "test-prefix/"

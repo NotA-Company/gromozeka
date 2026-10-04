@@ -50,7 +50,7 @@ tags: [agent]
 - Multi-platform bot support (Telegram and Max Messenger)
 - Max Messenger webhook mode: standalone aiohttp webhook-receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — own config file + own database since ADR-025) that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013/ADR-025)
 - Advanced LLM integration with multiple providers (YC SDK, OpenAI-compatible, OpenRouter)
-- Native vision: optional per-chat `native-vision` setting (owner-settable, default off) attaches chat images/static stickers — any sender, user or bot — directly to vision-capable chat models (`support_image_input` on both chat and fallback model) at message-construction time instead of text descriptions (descriptions resolved lazily only if the condenser needs them; partial/missing bytes degrade to descriptions) — requires a configured storage backend (normalized, EXIF-stripped copies stored under `vision/`). See [`handlers.md`](handlers.md) §9, ADR-027/ADR-028, and [`docs/design/native-vision-v2-construction-attach.md`](../design/native-vision-v2-construction-attach.md)
+- Native vision: optional per-chat `native-vision` setting (owner-settable, default off) attaches chat images/static stickers — any sender, user or bot — directly to vision-capable chat models (`support_image_input` on both chat and fallback model) at message-construction time instead of text descriptions (descriptions resolved lazily only if the condenser needs them; partial/missing bytes degrade to descriptions) — requires a configured vision storage (`[storage.storages.vision]`; an absent table = null backend and the feature stores nothing), which holds normalized, EXIF-stripped copies under bare `{sha512}.{ext}` keys in the vision-scoped store. See [`handlers.md`](handlers.md) §9, ADR-027/ADR-028/ADR-029, and [`docs/design/native-vision-v2-construction-attach.md`](../design/native-vision-v2-construction-attach.md)
 - Comprehensive API integrations (Weather, Search, Geocoding)
 - ML-powered spam detection with Bayes filter
 - Golden data testing framework for reliable API testing
@@ -303,22 +303,19 @@ is the step-by-step recipe.
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | `MaxBotApplication` | Max Messenger runner |
 
 ### 4.3 Key Singleton Services (import + get instance)
-
 | Service | Import | `getInstance()` call |
 |---|---|---|
 | [`CacheService`](../../internal/services/cache/service.py) | `from internal.services.cache import CacheService` | `CacheService.getInstance()` |
 | [`QueueService`](../../internal/services/queue_service/service.py) | `from internal.services.queue_service import QueueService` | `QueueService.getInstance()` |
 | [`LLMService`](../../internal/services/llm/service.py) | `from internal.services.llm import LLMService` | `LLMService.getInstance()` |
-| [`StorageService`](../../internal/services/storage/service.py) | `from internal.services.storage import StorageService` | `StorageService.getInstance()` |
+| [`StorageService`](../../internal/services/storage/service.py) | `from internal.services.storage import StorageService, StorageScope` | `StorageService.getInstance()` (default scope; `StorageService.getInstance(StorageScope.VISION)` for the vision store — scoped singletons, ADR-029) |
 | [`RateLimiterManager`](../../lib/rate_limiter/manager.py) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
 | [`ProxyService`](../../internal/services/proxy/service.py) | `from internal.services.proxy import ProxyService` | `ProxyService.getInstance()` |
 | [`STTService`](../../internal/services/stt/service.py) | `from internal.services.stt import STTService` | `STTService.getInstance()` (default-off; see ADR-020) |
 | [`SandboxManager`](../../lib/sandbox/manager.py) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
 | [`ProxyHelper`](../../lib/proxy/__init__.py) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
 | [`StatsAggregationService`](../../internal/services/stats/service.py) | `from internal.services.stats import StatsAggregationService` | `StatsAggregationService.getInstance()` |
-
 ### 4.4 Critical File Paths
-
 | Path | Purpose |
 |---|---|
 | [`main.py`](../../main.py) | App entry, `GromozekBot`, daemon mode |
@@ -330,13 +327,11 @@ is the step-by-step recipe.
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
-| [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
+| [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` scoped singletons (`StorageScope`; ADR-029) |
 | [`internal/services/stats/service.py`](../../internal/services/stats/service.py) | `StatsAggregationService` singleton |
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` – provider + model registry |
-
 ### 4.5 `internal/` Directory
-
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
@@ -355,8 +350,7 @@ is the step-by-step recipe.
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
 | [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
 | [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
-| [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
-
+| [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` scoped singletons (`StorageScope`; ADR-029) |
 ### 4.6 `lib/` Directory
 | Path | Purpose |
 |---|---|

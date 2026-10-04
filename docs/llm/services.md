@@ -344,15 +344,20 @@ There is no `internal/services/llm/utils.py` and no standalone `reconstructMessa
 ---
 
 ## 4. StorageService
+**File:** [`internal/services/storage/service.py`](../../internal/services/storage/service.py)  
+**Import:** `from internal.services.storage import StorageService, StorageScope`
 
-**File:** [`internal/services/storage/service.py:24`](../../internal/services/storage/service.py:24)  
-**Import:** `from internal.services.storage import StorageService`
+`StorageService` is a **scoped singleton** (ADR-029): one instance per `StorageScope`, held in the `_instances: Dict[str, "StorageService"]` registry keyed on `scope.value`. The `DEFAULT` scope is the long-standing attachments store (top-level `[storage]` table); every other scope resolves to its own `[storage.storages.{scope.value}]` table. Arg-less `getInstance()` / `injectConfig(configManager)` calls still address the DEFAULT instance — every pre-existing call site is unchanged.
 
 ```python
-storage = StorageService.getInstance()
+storage = StorageService.getInstance()  # DEFAULT scope — arg-less = StorageScope.DEFAULT
 
 # MUST inject config before use (done by HandlersManager)
 storage.injectConfig(configManager)
+
+# Scoped access (e.g. the native-vision store)
+visionStorage = StorageService.getInstance(StorageScope.VISION)
+visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
 
 # Store binary data
 storage.store("my/key.png", imageBytes)
@@ -370,12 +375,22 @@ storage.delete("my/key.png")
 keys: List[str] = storage.list(prefix="attachments/", limit=100)
 ```
 
+`StorageScope` is a closed `StrEnum` (`DEFAULT = "default"`, `VISION = "vision"`) defined in and re-exported from the storage package — a plain string is a type error where a scope is expected; adding a storage later means one enum member plus its config table.
+
+**Per-scope `injectConfig` semantics** (one shared `_buildBackend` validation chain for every scope):
+
+- `DEFAULT` — reads the top-level `[storage]` table; missing/invalid → `StorageConfigError` → startup crash (long-standing behavior).
+- Non-default (`VISION`) — reads `[storage.storages.{scope.value}]`:
+  - **absent table** → silent `NullStorageBackend` (feature off). **No inheritance** from `[storage]` — every scope's backend is fully determined by its own table.
+  - **present but malformed** → `StorageConfigError` → startup crash, exact parity with a bad default table.
+
+**Wiring:** `HandlersManager.__init__` injects the default scope, then immediately the vision scope (`self.visionStorage`); `BaseBotHandler.__init__` binds `self.visionStorage = StorageService.getInstance(StorageScope.VISION)`, and `EnsuredMessage._loadNativeVisionImages` reads through the same scoped instance.
+
 **Backends:** `null` (no-op), `fs` (filesystem), `s3` (AWS S3/compatible)
 
-**IMPORTANT:** `StorageService.injectConfig(configManager)` MUST be called before any storage operations. This is done automatically by `HandlersManager`
+**IMPORTANT:** `injectConfig` MUST be called **per scope** before that scope's storage operations. This is done automatically by `HandlersManager` for both sanctioned scopes.
 
 ---
-
 ## 5. RateLimiterManager
 
 **File:** [`lib/rate_limiter/manager.py:57`](../../lib/rate_limiter/manager.py:57)  
@@ -559,7 +574,6 @@ See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-serv
 ---
 
 ## 8. Service Singleton Pattern
-
 All services use this pattern. When MODIFYING a service, preserve the singleton structure
 
 ```python
@@ -606,9 +620,9 @@ class MyService:
 - Thread safety via `RLock`
 - `hasattr(self, "initialized")` guard prevents double-init
 - In tests, reset with `MyService._instance = None` (use autouse fixture)
+- **Exception — `StorageService`** (scoped singletons, ADR-029): it keeps one instance per `StorageScope` in the `_instances` registry, so tests reset ALL scopes with `StorageService._instances.clear()` instead of `_instance = None`. Every other singleton keeps the plain `_instance` reset.
 
 ---
-
 ## 9. StatsAggregationService
 
 ### Overview, initialization, and per-cycle behavior

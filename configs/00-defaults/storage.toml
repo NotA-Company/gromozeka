@@ -31,3 +31,26 @@ prefix = "your-prefix/"
 # Base directory for storing objects
 # This directory will be created automatically if it doesn't exist
 base-dir = "storage"
+
+# --- Named storages (optional; each table has the same shape as [storage]) ---
+# Absent table  -> that scope resolves to a NullStorageBackend (feature off).
+# Present table -> validated exactly like [storage]; invalid -> startup crash.
+# Separation from the default store comes from backend placement ONLY: a
+# different fs base-dir, or a different bucket (optionally + the existing
+# backend-level s3 prefix). No other keys exist at this level.
+#
+# [storage.storages.vision]
+# type = "fs"
+#
+# [storage.storages.vision.fs]
+# base-dir = "storage/vision"
+#
+# # S3 example instead of fs:
+# # [storage.storages.vision.s3]
+# # endpoint = "https://s3.amazonaws.com"
+# # region = "us-east-1"
+# # key-id = "${AWS_ACCESS_KEY_ID}"
+# # key-secret = "${AWS_SECRET_ACCESS_KEY}"
+# # bucket = "your-bucket"
+# # prefix = "vision/"          # backend-level s3 prefix (the ONLY prefix that
+# #                              # exists for named storages)

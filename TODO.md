@@ -7,8 +7,8 @@
 - [ ] re-getting "old" attachments - need to re-save (for vision as well)
 - [ ] just like `VisionConfigDict` - add typed-dicts for other configs
 - [ ] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
-- [ ] vision: add storage service choosing
-- [ ] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)
+- [x] vision: add storage service choosing
+- [x] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)
 
 - [ ] send-sticker tool: semantic-search by description
 - [ ] llm-call: retry on timeout (up to X times, do not reject just cal again)

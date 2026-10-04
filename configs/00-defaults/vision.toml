@@ -5,5 +5,4 @@
 max-image-dimension = 2048   # long-edge px cap, never upscales; 0 = no resize
 image-format = "image/jpeg"  # "image/jpeg" | "image/png"
 image-quality = 85           # JPEG quality 1-95, ignored for PNG
-store-prefix = "vision/"     # StorageService key prefix for normalized images
 ttl-days = 30                # retention for stored vision images (enforced by follow-up GC cron)
