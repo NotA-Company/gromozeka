@@ -17,6 +17,10 @@ Covers the sessionId wiring for prompt-cache affinity (the opencode-go
   lookup stays index-aligned with the *successfully downloaded* items; the
   analysis must still complete deterministically (documented bucket
   shift), never crash.
+* :class:`TestAnalyzeCommandImageNormalization` — regression for the
+  ``/analyze`` reuse of the receipt-time vision normalization: oversized
+  sources reach the model as capped re-encodes, and a normalization
+  failure degrades to the original bytes without blocking the analysis.
 * :class:`TestDrawCommandSessionId` — one ``/draw`` invocation computes a
   single session id and passes it to BOTH the ``generateText`` (prompt
   synthesis) and ``generateImage`` calls.
@@ -32,10 +36,12 @@ import datetime
 import json
 import struct
 import zlib
+from io import BytesIO
 from typing import List, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import telegram
+from PIL import Image
 
 import lib.max_bot.models as maxModels
 from internal.bot.common.handlers.media import MediaHandler
@@ -82,15 +88,22 @@ PARENT_MESSAGE_ID = 7
 def _makeConfigManager() -> Mock:
     """Build a ``ConfigManager`` stub satisfying ``MediaHandler.__init__``.
 
-    ``BaseBotHandler.__init__`` reads ``getBotConfig()``; ``MediaHandler``
-    additionally registers the image-generation tool on the (reset)
-    ``LLMService`` singleton.
+    ``BaseBotHandler.__init__`` reads ``getBotConfig()`` for the bot settings
+    and ``getVisionConfig()`` for the native-vision normalization settings it
+    caches on the handler (``_visionMaxImageDimension`` /
+    ``_visionImageFormat`` / ``_visionImageQuality`` — consumed by the
+    ``/analyze`` normalization); ``MediaHandler`` additionally registers the
+    image-generation tool on the (reset) ``LLMService`` singleton.
 
     Returns:
-        ``Mock`` exposing ``getBotConfig()`` with deterministic values.
+        ``Mock`` exposing ``getBotConfig()`` / ``getVisionConfig()`` with
+        deterministic values.
     """
     cm = Mock()
     cm.getBotConfig = Mock(return_value={"token": "test", "owners": []})
+    cm.getVisionConfig = Mock(
+        return_value={"max-image-dimension": 2048, "image-format": "image/jpeg", "image-quality": 85}
+    )
     return cm
 
 
@@ -307,6 +320,25 @@ def _minimalPngBytes() -> bytes:
     )
 
 
+def _oversizedPngBytes(*, width: int = 3000, height: int = 100) -> bytes:
+    """Build a real Pillow PNG whose long side exceeds the vision cap.
+
+    3000 px wide vs the default 2048 ``max-image-dimension``: pre-fix such
+    bytes flowed to ``generateText`` unchanged, so a JPEG ≤ 2048 request
+    payload proves the normalization ran.
+
+    Args:
+        width: Image width in pixels (default 3000, above the cap).
+        height: Image height in pixels.
+
+    Returns:
+        PNG-encoded RGB bytes of the requested size.
+    """
+    buf = BytesIO()
+    Image.new("RGB", (width, height), color=(200, 10, 10)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _modelRunResult(resultText: str) -> ModelRunResult:
     """Build a :class:`ModelRunResult` with ``FINAL`` status and given text.
 
@@ -508,6 +540,102 @@ class TestAnalyzeCommandPartialDownloadAlignment:
         assert sendMessage.await_count == 2
         for call in sendMessage.await_args_list:
             assert call.kwargs["messageText"] == "analysis"
+
+
+# ---------------------------------------------------------------------------
+# 2c. /analyze: lenient vision normalization reuse
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeCommandImageNormalization:
+    """Regression: ``/analyze`` reuses the receipt-time vision normalization.
+
+    The native-vision v1 design deferred reusing the vision normalizer inside
+    ``/analyze``; the command now runs the LENIENT
+    :func:`lib.ai.imaging.normalizeVisionImage` (never-raise: on any failure
+    it degrades to the ORIGINAL bytes) with the init-cached vision settings
+    before building the ``ModelImagesMessage`` — payload consistency with the
+    receipt-time vision store. The command stores nothing and writes no
+    ``vision_url``; only the request payload shape changes.
+    """
+
+    async def test_analyzeNormalizesOversizedImageToCappedJpeg(self) -> None:
+        """A 3000 px-wide PNG reaches ``generateText`` as a ≤2048 JPEG.
+
+        Pre-fix the raw PNG passed through unchanged and this assertion
+        failed (format ``PNG``, width 3000). Post-fix the request payload is
+        the normalized re-encode: JPEG, long side capped at
+        ``max-image-dimension`` (2048), never the oversized original.
+        """
+        handler = _newMediaHandler()
+        handler.llmService.generateText = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("analysis")
+        )
+        sourcePng = _oversizedPngBytes()
+        handler._bot = Mock(downloadAttachment=AsyncMock(return_value=sourcePng))
+
+        em = EnsuredMessage.fromTelegramMessage(_telegramCommandMessage(replyTo=_telegramPhotoMessage()))
+
+        await handler.analyze_command(em, "analyze", "what is this", Mock(), None)
+
+        generateText = cast(AsyncMock, handler.llmService.generateText)
+        generateText.assert_awaited_once()
+        assert generateText.call_args is not None
+        reqMessages = generateText.call_args.args[0]
+        requestImages = reqMessages[1].images
+        assert len(requestImages) == 1
+        with Image.open(BytesIO(bytes(requestImages[0]))) as normalized:
+            assert normalized.format == "JPEG"
+            assert max(normalized.width, normalized.height) <= 2048
+        # The oversized original itself must not reach the model.
+        assert bytes(requestImages[0]) != sourcePng
+
+    async def test_analyzeFailsSoftWhenNormalizationDegrades(self) -> None:
+        """Strict-normalization failure → analysis still runs on ORIGINAL bytes.
+
+        ``media.py`` calls the never-raise lenient wrapper, whose degradation
+        branch fires when its strict core returns ``None``. Patching that
+        core reproduces the degraded outcome faithfully:
+        the original bytes must reach the request and the analysis must
+        still be delivered. The patch is bound to a Mock so the test also
+        pins the wrapper → strict-core call itself: exactly one call, with
+        the original bytes and the init-cached vision settings.
+        """
+        handler = _newMediaHandler()
+        handler.llmService.generateText = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("analysis")
+        )
+        sourcePng = _minimalPngBytes()
+        handler._bot = Mock(downloadAttachment=AsyncMock(return_value=sourcePng))
+
+        em = EnsuredMessage.fromTelegramMessage(_telegramCommandMessage(replyTo=_telegramPhotoMessage()))
+
+        strictCore = Mock(return_value=None)
+        with patch("lib.ai.imaging.normalizeVisionImageStrict", strictCore):
+            await handler.analyze_command(em, "analyze", "what is this", Mock(), None)
+
+        # The degraded outcome above is only meaningful if the pipeline was
+        # actually exercised: the lenient wrapper must have consulted its
+        # strict core exactly once, with the ORIGINAL bytes and the
+        # init-cached vision settings forwarded unchanged.
+        strictCore.assert_called_once_with(
+            imageBytes=sourcePng,
+            maxDimension=handler._visionMaxImageDimension,
+            outputFormat=handler._visionImageFormat,
+            quality=handler._visionImageQuality,
+        )
+
+        generateText = cast(AsyncMock, handler.llmService.generateText)
+        generateText.assert_awaited_once()
+        assert generateText.call_args is not None
+        reqMessages = generateText.call_args.args[0]
+        requestImages = reqMessages[1].images
+        assert len(requestImages) == 1
+        assert bytes(requestImages[0]) == sourcePng
+        sendMessage = cast(AsyncMock, handler.sendMessage)
+        sendMessage.assert_awaited_once()
+        assert sendMessage.await_args is not None
+        assert sendMessage.await_args.kwargs["messageText"] == "analysis"
 
 
 # ---------------------------------------------------------------------------

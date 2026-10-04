@@ -1726,7 +1726,6 @@ class TestProcessMediaV2Vision:
         "max-image-dimension": 2048,
         "image-format": "image/jpeg",
         "image-quality": 85,
-        "max-images-per-request": 5,
         "ttl-days": 30,
     }
     """``[bot.vision]`` config served by the mocked ConfigManager (no

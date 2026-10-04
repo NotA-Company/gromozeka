@@ -47,6 +47,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.imaging import normalizeVisionImage
 from lib.ai.session import buildSessionId
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -525,6 +526,17 @@ class MediaHandler(BaseBotHandler):
                 )
                 continue
 
+            # Reuse the receipt-time normalization pipeline and settings through its LENIENT wrapper
+            # (normalizeVisionImage) — best-effort here: on any normalization failure the original bytes are
+            # sent (the vision STORE uses the strict fail-closed variant; this one-shot command must never
+            # block analysis). Nothing is stored and no vision_url is written.
+            normalizedBytes, _normalizedMime = normalizeVisionImage(
+                bytes(mediaData),
+                maxDimension=self._visionMaxImageDimension,
+                outputFormat=self._visionImageFormat,
+                quality=self._visionImageQuality,
+            )
+
             reqMessages = [
                 ModelMessage(
                     role="system",
@@ -533,7 +545,7 @@ class MediaHandler(BaseBotHandler):
                 ModelImagesMessage(
                     role="user",
                     # content="",
-                    images=[bytearray(mediaData)],
+                    images=[bytearray(normalizedBytes)],
                 ),
             ]
 

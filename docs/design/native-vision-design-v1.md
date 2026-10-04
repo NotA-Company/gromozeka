@@ -325,17 +325,27 @@ ALTER TABLE media_attachments ADD COLUMN vision_url TEXT
   `CHANGELOG.md`.
 
 ## 7. Follow-ups Backlog
-
 - Daily GC cron: sweep storage for images older than `ttl-days`, delete objects, clear
-  `vision_url` rows.
+  `vision_url` rows. *(2026-10-04: DONE — implemented as the hourly
+  `HandlersManager._visionGcCronJob`, not a daily cron (first pass right after startup);
+  see the ADR-027 annotation in [`docs/llm/architecture.md`](../llm/architecture.md) and
+  [`docs/llm/handlers.md`](../llm/handlers.md) §9.7.)*
 - Skip-300 s-wait plumbing: `waitForPending`-style mechanism in
   `updateMediaContent`/`formatForLLM` so natively-attached images do not block on pending
-  descriptions.
+  descriptions. *(2026-09-27: DONE — implemented differently by native-vision v2: images
+  attach at message-construction time; on full attachment, the construction path skips
+  the description wait and defers resolution until compaction; partial albums retain the
+  description-bearing path — see ADR-028 and
+  [`docs/design/native-vision-v2-construction-attach.md`](native-vision-v2-construction-attach.md).)*
 - `/analyze` reuse of `normalizeVisionImage` (store-side normalized bytes for the parsing
-  model too).
+  model too). *(2026-10-04: DONE — implemented as the LENIENT `normalizeVisionImage`
+  wrapper in `analyze_command` (`internal/bot/common/handlers/media.py`): every
+  downloaded `image/*` payload is re-normalized with the same cached `[bot.vision]`
+  settings before the describe-model request — best-effort (ORIGINAL bytes on any
+  failure), nothing stored, no `vision_url` write, and stored vision bytes are NOT
+  re-read; see [`docs/llm/handlers.md`](../llm/handlers.md) §9.3.)*
 - History variants: attach-last-N-turns windows and similar refinements over the
   attach-always default.
-
 ## 8. References
 
 - [`docs/llm/memories/vision-flag.md`](../llm/memories/vision-flag.md) — the completed
