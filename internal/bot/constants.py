@@ -16,6 +16,7 @@ The constants are organized into logical groups:
 - Chat-search-history defaults and backfill tuning
 - Sandbox file-size limits
 - Native-vision request limits
+- Max animated-sticker stub classification
 
 These constants provide centralized configuration for bot behavior and
 ensure consistency across all bot handlers and services.
@@ -325,3 +326,14 @@ truncation tolerated)."""
 MAX_SANDBOX_SEND_BYTES: int = 20 * 1024 * 1024  # 20 MB
 """Max bytes for a file sent via the ``sandbox_send_file`` LLM tool; larger
 files are rejected before being sent to the user."""
+
+# Max messenger media
+MAX_ANIMATED_STICKER_STUB_URL_PREFIX: str = "https://st.mycdn.me/static/messages/res/images/stub/"
+"""URL prefix of the Max animated-sticker placeholder images.
+
+Max serves ONE generic ``*.png`` placeholder for all(?) animated stickers
+under ``.../static/messages/res/images/stub/``; it is not the actual
+sticker image and must never be processed (it would put wrong data into
+context) or published as the sticker's vision content. Classified by
+[`isMaxAnimatedStickerStubUrl`](internal/bot/common/handlers/base.py).
+"""

@@ -84,15 +84,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["HandlerResultStatus", "BaseBotHandler"]
 
-MAX_ANIMATED_STICKER_STUB_URL_PREFIX = "https://st.mycdn.me/static/messages/res/images/stub/"
-"""URL prefix of the Max animated-sticker placeholder images.
-
-Max serves ONE generic ``*.png`` placeholder for all(?) animated stickers
-under ``.../static/messages/res/images/stub/``; it is not the actual
-sticker image and must never be processed (it would put wrong data into
-context) or published as the sticker's vision content.
-"""
-
 
 def isMaxAnimatedStickerStubUrl(url: str) -> bool:
     """
@@ -111,7 +102,7 @@ def isMaxAnimatedStickerStubUrl(url: str) -> bool:
     Returns:
         True when *url* points at the generic animated-sticker stub image.
     """
-    return url.startswith(MAX_ANIMATED_STICKER_STUB_URL_PREFIX) and url.endswith(".png")
+    return url.startswith(constants.MAX_ANIMATED_STICKER_STUB_URL_PREFIX) and url.endswith(".png")
 
 
 class HandlerResultStatus(Enum):
@@ -1994,6 +1985,21 @@ class BaseBotHandler(CommandHandlerMixin):
         mediaAttachment = await self.db.mediaAttachments.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
 
+        # Chat settings are needed by every receipt now — the native-vision
+        # DONE-backfill gate reads NATIVE_VISION and the full reprocess path
+        # below reads the rest — so fetch them once up front, before the
+        # status machine. Early-returning receipts (DONE, fresh PENDING,
+        # wrong-mime skip) therefore pay the same cache-backed settings read
+        # as fully processed ones. The fetch is deliberately unwrapped: a
+        # settings-loading failure aborts the receipt uniformly for every
+        # status.
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        nativeVision = chatSettings[ChatSettingsKey.NATIVE_VISION].toBool()
+        needVisionStore = nativeVision and mediaType in (
+            MessageType.IMAGE,
+            MessageType.STICKER,
+        )
+
         if mediaAttachment is not None:
             logger.debug(f"Media#{ret.id} already in database")
             if mediaAttachment["media_type"] != mediaType:
@@ -2012,43 +2018,31 @@ class BaseBotHandler(CommandHandlerMixin):
                     # DONE IMAGE/STICKER row lacking USABLE vision bytes (empty
                     # vision_url, or a key that no longer resolves in the
                     # vision-scoped store) gets the store step only
-                    # (download + normalize + store) on re-receipt — never
-                    # re-analysis (no _parseImage, status stays DONE, description
-                    # is not re-parsed). Max animated-sticker stub rows are NOT
-                    # eligible: processMaxMedia seeds them DONE precisely so the
-                    # generic placeholder image is never processed, and publishing
-                    # it as the sticker's vision content would poison chat-time
+                    # (reuse-check + download + normalize + store) on re-receipt
+                    # when NATIVE_VISION is on for the chat — never re-analysis
+                    # (no _parseImage, status stays DONE, description is not
+                    # re-parsed). Covered rows exit via the reuse check inside
+                    # `_storeVisionImage` at zero extra cost. Max
+                    # animated-sticker stub rows are NOT eligible:
+                    # processMaxMedia seeds them DONE precisely so the generic
+                    # placeholder image is never processed, and publishing it as
+                    # the sticker's vision content would poison chat-time
                     # context (exclusion classified from the URL, not the
                     # description).
-                    existingVisionUrl = mediaAttachment.get("vision_url")
-                    if mediaType in (MessageType.IMAGE, MessageType.STICKER) and not isMaxAnimatedStickerStubUrl(
-                        fileId
-                    ):
-                        # Fail-soft boundary for the ENTIRE backfill decision: the
-                        # exists() probe and getChatSettings() run OUTSIDE
-                        # _storeVisionImage's own try/except, and neither is
-                        # guaranteed not to raise (storage outage, invalid stored
-                        # key, settings-loading failure) — such an error must not
-                        # abort an already-DONE receipt. The cheap covered-row fast
-                        # exit inside the boundary keeps the common "already
-                        # covered" re-receipt a zero-cost exit: no settings fetch,
-                        # no download, no DB write.
-                        try:
-                            if not (existingVisionUrl and self.visionStorage.exists(existingVisionUrl)):
-                                chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
-                                if chatSettings[ChatSettingsKey.NATIVE_VISION].toBool():
-                                    await self._storeVisionImage(
-                                        chatId=ensuredMessage.recipient.id,
-                                        mediaId=ret.id,
-                                        mediaType=mediaType,
-                                        fileId=fileId,
-                                        mediaData=None,
-                                        existingVisionUrl=existingVisionUrl,
-                                    )
-                        except Exception as e:
-                            logger.warning(
-                                f"Native-vision DONE backfill failed for {mediaType}#{ret.id}: {type(e).__name__}: {e}"
-                            )
+                    #
+                    # No local try/except: the gate above is pure comparisons,
+                    # and `_storeVisionImage` is its own fail-soft boundary and
+                    # never raises — a storage error surfaces as one WARNING
+                    # from the helper and the receipt still completes.
+                    if needVisionStore and not isMaxAnimatedStickerStubUrl(fileId):
+                        await self._storeVisionImage(
+                            chatId=ensuredMessage.recipient.id,
+                            mediaId=ret.id,
+                            mediaType=mediaType,
+                            fileId=fileId,
+                            mediaData=None,
+                            existingVisionUrl=mediaAttachment.get("vision_url"),
+                        )
                     ret.task = makeEmptyAsyncTask()
                     return ret
 
@@ -2093,7 +2087,6 @@ class BaseBotHandler(CommandHandlerMixin):
                         ret.task = makeEmptyAsyncTask()
                         return ret
 
-        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         mediaData: Optional[bytes] = None
         if chatSettings[ChatSettingsKey.SAVE_ATTACHMENTS].toBool():
             if self._bot is None:
@@ -2110,10 +2103,7 @@ class BaseBotHandler(CommandHandlerMixin):
             MessageType.IMAGE,
             MessageType.STICKER,
         )
-        needVisionStore = chatSettings[ChatSettingsKey.NATIVE_VISION].toBool() and mediaType in (
-            MessageType.IMAGE,
-            MessageType.STICKER,
-        )
+
         needProcessSTT = (
             self._sttEnabled
             and mediaType

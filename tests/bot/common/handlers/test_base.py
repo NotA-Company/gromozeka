@@ -2920,11 +2920,12 @@ class TestProcessMediaV2Vision:
     ) -> None:
         """DONE + vision_url set + live object → immediate return, ZERO extra work.
 
-        The common "already covered" re-receipt must exit before any settings
-        fetch, download, DB write, or parse spawn: the arm's ``exists()``
-        probe confirms the stored object is live, so nothing happens beyond
-        the row read and that one storage stat — no settings fetch, no
-        download, no DB write, no parse.
+        The common "already covered" re-receipt must exit before any
+        download, DB write, or parse spawn: the reuse check inside
+        ``_storeVisionImage`` confirms the stored object is live, so nothing
+        happens beyond the row read, the (hoisted, pre-match) settings
+        fetch, and that one storage stat — no download, no store write, no
+        parse, no background task; ``vision_url`` is unchanged.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2969,7 +2970,9 @@ class TestProcessMediaV2Vision:
 
         assert ret.task is not None
         downloadMock.assert_not_called()
-        handler.getChatSettings.assert_not_awaited()
+        # Settings ARE fetched — once, hoisted before the status machine
+        # (every receipt pays the same single cache-backed read).
+        handler.getChatSettings.assert_awaited_once()
         handler._parseImage.assert_not_called()
         assert updateCalls == []
 
@@ -3200,12 +3203,12 @@ class TestProcessMediaV2Vision:
     ) -> None:
         """DONE backfill stays fail-soft when ``visionStorage.exists()`` raises.
 
-        The probe (and the settings fetch after it) runs OUTSIDE
-        ``_storeVisionImage``'s own fail-soft boundary; a storage outage or
-        invalid stored key there must not abort the already-DONE receipt:
-        the receipt still returns its empty placeholder task, and the row
-        keeps its status, description, and vision_url — no settings fetch,
-        no parse spawn, no download, no vision write.
+        With the arm-level probe gone, a raising ``exists()`` surfaces
+        through the reuse check INSIDE ``_storeVisionImage``'s own fail-soft
+        boundary: the helper catches it, logs one WARNING, and returns — the
+        already-DONE receipt still completes with its empty placeholder
+        task, and the row keeps its status, description, and vision_url —
+        no download, no vision write, no parse spawn.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -3225,8 +3228,6 @@ class TestProcessMediaV2Vision:
             return_value=self._buildChatSettings(nativeVision=True),
         )
         handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        storeVisionMock = AsyncMock(return_value=(None, None))
-        handler._storeVisionImage = storeVisionMock  # type: ignore[method-assign]
         existsMock = Mock(side_effect=RuntimeError("storage outage"))
         handler.visionStorage.exists = existsMock  # type: ignore[method-assign]
         handler.queueService.addBackgroundTask = AsyncMock()  # type: ignore[assignment]
@@ -3239,15 +3240,17 @@ class TestProcessMediaV2Vision:
                 fileId=self._FILE_ID,
             )
 
-        # The probe ran (and raised) BEFORE any settings fetch or store.
+        # The reuse check inside the helper ran (and raised) exactly once —
+        # the arm itself no longer probes. Settings were fetched once
+        # (hoisted) before the status machine.
         existsMock.assert_called_once_with(storedKey)
-        handler.getChatSettings.assert_not_awaited()
-        storeVisionMock.assert_not_awaited()
+        handler.getChatSettings.assert_awaited_once()
         downloadMock.assert_not_called()
         cast(AsyncMock, handler.queueService.addBackgroundTask).assert_not_called()
         handler._parseImage.assert_not_called()
         assert ret.task is not None
-        warnings = [r for r in caplog.records if "Native-vision DONE backfill failed" in r.message]
+        # The single WARNING comes from _storeVisionImage's boundary.
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
         assert len(warnings) == 1
         assert "storage outage" in warnings[0].message
 
@@ -3257,63 +3260,6 @@ class TestProcessMediaV2Vision:
         assert row["description"] == "A real description"
         assert row["vision_url"] == storedKey
 
-    async def test_doneBackfill_getChatSettingsRaises_receiptCompletes_zeroDamage(
-        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """DONE backfill stays fail-soft when ``getChatSettings()`` raises.
-
-        With vision_url NULL the existence probe short-circuits (no storage
-        call at all); a settings-loading error must still not abort the
-        already-DONE receipt: same zero-damage contract — empty placeholder
-        task, row untouched, no parse, no download, no vision write.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-            tmp_path: pytest tmp dir for the fs storage backend.
-            caplog: pytest log-capture fixture.
-        """
-        handler = await self._makeHandler(testDatabase, tmp_path)
-        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
-
-        handler._bot = Mock()
-        downloadMock = AsyncMock(return_value=self._makeImageBytes())
-        handler._bot.downloadAttachment = downloadMock
-        settingsError = RuntimeError("settings backend down")
-        handler.getChatSettings = AsyncMock(side_effect=settingsError)  # type: ignore[assignment]
-        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        storeVisionMock = AsyncMock(return_value=(None, None))
-        handler._storeVisionImage = storeVisionMock  # type: ignore[method-assign]
-        existsMock = Mock()
-        handler.visionStorage.exists = existsMock  # type: ignore[method-assign]
-        handler.queueService.addBackgroundTask = AsyncMock()  # type: ignore[assignment]
-
-        with caplog.at_level(logging.WARNING):
-            ret = await handler._processMediaV2(
-                ensuredMessage=self._makeEnsuredMessage(),
-                mediaType=MessageType.IMAGE,
-                mediaId=self._MEDIA_ID,
-                fileId=self._FILE_ID,
-            )
-
-        # NULL vision_url short-circuits the probe entirely; the settings
-        # fetch was attempted (and raised) once, before any store.
-        existsMock.assert_not_called()
-        handler.getChatSettings.assert_awaited_once()
-        storeVisionMock.assert_not_awaited()
-        downloadMock.assert_not_called()
-        cast(AsyncMock, handler.queueService.addBackgroundTask).assert_not_called()
-        handler._parseImage.assert_not_called()
-        assert ret.task is not None
-        warnings = [r for r in caplog.records if "Native-vision DONE backfill failed" in r.message]
-        assert len(warnings) == 1
-        assert "settings backend down" in warnings[0].message
-
-        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
-        assert row is not None
-        assert row["status"] == MediaStatus.DONE
-        assert row["description"] is None
-        assert row["vision_url"] is None
-
     async def test_doneBackfill_maxAnimatedStickerStub_excluded_noWork(
         self, testDatabase: Database, tmp_path: Path
     ) -> None:
@@ -3322,10 +3268,12 @@ class TestProcessMediaV2Vision:
         ``processMaxMedia`` seeds such rows DONE precisely so the generic
         ``.../stub/*.png`` placeholder is never processed. The backfill gate
         must honor the same URL-based exclusion: even on the FIRST receipt
-        with native vision enabled there is no settings fetch, no probe, no
-        download, no store, and no vision publication — the placeholder must
-        never reach the model as the sticker's visual content. (Exclusion is
-        classified from the URL, not the description.)
+        with native vision enabled there is no probe, no download, no store,
+        and no vision publication — the placeholder must never reach the
+        model as the sticker's visual content. (Exclusion is classified from
+        the URL, not the description.) Settings ARE fetched once — hoisted
+        before the status machine for every receipt — but the stub gate
+        blocks all backfill work behind them.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -3357,9 +3305,10 @@ class TestProcessMediaV2Vision:
             fileId=stubUrl,
         )
 
-        # The gate exits before ANY backfill work — including the settings
-        # fetch and the existence probe.
-        handler.getChatSettings.assert_not_awaited()
+        # The gate exits before ANY backfill work. Settings are fetched once
+        # (hoisted pre-match), but nothing behind them runs: no probe, no
+        # store, no download.
+        handler.getChatSettings.assert_awaited_once()
         existsMock.assert_not_called()
         storeVisionMock.assert_not_awaited()
         downloadMock.assert_not_called()
