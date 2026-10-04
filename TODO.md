@@ -4,12 +4,12 @@
 
 ## Vision:
 - [x] Add ability to store resized images + send them to context
-- [ ] re-getting "old" attachments - need to re-save (for vision as well)
-- [ ] just like `VisionConfigDict` - add typed-dicts for other configs
-- [ ] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
+- [x] re-getting "old" attachments - need to re-save (for vision as well)
+- [x] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
 - [x] vision: add storage service choosing
 - [x] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)
 
+- [ ] just like `VisionConfigDict` - add typed-dicts for other configs
 - [ ] send-sticker tool: semantic-search by description
 - [ ] llm-call: retry on timeout (up to X times, do not reject just cal again)
 - [ ] repost\link to message from publich channel

@@ -1942,12 +1942,62 @@ class TestProcessMediaV2Vision:
         handler._bot = botMock
         return downloadMock
 
+    @staticmethod
+    def _placeVisionObject(handler: UserMemoriesHandler, data: bytes) -> str:
+        """Pre-place bytes in the vision-scoped store under the bare content key.
+
+        Only ``exists()`` is consulted on the early-reuse path, so the bytes
+        are stored as-is (no normalization) — the key is opaque to that check.
+
+        Args:
+            handler: Handler whose ``visionStorage`` receives the object.
+            data: Bytes to store.
+
+        Returns:
+            The bare ``{sha512}.jpeg`` key the object was stored under.
+        """
+        key = f"{hashlib.sha512(data).hexdigest()}.jpeg"
+        handler.visionStorage.store(key, data)
+        return key
+
+    async def _seedMediaRow(
+        self,
+        testDatabase: Database,
+        *,
+        status: MediaStatus,
+        mediaType: MessageType = MessageType.IMAGE,
+        visionUrl: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> None:
+        """Seed a media row in *status* (and optionally set its ``vision_url``).
+
+        ``addMediaAttachment`` has no ``vision_url`` INSERT column, so a
+        follow-up ``updateMediaAttachment`` publishes it — mirroring how
+        production rows acquire the value.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            status: Status to seed the row with.
+            mediaType: Media type for the row (must match the processing type).
+            visionUrl: Optional ``vision_url`` to set after the insert.
+            description: Optional ``description`` to store on the row.
+        """
+        await testDatabase.mediaAttachments.addMediaAttachment(
+            fileUniqueId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+            mediaType=mediaType,
+            status=status,
+            description=description,
+        )
+        if visionUrl is not None:
+            await testDatabase.mediaAttachments.updateMediaAttachment(mediaId=self._MEDIA_ID, visionUrl=visionUrl)
+
     async def _processImage(
         self,
         handler: UserMemoriesHandler,
         *,
         mediaId: str,
-        data: bytes,
+        data: Optional[bytes],
         mediaType: MessageType = MessageType.IMAGE,
         saveAttachments: bool = False,
         parseAttachments: bool = False,
@@ -1961,7 +2011,8 @@ class TestProcessMediaV2Vision:
         Args:
             handler: The handler under test.
             mediaId: file_unique_id for the media row.
-            data: Bytes ``downloadAttachment`` returns.
+            data: Bytes ``downloadAttachment`` returns (None simulates a
+                failed download).
             mediaType: Media type to process (IMAGE or STICKER).
             saveAttachments: Value for ``SAVE_ATTACHMENTS``.
             parseAttachments: Value for ``PARSE_ATTACHMENTS``.
@@ -2855,6 +2906,475 @@ class TestProcessMediaV2Vision:
         # Cross-store byte reads miss (the ratified no-fallback consequence).
         assert handler.storage.get(visionUrl) is None
         assert handler.visionStorage.get(localUrl) is None
+
+    # ------------------------------------------------------------------
+    # DONE-backfill + early reuse (2026-10-04): re-receipt of known media.
+    # DONE rows get a vision backfill ONLY when the row lacks usable vision
+    # bytes; ``_storeVisionImage``'s reuse check makes every receipt with a
+    # live stored object free. Every case below drives the REAL
+    # ``_processMediaV2`` entry point against a pre-seeded row.
+    # ------------------------------------------------------------------
+
+    async def test_doneBackfill_zeroWork_whenVisionUrlSetAndObjectExists(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """DONE + vision_url set + live object → immediate return, ZERO extra work.
+
+        The common "already covered" re-receipt must exit before any settings
+        fetch, download, DB write, or parse spawn: the arm's ``exists()``
+        probe confirms the stored object is live, so nothing happens beyond
+        the row read and that one storage stat — no settings fetch, no
+        download, no DB write, no parse.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        liveKey = self._placeVisionObject(handler, self._makeImageBytes())
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, visionUrl=liveKey)
+
+        handler._bot = Mock()
+        downloadMock = AsyncMock(return_value=self._makeImageBytes())
+        handler._bot.downloadAttachment = downloadMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        updateCalls: List[Tuple[str, Dict[str, object]]] = []
+
+        async def countingUpdate(repo: MediaAttachmentsRepository, mediaId: str, **kwargs: object) -> bool:
+            """Record every ``updateMediaAttachment`` call (none may happen).
+
+            Args:
+                repo: The repository instance the production call site used.
+                mediaId: Media attachment unique identifier.
+                **kwargs: The field updates.
+
+            Returns:
+                True (unreachable in this test — the DONE arm must return
+                before any DB write).
+            """
+            updateCalls.append((mediaId, kwargs))
+            return True
+
+        with patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=countingUpdate):
+            ret = await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=self._MEDIA_ID,
+                fileId=self._FILE_ID,
+            )
+
+        assert ret.task is not None
+        downloadMock.assert_not_called()
+        handler.getChatSettings.assert_not_awaited()
+        handler._parseImage.assert_not_called()
+        assert updateCalls == []
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] == liveKey
+
+    async def test_doneBackfill_visionUrlNull_visionOn_storesOnce_statusStaysDone(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """DONE + vision_url NULL + vision ON → the store step runs exactly once.
+
+        The backfill downloads (exactly once), normalizes, stores under the
+        bare ``{sha512}.{ext}`` key, and writes ``vision_url``. The row stays
+        DONE, ``_parseImage`` never runs (backfill is store-only, never
+        re-analysis), and ``ret.task`` is the empty placeholder (no
+        background task queued).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+
+        capturedTasks: list[asyncio.Task] = []
+
+        async def captureTask(task: asyncio.Task) -> None:
+            capturedTasks.append(task)
+
+        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
+
+        ret, downloadMock = await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+
+        downloadMock.assert_awaited_once()
+        assert capturedTasks == []
+        assert ret.task is not None
+        cast(AsyncMock, handler._parseImage).assert_not_called()
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] is not None
+        visionUrl = str(row["vision_url"])
+        self._assertVisionKeyShape(visionUrl, ext="jpeg")
+        stored = handler.visionStorage.get(visionUrl)
+        assert stored is not None
+        with Image.open(BytesIO(stored)) as img:
+            assert img.format == "JPEG"
+
+    async def test_doneBackfill_visionOff_noDownloadNoStore(self, testDatabase: Database, tmp_path: Path) -> None:
+        """DONE + vision_url NULL + vision OFF → no download, no store; one settings fetch.
+
+        The settings fetch IS paid (the backfill gate needs
+        ``NATIVE_VISION``), but the store branch never engages.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+
+        handler._bot = Mock()
+        downloadMock = AsyncMock(return_value=self._makeImageBytes())
+        handler._bot.downloadAttachment = downloadMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=False),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.IMAGE,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        handler.getChatSettings.assert_awaited_once()
+        downloadMock.assert_not_called()
+        handler._parseImage.assert_not_called()
+        assert ret.task is not None
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] is None
+
+    async def test_doneBackfill_staleVisionUrl_selfHealsWithFreshKey(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """DONE + vision_url set but object missing → self-heal with a fresh bare key.
+
+        A ``vision_url`` whose object disappeared from the vision-scoped
+        store (here: a pre-storage-split legacy ``vision/{sha512}.{ext}``
+        key that no longer resolves) fails the ``exists()`` reuse check, so
+        the full path runs: download + normalize + store, and the row's
+        ``vision_url`` is overwritten with the fresh bare key.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        staleKey = "vision/deadbeef00000000.jpeg"
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, visionUrl=staleKey)
+
+        ret, downloadMock = await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+
+        downloadMock.assert_awaited_once()
+        assert ret.task is not None
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] is not None
+        visionUrl = str(row["vision_url"])
+        assert visionUrl != staleKey
+        self._assertVisionKeyShape(visionUrl, ext="jpeg")
+        stored = handler.visionStorage.get(visionUrl)
+        assert stored is not None
+        with Image.open(BytesIO(stored)) as img:
+            assert img.format == "JPEG"
+
+    async def test_doneBackfill_sticker_visionUrlNull_stored(self, testDatabase: Database, tmp_path: Path) -> None:
+        """DONE STICKER + vision_url NULL + vision ON → backfill attempted.
+
+        The backfill gate includes STICKER: a static (webp) sticker re-receipt
+        is stored normalized exactly like an image, with no parse spawn.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, mediaType=MessageType.STICKER)
+
+        ret, downloadMock = await self._processImage(
+            handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes(fmt="WEBP"), mediaType=MessageType.STICKER
+        )
+
+        downloadMock.assert_awaited_once()
+        assert ret.task is not None
+        cast(AsyncMock, handler._parseImage).assert_not_called()
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] is not None
+        self._assertVisionKeyShape(str(row["vision_url"]), ext="jpeg")
+
+    async def test_failedReReceipt_existingVisionObject_skipsVisionDownload(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """FAILED re-receipt with a live vision object pays NO vision download.
+
+        The pre-existing waste this fixes: a FAILED row falls through to the
+        vision branch, which used to re-download even though usable bytes
+        were already stored. With the reuse check the vision branch returns
+        silently; the parse retry is unchanged and still makes its OWN
+        download attempt (returning None here), so exactly ONE download
+        happens — the pre-fix receipt performed two (the vision branch's +
+        the parse retry's) and logged a vision "returned no data" WARNING.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        liveKey = self._placeVisionObject(handler, self._makeImageBytes())
+        await self._seedMediaRow(testDatabase, status=MediaStatus.FAILED, visionUrl=liveKey)
+
+        with caplog.at_level(logging.WARNING):
+            ret, downloadMock = await self._processImage(
+                handler, mediaId=self._MEDIA_ID, data=None, parseAttachments=True
+            )
+
+        # Exactly one download — the parse path's own retry. The vision
+        # branch reused the stored object and downloaded nothing.
+        assert downloadMock.await_count == 1
+        # The reuse path is silent: no vision warnings for this receipt.
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert warnings == []
+        assert ret.task is not None
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        # Parse retry terminalized exactly as before the reuse check existed.
+        assert row["status"] == MediaStatus.FAILED
+        # vision_url untouched by the reuse path (never clobbered on failure).
+        assert row["vision_url"] == liveKey
+
+    async def test_doneBackfill_nullBackend_warnsOnce_zeroDownloads(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Null backend stays FIRST: the DONE backfill warns and downloads nothing.
+
+        The null-backend check precedes the reuse check (and every other
+        step), so a misconfigured backend never fetches — one plain WARNING
+        per occurrence, row untouched.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir (unused by the null backend).
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path, storageType="null")
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+
+        with caplog.at_level(logging.WARNING):
+            ret, downloadMock = await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+
+        downloadMock.assert_not_called()
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert "null" in warnings[0].message
+        assert ret.task is not None
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] is None
+
+    async def test_doneBackfill_existsProbeRaises_receiptCompletes_zeroDamage(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """DONE backfill stays fail-soft when ``visionStorage.exists()`` raises.
+
+        The probe (and the settings fetch after it) runs OUTSIDE
+        ``_storeVisionImage``'s own fail-soft boundary; a storage outage or
+        invalid stored key there must not abort the already-DONE receipt:
+        the receipt still returns its empty placeholder task, and the row
+        keeps its status, description, and vision_url — no settings fetch,
+        no parse spawn, no download, no vision write.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        storedKey = "vision/some-live-lookalike-key.jpeg"
+        await self._seedMediaRow(
+            testDatabase, status=MediaStatus.DONE, visionUrl=storedKey, description="A real description"
+        )
+
+        handler._bot = Mock()
+        downloadMock = AsyncMock(return_value=self._makeImageBytes())
+        handler._bot.downloadAttachment = downloadMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        storeVisionMock = AsyncMock(return_value=(None, None))
+        handler._storeVisionImage = storeVisionMock  # type: ignore[method-assign]
+        existsMock = Mock(side_effect=RuntimeError("storage outage"))
+        handler.visionStorage.exists = existsMock  # type: ignore[method-assign]
+        handler.queueService.addBackgroundTask = AsyncMock()  # type: ignore[assignment]
+
+        with caplog.at_level(logging.WARNING):
+            ret = await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=self._MEDIA_ID,
+                fileId=self._FILE_ID,
+            )
+
+        # The probe ran (and raised) BEFORE any settings fetch or store.
+        existsMock.assert_called_once_with(storedKey)
+        handler.getChatSettings.assert_not_awaited()
+        storeVisionMock.assert_not_awaited()
+        downloadMock.assert_not_called()
+        cast(AsyncMock, handler.queueService.addBackgroundTask).assert_not_called()
+        handler._parseImage.assert_not_called()
+        assert ret.task is not None
+        warnings = [r for r in caplog.records if "Native-vision DONE backfill failed" in r.message]
+        assert len(warnings) == 1
+        assert "storage outage" in warnings[0].message
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["description"] == "A real description"
+        assert row["vision_url"] == storedKey
+
+    async def test_doneBackfill_getChatSettingsRaises_receiptCompletes_zeroDamage(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """DONE backfill stays fail-soft when ``getChatSettings()`` raises.
+
+        With vision_url NULL the existence probe short-circuits (no storage
+        call at all); a settings-loading error must still not abort the
+        already-DONE receipt: same zero-damage contract — empty placeholder
+        task, row untouched, no parse, no download, no vision write.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+
+        handler._bot = Mock()
+        downloadMock = AsyncMock(return_value=self._makeImageBytes())
+        handler._bot.downloadAttachment = downloadMock
+        settingsError = RuntimeError("settings backend down")
+        handler.getChatSettings = AsyncMock(side_effect=settingsError)  # type: ignore[assignment]
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        storeVisionMock = AsyncMock(return_value=(None, None))
+        handler._storeVisionImage = storeVisionMock  # type: ignore[method-assign]
+        existsMock = Mock()
+        handler.visionStorage.exists = existsMock  # type: ignore[method-assign]
+        handler.queueService.addBackgroundTask = AsyncMock()  # type: ignore[assignment]
+
+        with caplog.at_level(logging.WARNING):
+            ret = await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=self._MEDIA_ID,
+                fileId=self._FILE_ID,
+            )
+
+        # NULL vision_url short-circuits the probe entirely; the settings
+        # fetch was attempted (and raised) once, before any store.
+        existsMock.assert_not_called()
+        handler.getChatSettings.assert_awaited_once()
+        storeVisionMock.assert_not_awaited()
+        downloadMock.assert_not_called()
+        cast(AsyncMock, handler.queueService.addBackgroundTask).assert_not_called()
+        handler._parseImage.assert_not_called()
+        assert ret.task is not None
+        warnings = [r for r in caplog.records if "Native-vision DONE backfill failed" in r.message]
+        assert len(warnings) == 1
+        assert "settings backend down" in warnings[0].message
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["description"] is None
+        assert row["vision_url"] is None
+
+    async def test_doneBackfill_maxAnimatedStickerStub_excluded_noWork(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """A Max animated-sticker stub row (DONE) gets NO vision backfill.
+
+        ``processMaxMedia`` seeds such rows DONE precisely so the generic
+        ``.../stub/*.png`` placeholder is never processed. The backfill gate
+        must honor the same URL-based exclusion: even on the FIRST receipt
+        with native vision enabled there is no settings fetch, no probe, no
+        download, no store, and no vision publication — the placeholder must
+        never reach the model as the sticker's visual content. (Exclusion is
+        classified from the URL, not the description.)
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        stubUrl = "https://st.mycdn.me/static/messages/res/images/stub/sticker_31856a27@2x.png"
+        await self._seedMediaRow(
+            testDatabase, status=MediaStatus.DONE, mediaType=MessageType.STICKER, description="Animated sticker"
+        )
+
+        handler._bot = Mock()
+        downloadMock = AsyncMock(return_value=self._makeImageBytes())
+        handler._bot.downloadAttachment = downloadMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        storeVisionMock = AsyncMock(return_value=(None, None))
+        handler._storeVisionImage = storeVisionMock  # type: ignore[method-assign]
+        existsMock = Mock()
+        handler.visionStorage.exists = existsMock  # type: ignore[method-assign]
+        handler.queueService.addBackgroundTask = AsyncMock()  # type: ignore[assignment]
+
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.STICKER,
+            mediaId=self._MEDIA_ID,
+            fileId=stubUrl,
+        )
+
+        # The gate exits before ANY backfill work — including the settings
+        # fetch and the existence probe.
+        handler.getChatSettings.assert_not_awaited()
+        existsMock.assert_not_called()
+        storeVisionMock.assert_not_awaited()
+        downloadMock.assert_not_called()
+        cast(AsyncMock, handler.queueService.addBackgroundTask).assert_not_called()
+        handler._parseImage.assert_not_called()
+        assert ret.task is not None
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] is None
+        assert row["description"] == "Animated sticker"
+        # Nothing was ever published to the vision-scoped store.
+        visionDir = tmp_path / "vision"
+        assert not any(p.is_file() for p in visionDir.rglob("*"))
 
 
 class TestHandlersManagerVisionScopeInject:

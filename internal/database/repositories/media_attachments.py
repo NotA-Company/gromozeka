@@ -77,9 +77,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             bool: True if the relationship was ensured successfully, False otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            False is returned; the exception is not propagated to the caller.
 
         Note:
             Writes to default source. Cannot write to readonly sources.
@@ -134,9 +133,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             bool: True if the media attachment was added successfully, False otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            False is returned; the exception is not propagated to the caller.
 
         Note:
             Writes to default source. Cannot write to readonly sources.
@@ -210,9 +208,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             bool: True if the media attachment was updated successfully, False otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            False is returned; the exception is not propagated to the caller.
 
         Note:
             Writes to default source. Cannot write to readonly sources.
@@ -278,10 +275,9 @@ class MediaAttachmentsRepository(BaseRepository):
             dataSource: Optional data source name for multi-source routing.
 
         Returns:
-            MediaAttachmentDict if found, None otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            MediaAttachmentDict if found, None otherwise. On a database failure the
+            error is logged (ERROR) by the repository and None is returned; the
+            exception is not propagated to the caller.
         """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
@@ -313,10 +309,9 @@ class MediaAttachmentsRepository(BaseRepository):
             dataSource: Optional data source name for multi-source routing.
 
         Returns:
-            List of MediaAttachmentDict objects, empty list if none found.
-
-        Raises:
-            Exception: If database operation fails.
+            List of MediaAttachmentDict objects, empty list if none found. On a
+            database failure the error is logged (ERROR) by the repository and an
+            empty list is returned; the exception is not propagated to the caller.
         """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
@@ -350,9 +345,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             datetime of the most recent media addition, or None if group not found.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            None is returned; the exception is not propagated to the caller.
         """
         try:
             sqlProvider = await self.manager.getProvider(readonly=True, dataSource=dataSource)

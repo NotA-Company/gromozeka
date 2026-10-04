@@ -84,6 +84,35 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["HandlerResultStatus", "BaseBotHandler"]
 
+MAX_ANIMATED_STICKER_STUB_URL_PREFIX = "https://st.mycdn.me/static/messages/res/images/stub/"
+"""URL prefix of the Max animated-sticker placeholder images.
+
+Max serves ONE generic ``*.png`` placeholder for all(?) animated stickers
+under ``.../static/messages/res/images/stub/``; it is not the actual
+sticker image and must never be processed (it would put wrong data into
+context) or published as the sticker's vision content.
+"""
+
+
+def isMaxAnimatedStickerStubUrl(url: str) -> bool:
+    """
+    Classify a URL as a Max animated-sticker placeholder ("stub") image.
+
+    This is the single source of truth for the exclusion that
+    ``processMaxMedia`` applies when seeding animated-sticker rows: those
+    rows are seeded DONE on purpose so the generic placeholder is never
+    downloaded or analyzed — and the ``_processMediaV2`` DONE-arm
+    native-vision backfill must honor the same exclusion (classified from
+    the URL, never from the row description).
+
+    Args:
+        url: The attachment URL (or platform fileId carrying the URL) to check.
+
+    Returns:
+        True when *url* points at the generic animated-sticker stub image.
+    """
+    return url.startswith(MAX_ANIMATED_STICKER_STUB_URL_PREFIX) and url.endswith(".png")
+
 
 class HandlerResultStatus(Enum):
     """
@@ -1836,7 +1865,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 url = attachment.payload.url
                 mediaId = f"{attachment.type}:{attachment.payload.code}"
 
-                if url.startswith("https://st.mycdn.me/static/messages/res/images/stub/") and url.endswith(".png"):
+                if isMaxAnimatedStickerStubUrl(url):
                     # https://st.mycdn.me/static/messages/res/images/stub/sticker_31856a27@2x.png
                     # It is not real sticker image, just stub for all(?) animated stickers.
                     # We should'nt process it as it will put wrong data into context
@@ -1923,12 +1952,19 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         Process media attachments from messages, handling database storage and optional LLM parsing.
 
+        DONE rows return early (retroactive STT transcription of previously-
+        processed media is out of scope), with one sanctioned exception: a
+        DONE IMAGE/STICKER row lacking USABLE vision bytes (empty
+        ``vision_url``, or a key that no longer resolves in the vision-scoped
+        store) gets a native-vision backfill (store step only — never
+        re-analysis) when ``NATIVE_VISION`` is on for the chat. FAILED and
+        stale-PENDING rows are reprocessed in full.
+
         Args:
             ensuredMessage: The validated message object containing media information
             mediaType: Type of media (image, video, audio, etc.)
             mediaId: Unique identifier for the media attachment
             fileId: Platform-specific file identifier for downloading
-            dataGetter: Async function to retrieve media data by mediaId and fileId
             metadata: Optional dictionary with additional media information
             prompt: Optional prompt text for media processing
 
@@ -1969,9 +2005,50 @@ class BaseBotHandler(CommandHandlerMixin):
             # Only skip processing if Media in DB is in right status
             match MediaStatus(mediaAttachment["status"]):
                 case MediaStatus.DONE:
-                    # DONE rows always return early — retroactive STT transcription of
+                    # DONE rows return early — retroactive STT transcription of
                     # previously-processed media is intentionally out of scope (the
                     # stateless simplification removed the DONE-reprocess branch).
+                    # Sanctioned exception (2026-10-04): native-vision backfill. A
+                    # DONE IMAGE/STICKER row lacking USABLE vision bytes (empty
+                    # vision_url, or a key that no longer resolves in the
+                    # vision-scoped store) gets the store step only
+                    # (download + normalize + store) on re-receipt — never
+                    # re-analysis (no _parseImage, status stays DONE, description
+                    # is not re-parsed). Max animated-sticker stub rows are NOT
+                    # eligible: processMaxMedia seeds them DONE precisely so the
+                    # generic placeholder image is never processed, and publishing
+                    # it as the sticker's vision content would poison chat-time
+                    # context (exclusion classified from the URL, not the
+                    # description).
+                    existingVisionUrl = mediaAttachment.get("vision_url")
+                    if mediaType in (MessageType.IMAGE, MessageType.STICKER) and not isMaxAnimatedStickerStubUrl(
+                        fileId
+                    ):
+                        # Fail-soft boundary for the ENTIRE backfill decision: the
+                        # exists() probe and getChatSettings() run OUTSIDE
+                        # _storeVisionImage's own try/except, and neither is
+                        # guaranteed not to raise (storage outage, invalid stored
+                        # key, settings-loading failure) — such an error must not
+                        # abort an already-DONE receipt. The cheap covered-row fast
+                        # exit inside the boundary keeps the common "already
+                        # covered" re-receipt a zero-cost exit: no settings fetch,
+                        # no download, no DB write.
+                        try:
+                            if not (existingVisionUrl and self.visionStorage.exists(existingVisionUrl)):
+                                chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+                                if chatSettings[ChatSettingsKey.NATIVE_VISION].toBool():
+                                    await self._storeVisionImage(
+                                        chatId=ensuredMessage.recipient.id,
+                                        mediaId=ret.id,
+                                        mediaType=mediaType,
+                                        fileId=fileId,
+                                        mediaData=None,
+                                        existingVisionUrl=existingVisionUrl,
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"Native-vision DONE backfill failed for {mediaType}#{ret.id}: {type(e).__name__}: {e}"
+                            )
                     ret.task = makeEmptyAsyncTask()
                     return ret
 
@@ -2100,6 +2177,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 mediaType=mediaType,
                 fileId=fileId,
                 mediaData=mediaData,
+                existingVisionUrl=mediaAttachment.get("vision_url") if mediaAttachment is not None else None,
             )
             if visionMediaData is not None:
                 mediaData = visionMediaData
@@ -2186,14 +2264,15 @@ class BaseBotHandler(CommandHandlerMixin):
         mediaType: MessageType,
         fileId: str,
         mediaData: Optional[bytes],
+        existingVisionUrl: Optional[str] = None,
     ) -> Tuple[Optional[str], Optional[bytes]]:
         """
         Run the complete native-vision receipt-time store operation; never raises.
 
         This method OWNS the whole vision-specific flow and is its single
         fail-soft boundary (docs/design/native-vision-design-v1.md §3.2):
-        the null-backend check, download, libmagic image guard, strict
-        normalization, object storage, and the
+        the null-backend check, reuse check, download, libmagic image
+        guard, strict normalization, object storage, and the
         ``media_attachments.vision_url`` write all happen inside one
         try/except. Any failure is logged as a plain WARNING (every
         occurrence — there is deliberately no rate-limiting) and the media
@@ -2203,6 +2282,15 @@ class BaseBotHandler(CommandHandlerMixin):
 
         - The null-backend check runs BEFORE any vision-only download, so a
           misconfigured backend never wastes a fetch;
+        - the early reuse check runs next: when *existingVisionUrl* points
+          at an object that still exists in the vision-scoped store, the
+          method returns it immediately — repeated receipts are idempotent
+          and only rows lacking USABLE vision bytes pay the
+          download/normalize/store/DB-write cost. A stale *existingVisionUrl*
+          (set in the row but the object is gone — e.g. a pre-storage-split
+          legacy ``vision/{sha512}.{ext}`` key that no longer resolves in
+          the vision-scoped store) falls through to the full path, and the
+          row's vision_url is overwritten with the fresh bare key (self-heal);
         - the download happens only when *mediaData* is empty: a download
           that already returned None earlier in the receipt flow (e.g. by
           the save-attachments path) is RETRIED here — a transient failure
@@ -2233,11 +2321,17 @@ class BaseBotHandler(CommandHandlerMixin):
             fileId: Platform file id used when a download is required.
             mediaData: Already-downloaded bytes (e.g. fetched by the
                 save-attachments path), or None when no bytes are available.
+            existingVisionUrl: vision_url already recorded on the media row
+                (None when the row has none). When it references a live
+                object in the vision-scoped store, everything after the
+                reuse check is skipped; when the object is missing, the
+                full path runs and republishes a fresh key.
 
         Returns:
             ``(visionUrl, availableMediaData)`` where *visionUrl* is the
             storage key written to ``media_attachments.vision_url`` (None on
-            skip/failure) and *availableMediaData* is whatever bytes exist
+            skip/failure; the reused *existingVisionUrl* on the early-reuse
+            path) and *availableMediaData* is whatever bytes exist
             after this method's download step (None when there are none),
             for reuse by the parse path.
         """
@@ -2248,6 +2342,18 @@ class BaseBotHandler(CommandHandlerMixin):
                     "configure [storage.storages.vision] to use native-vision"
                 )
                 return (None, None)
+
+            if existingVisionUrl and self.visionStorage.exists(existingVisionUrl):
+                # Early reuse: the row already points at a live object in
+                # the vision-scoped store, so the value is already in the
+                # row — skip the download, normalization, store, and DB
+                # write entirely (repeated receipts are idempotent). A
+                # stale key (vision_url set but the object disappeared,
+                # e.g. a legacy pre-storage-split `vision/{sha512}.{ext}`
+                # key that no longer resolves in the vision-scoped store)
+                # falls through to the full path below and the row's
+                # vision_url gets overwritten with the fresh bare key.
+                return (existingVisionUrl, mediaData)
 
             if mediaData is None:
                 if self._bot is None:
