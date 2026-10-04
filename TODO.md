@@ -1,14 +1,4 @@
 # Our TODO list
-
-- [x] `/sandbox update` to update packages
-
-## Vision:
-- [x] Add ability to store resized images + send them to context
-- [x] re-getting "old" attachments - need to re-save (for vision as well)
-- [x] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
-- [x] vision: add storage service choosing
-- [x] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)
-
 - [ ] just like `VisionConfigDict` - add typed-dicts for other configs
 - [ ] send-sticker tool: semantic-search by description
 - [ ] llm-call: retry on timeout (up to X times, do not reject just cal again)
@@ -24,8 +14,6 @@
 - [ ] teamlead - say about markdown-mcp write ability
 - [ ] add ability to add bot-memory. think how to inject it
 - [ ] `Handler MessagePreprocessorHandler returned next` - add messageID+chatID
-- [x] move Max Webhook reciver to lib
-- [x] move database providers to lib
 - [ ] On llm-tool-call-fix save wrong + fixed call to file
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
@@ -79,3 +67,12 @@
 - [x] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
 - [x] migrate to httpx2
 - [x] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md
+- [x] `/sandbox update` to update packages
+- [x] move Max Webhook reciver to lib
+- [x] move database providers to lib
+## Vision:
+- [x] Add ability to store resized images + send them to context
+- [x] re-getting "old" attachments - need to re-save (for vision as well)
+- [x] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
+- [x] vision: add storage service choosing
+- [x] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)

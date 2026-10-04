@@ -6,6 +6,7 @@ Covers:
     - _dumpAllState logs each rate limiter stats entry as JSON
     - shutdown() calls _dumpAllState() before draining queues
     - _cleanupOldData orchestrates cache, delayed-task, and bayes token cleanup
+    - _visionGcCronJob TTL garbage collection (disabled/gate/sweep semantics)
 
 HandlersManager.__init__ instantiates the entire handler pipeline, so these
 tests build a minimal manager via ``HandlersManager.__new__`` and set only the
@@ -14,11 +15,15 @@ handler-construction concerns.
 """
 
 import asyncio
-from typing import Tuple
-from unittest.mock import AsyncMock, Mock, patch
+import datetime
+import logging
+import time
+from typing import Dict, List, Optional, Tuple
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
+from internal.bot.common.handlers.base import visionStorageLock
 from internal.bot.common.handlers.manager import (
     AGGRESSIVE_CLEANUP_CACHE_TYPES,
     BAYES_TOKEN_CLEANUP_RULES,
@@ -29,6 +34,10 @@ from internal.bot.common.handlers.manager import (
     ChatProcessingState,
     HandlersManager,
 )
+from internal.database import Database
+from internal.database.repositories.media_attachments import MediaAttachmentsRepository
+from internal.services.queue_service import DelayedTask, DelayedTaskFunction
+from internal.services.storage import StorageService
 
 
 def _mockRateLimiterManager(statsList: list) -> Mock:
@@ -373,3 +382,469 @@ class TestCleanupOldData:
 
             mockBayesClass.assert_called_once_with(mockDb)
             mockBayesInstance.cleanupOldTokens.assert_called_once_with(BAYES_TOKEN_CLEANUP_RULES)
+
+
+class TestVisionGc:
+    """Tests for HandlersManager._visionGcCronJob (vision TTL garbage collection).
+
+    Uses the ``HandlersManager.__new__`` bypass pattern from
+    ``TestCleanupOldData``: only the attributes the GC touches are set — a real
+    ``Database`` (``testDatabase`` fixture, so the Phase-A repo methods run
+    against real in-memory SQLite) plus the two init-cached GC attributes.
+    ``StorageService.getInstance`` is class-patched, so no ``StorageService``
+    singleton reset is needed here. Rows are seeded through the real repo API
+    and backdated with the canonical raw-SQL pattern from
+    ``tests/database/repositories/test_media_attachments.py``. Repo spy patches
+    are applied at CLASS level — the repositories use ``__slots__``, so
+    instance attributes are read-only.
+    """
+
+    _OLD_TS = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+    """Timestamp guaranteed older than any sane cutoff (TTL is 1 day in these tests)."""
+
+    @staticmethod
+    def _buildManager(testDatabase: Database, *, visionTtlDays: int, lastGcTime: float = 0.0) -> HandlersManager:
+        """Build a minimal HandlersManager wired for the vision GC.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            visionTtlDays: Value for the init-cached ``_visionTtlDays`` attribute.
+            lastGcTime: Value for the init-cached ``_lastVisionGcTime`` attribute.
+
+        Returns:
+            A minimally-initialized HandlersManager suitable for GC tests.
+        """
+        mgr = HandlersManager.__new__(HandlersManager)
+        mgr.db = testDatabase
+        mgr._visionTtlDays = visionTtlDays
+        mgr._lastVisionGcTime = lastGcTime
+        return mgr
+
+    @staticmethod
+    def _makeTask() -> DelayedTask:
+        """Build the DelayedTask the cron dispatcher would pass to the GC.
+
+        Returns:
+            A DelayedTask tagged as CRON_JOB (the GC ignores its payload).
+        """
+        return DelayedTask(taskId="test-vision-gc", delayedUntil=0.0, function=DelayedTaskFunction.CRON_JOB, kwargs={})
+
+    @staticmethod
+    def _makeStorageMock(deleteReturnValue: bool = True) -> Mock:
+        """Build a StorageService stand-in with a controllable ``delete``.
+
+        Args:
+            deleteReturnValue: Value ``delete`` returns by default.
+
+        Returns:
+            A Mock whose ``delete`` is a Mock returning *deleteReturnValue*.
+        """
+        storageMock = Mock()
+        storageMock.delete = Mock(return_value=deleteReturnValue)
+        return storageMock
+
+    @staticmethod
+    async def _seedAttachmentWithVisionUrl(testDatabase: Database, mediaId: str, visionUrl: Optional[str]) -> None:
+        """Seed one media row (with an optional vision_url) through the repo API.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            mediaId: Media attachment unique identifier to seed.
+            visionUrl: Vision storage key to set, or None to leave it NULL.
+
+        Returns:
+            None
+        """
+        repo = testDatabase.mediaAttachments
+        assert await repo.addMediaAttachment(fileUniqueId=mediaId, fileId=f"fid-{mediaId}") is True
+        if visionUrl is not None:
+            assert await repo.updateMediaAttachment(mediaId, visionUrl=visionUrl) is True
+
+    @staticmethod
+    async def _backdateUpdatedAt(testDatabase: Database, mediaId: str, ts: datetime.datetime) -> None:
+        """Backdate a row's ``updated_at`` via the canonical raw-SQL test pattern.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            mediaId: Media attachment unique identifier to backdate.
+            ts: Timestamp (aware UTC) to write.
+
+        Returns:
+            None
+        """
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "UPDATE media_attachments SET updated_at = :ts WHERE file_unique_id = :id",
+            {"ts": ts.isoformat(), "id": mediaId},
+        )
+
+    async def testDisabledTtl_skipsRepoQueries(self, testDatabase: Database) -> None:
+        """ttl-days = 0 disables the GC before any work: the repo is never queried.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=0)
+
+        with (
+            patch.object(StorageService, "getInstance", return_value=Mock()),
+            patch.object(
+                MediaAttachmentsRepository, "getExpiredVisionAttachments", new_callable=AsyncMock
+            ) as mockExpired,
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        mockExpired.assert_not_called()
+
+    async def testElapsedGateNotReached_skipsQueries(self, testDatabase: Database) -> None:
+        """A GC pass within the interval is skipped: no queries, gate timestamp unchanged.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        lastRun = time.time()
+        manager = self._buildManager(testDatabase, visionTtlDays=1, lastGcTime=lastRun)
+
+        with (
+            patch.object(StorageService, "getInstance", return_value=Mock()),
+            patch.object(
+                MediaAttachmentsRepository, "getExpiredVisionAttachments", new_callable=AsyncMock
+            ) as mockExpired,
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        mockExpired.assert_not_called()
+        assert manager._lastVisionGcTime == lastRun
+
+    async def testNothingExpired_noDeleteNoClear(self, testDatabase: Database) -> None:
+        """No expired rows → early return: no file deletion, no vision_url clear.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        # Seeded fresh (updated_at = now) → still live, nothing expired.
+        await self._seedAttachmentWithVisionUrl(testDatabase, "fresh-row", "fresh.jpeg")
+
+        storageMock = self._makeStorageMock()
+        realClear = repo.clearVisionUrl
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear) as mockClear,
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        storageMock.delete.assert_not_called()
+        mockClear.assert_not_awaited()
+
+    async def testColdKey_deletesFileAndClearsRow(self, testDatabase: Database) -> None:
+        """Expired row whose key nothing live references: file deleted, row cleared.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "cold-row", "cold.jpeg")
+        await self._backdateUpdatedAt(testDatabase, "cold-row", self._OLD_TS)
+
+        storageMock = self._makeStorageMock()
+        realClear = repo.clearVisionUrl
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear) as mockClear,
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        storageMock.delete.assert_called_once_with("cold.jpeg")
+        mockClear.assert_awaited_once_with("cold-row")
+
+        row = await repo.getMediaAttachment("cold-row")
+        assert row is not None
+        assert row["vision_url"] is None
+
+    async def testHotKey_sharedUrl_fileKeptRowCleared(self, testDatabase: Database) -> None:
+        """Expired row sharing its vision_url with a live row: file kept, row cleared.
+
+        The dedup guard must prevent deleting a file a fresh row still
+        references; only the expired row's reference is dropped.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "expired-row", "shared.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "fresh-row", "shared.jpeg")
+        await self._backdateUpdatedAt(testDatabase, "expired-row", self._OLD_TS)
+
+        storageMock = self._makeStorageMock()
+        realClear = repo.clearVisionUrl
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear) as mockClear,
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        storageMock.delete.assert_not_called()
+        mockClear.assert_awaited_once_with("expired-row")
+
+        expiredAfter = await repo.getMediaAttachment("expired-row")
+        freshAfter = await repo.getMediaAttachment("fresh-row")
+        assert expiredAfter is not None
+        assert expiredAfter["vision_url"] is None
+        assert freshAfter is not None
+        assert freshAfter["vision_url"] == "shared.jpeg"
+
+    async def testDeleteRaises_clearSkippedLoopContinues(
+        self, testDatabase: Database, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A raising delete skips that row's clear (retryable) and the loop continues.
+
+        First row's delete raises a backend error: no clear for it (its row
+        still matches next hour's expired query), a warning is logged, and the
+        second row is fully processed.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            caplog: pytest log-capture fixture.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "boom-row", "boom.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "ok-row", "ok.jpeg")
+        await self._backdateUpdatedAt(testDatabase, "boom-row", self._OLD_TS)
+        await self._backdateUpdatedAt(testDatabase, "ok-row", self._OLD_TS)
+
+        storageMock = self._makeStorageMock()
+        storageMock.delete = Mock(side_effect=[Exception("backend io error"), True])
+        realClear = repo.clearVisionUrl
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear) as mockClear,
+            caplog.at_level(logging.WARNING),
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        # Loop continued past the failure to the second row.
+        assert storageMock.delete.call_args_list == [call("boom.jpeg"), call("ok.jpeg")]
+
+        # boom-row: clear skipped, row untouched → retried next hour.
+        boomRow = await repo.getMediaAttachment("boom-row")
+        assert boomRow is not None
+        assert boomRow["vision_url"] == "boom.jpeg"
+
+        # ok-row: fully processed.
+        mockClear.assert_awaited_once_with("ok-row")
+        okRow = await repo.getMediaAttachment("ok-row")
+        assert okRow is not None
+        assert okRow["vision_url"] is None
+
+        # Warning logged for the failed row.
+        assert "boom-row" in caplog.text
+
+    async def testGatePasses_updatesLastRunTime(self, testDatabase: Database) -> None:
+        """A GC pass that gets past the elapsed gate advances _lastVisionGcTime.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1, lastGcTime=0.0)
+        assert manager._lastVisionGcTime == 0.0
+
+        with patch.object(StorageService, "getInstance", return_value=Mock()):
+            await manager._visionGcCronJob(self._makeTask())
+
+        assert manager._lastVisionGcTime > 0.0
+
+    async def testLiveKeysLookupFailed_abortsSweep(
+        self, testDatabase: Database, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``getLiveVisionUrls`` returning None (lookup FAILED) aborts the sweep.
+
+        Regression for the fail-destructive sentinel: None must never be
+        treated as "nothing is live". With expired rows present and the
+        live-lookup failing, NO file is deleted, NO row is cleared (rows
+        keep their ``vision_url`` for the next tick's retry), and a single
+        WARNING explains the abort.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            caplog: pytest log-capture fixture.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "expired-row", "cold.jpeg")
+        await self._backdateUpdatedAt(testDatabase, "expired-row", self._OLD_TS)
+
+        storageMock = self._makeStorageMock()
+        realClear = repo.clearVisionUrl
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "getLiveVisionUrls", new_callable=AsyncMock, return_value=None),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear) as mockClear,
+            caplog.at_level(logging.WARNING),
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        storageMock.delete.assert_not_called()
+        mockClear.assert_not_awaited()
+
+        row = await repo.getMediaAttachment("expired-row")
+        assert row is not None
+        assert row["vision_url"] == "cold.jpeg"
+
+        warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "aborting sweep" in warnings[0].getMessage()
+
+    async def testConcurrentPublishDuringSweep_objectRestoredByReceipt(self, testDatabase: Database) -> None:
+        """A receipt publishing mid-sweep cannot end up with a dangling row.
+
+        Regression for the snapshot TOCTOU race: rows A(key1) and B(key2)
+        are expired and cold at snapshot time, but a concurrent receipt
+        publishes key2 on fresh row C while the sweep is running. Under
+        the shared ``visionStorageLock`` the receipt's critical section
+        cannot run mid-sweep: it blocks on the lock the GC holds, so the
+        GC deletes key2 BEFORE the receipt re-stores and publishes it —
+        row C ends consistent (``vision_url`` set AND object present).
+        Without the lock the publish lands mid-sweep and the GC then
+        deletes key2 out from under row C, leaving it dangling.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-A", "key1.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-B", "key2.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-C", None)
+        await self._backdateUpdatedAt(testDatabase, "row-A", self._OLD_TS)
+        await self._backdateUpdatedAt(testDatabase, "row-B", self._OLD_TS)
+
+        # Dict-backed storage mock so object presence is observable.
+        files: Dict[str, bytes] = {}
+        storageMock = Mock()
+        storageMock.store = Mock(side_effect=lambda key, data: files.__setitem__(key, data))
+        storageMock.delete = Mock(side_effect=lambda key: files.pop(key, None) is not None)
+
+        realClear = repo.clearVisionUrl
+        realUpdate = repo.updateMediaAttachment
+        receiptTasks: List[asyncio.Task] = []
+        spawned = {"done": False}
+
+        async def concurrentReceipt() -> None:
+            """Simulate the receipt-side store-and-publish critical section.
+
+            Mirrors ``_storeVisionImage``'s second critical section (store
+            BEFORE the ``vision_url`` write) under the shared lock.
+
+            Returns:
+                None
+            """
+            async with visionStorageLock:
+                storageMock.store("key2.jpeg", b"re-normalized-bytes")
+                assert await realUpdate("row-C", visionUrl="key2.jpeg") is True
+
+        async def clearDuringSweep(mediaId: str) -> bool:
+            """Spawn the concurrent receipt once, at the sweep's first clear.
+
+            Args:
+                mediaId: Media attachment unique identifier to clear.
+
+            Returns:
+                The real ``clearVisionUrl`` result.
+            """
+            if not spawned["done"]:
+                spawned["done"] = True
+                receiptTasks.append(asyncio.create_task(concurrentReceipt()))
+                # Let the receipt task run up to its lock acquisition: with
+                # the lock it blocks until the sweep finishes; without it the
+                # publish lands mid-sweep.
+                await asyncio.sleep(0)
+            return await realClear(mediaId)
+
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=clearDuringSweep),
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+        for receiptTask in receiptTasks:
+            await receiptTask
+
+        # Row C was published by the receipt AND its object is present:
+        # the sweep deleted key2 first, the receipt's store re-created it.
+        rowC = await repo.getMediaAttachment("row-C")
+        assert rowC is not None
+        assert rowC["vision_url"] == "key2.jpeg"
+        assert files.get("key2.jpeg") == b"re-normalized-bytes"
+
+        # The sweep itself completed normally: A and B cleared, key1 gone
+        # (deleted and never re-stored).
+        rowA = await repo.getMediaAttachment("row-A")
+        rowB = await repo.getMediaAttachment("row-B")
+        assert rowA is not None
+        assert rowA["vision_url"] is None
+        assert rowB is not None
+        assert rowB["vision_url"] is None
+        assert "key1.jpeg" not in files
+
+    async def testSummaryCounts_outcomesAndDistinctKeys(
+        self, testDatabase: Database, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Summary counters report outcomes, not attempts, and DISTINCT files.
+
+        Five expired rows: one file deleted (True); one delete hits an
+        already-missing file (False — must count as missing, not deleted);
+        two rows share one key (deleted once, the idempotent second delete
+        misses); one row's file is held by a live row (cleared with the
+        file retained, never deleted). Expected summary: 5/5 cleared,
+        2 distinct files deleted, 2 already-missing deletes, 1 retained.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            caplog: pytest log-capture fixture.
+        """
+        manager = self._buildManager(testDatabase, visionTtlDays=1)
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-del", "del.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-gone", "gone.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-shared-1", "shared.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-shared-2", "shared.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "row-hot", "hot.jpeg")
+        # Fresh row holding the same key as row-hot → that key stays live.
+        await self._seedAttachmentWithVisionUrl(testDatabase, "live-holder", "hot.jpeg")
+        for expiredRow in ("row-del", "row-gone", "row-shared-1", "row-shared-2", "row-hot"):
+            await self._backdateUpdatedAt(testDatabase, expiredRow, self._OLD_TS)
+
+        storageMock = self._makeStorageMock()
+        # Per-call outcomes in expired-row order: del(True), gone(False),
+        # shared #1(True), shared #2(already gone → False). row-hot is
+        # live-referenced and never reaches delete.
+        storageMock.delete = Mock(side_effect=[True, False, True, False])
+        realClear = repo.clearVisionUrl
+        with (
+            patch.object(StorageService, "getInstance", return_value=storageMock),
+            patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear),
+            caplog.at_level(logging.INFO),
+        ):
+            await manager._visionGcCronJob(self._makeTask())
+
+        assert storageMock.delete.call_args_list == [
+            call("del.jpeg"),
+            call("gone.jpeg"),
+            call("shared.jpeg"),
+            call("shared.jpeg"),
+        ]
+
+        summary = next(
+            record
+            for record in caplog.records
+            if record.levelno == logging.INFO and "Vision GC:" in record.getMessage()
+        )
+        message = summary.getMessage()
+        assert "cleared 5/5 expired row(s)" in message
+        assert "deleted 2 distinct file(s)" in message
+        assert "2 delete(s) hit an already-missing file" in message
+        assert "1 row(s) cleared with file retained (shared key still live)" in message

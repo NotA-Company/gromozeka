@@ -85,6 +85,42 @@ logger = logging.getLogger(__name__)
 __all__ = ["HandlerResultStatus", "BaseBotHandler"]
 
 
+visionStorageLock = asyncio.Lock()
+"""Serializes native-vision storage critical sections against the TTL-GC sweep.
+
+Single-process asyncio app, so a plain ``asyncio.Lock`` suffices. The lock is
+NOT reentrant: no holder may await code that re-acquires it.
+
+Protocol — two parties:
+
+- ``HandlersManager._visionGcCronJob`` holds it across BOTH snapshot queries
+  (expired rows + live keys) AND the whole per-row delete/clear sweep, so the
+  delete decision is never made against a snapshot a concurrent receipt is
+  still mutating.
+- ``BaseBotHandler._storeVisionImage`` holds it around its two storage/DB
+  critical sections: (a) the reuse short-exit (in-lock row reread →
+  current-key-or-hint probe → bare touch (unchanged) or republish
+  (GC-cleared, still-live shared key)) and (b) the store-and-publish section
+  (dedup ``exists()`` + ``store()`` + ``vision_url`` write). The attachment
+  download and image normalization stay OUTSIDE the lock so network/encoder
+  I/O never serializes against the GC.
+
+Why this closes the receipt/GC races: publish (store + ``vision_url`` write)
+and reuse-confirm (in-lock row re-read + ``exists()`` probe + touch-or-
+republish) are serialized against the sweep, so either order is safe.
+Receipt-first: the GC's snapshot observes the freshly published/touched live
+row and keeps the file. GC-first, BOTH outcomes are handled by the receipt's
+in-lock row revalidation: (a) deleted-file — the sweep removed the object and
+cleared the row's reference, so the receipt's ``exists()`` probes miss and it
+falls through to the store path, which re-stores the object BEFORE publishing
+it; (b) retained-file — the sweep kept a shared file (a fresh row still
+references the key) but cleared the expired row's ``vision_url``; the
+receipt detects the cleared reference, finds the still-live shared key, and
+REPUBLISHES it under the lock (no re-store needed — the object never left
+the store).
+"""
+
+
 def isMaxAnimatedStickerStubUrl(url: str) -> bool:
     """
     Classify a URL as a Max animated-sticker placeholder ("stub") image.
@@ -2021,8 +2057,11 @@ class BaseBotHandler(CommandHandlerMixin):
                     # (reuse-check + download + normalize + store) on re-receipt
                     # when NATIVE_VISION is on for the chat — never re-analysis
                     # (no _parseImage, status stays DONE, description is not
-                    # re-parsed). Covered rows exit via the reuse check inside
-                    # `_storeVisionImage` at zero extra cost. Max
+                    # re-parsed). Covered rows exit via the reuse check
+                    # inside `_storeVisionImage` with one in-lock confirm
+                    # write — a bare `updated_at` touch, or a `vision_url`
+                    # republish when the TTL-GC cleared a still-live shared
+                    # reference. Max
                     # animated-sticker stub rows are NOT eligible:
                     # processMaxMedia seeds them DONE precisely so the generic
                     # placeholder image is never processed, and publishing it as
@@ -2272,15 +2311,26 @@ class BaseBotHandler(CommandHandlerMixin):
 
         - The null-backend check runs BEFORE any vision-only download, so a
           misconfigured backend never wastes a fetch;
-        - the early reuse check runs next: when *existingVisionUrl* points
-          at an object that still exists in the vision-scoped store, the
-          method returns it immediately — repeated receipts are idempotent
-          and only rows lacking USABLE vision bytes pay the
-          download/normalize/store/DB-write cost. A stale *existingVisionUrl*
-          (set in the row but the object is gone — e.g. a pre-storage-split
-          legacy ``vision/{sha512}.{ext}`` key that no longer resolves in
-          the vision-scoped store) falls through to the full path, and the
-          row's vision_url is overwritten with the fresh bare key (self-heal);
+        - the early reuse check runs next: under the lock it REVALIDATES the
+          row's current ``vision_url`` (the caller-passed *existingVisionUrl*
+          is only a pre-lock snapshot — the TTL-GC sweep may have run in
+          between) and probes the resulting candidate key (the row's live
+          reference, else the stale snapshot) against the vision-scoped
+          store. Unchanged reference + live object → ONE bare-touch UPDATE
+          of ``updated_at`` (receipt-freshness/LRU signal for the vision
+          TTL-GC — repeated coverage refreshes the retention clock) and an
+          immediate return. GC-cleared reference + object still alive (the
+          sweep retained the shared file because a fresh row references the
+          same key) → REPUBLISH the verified key on the row (``vision_url``
+          write only — no download/normalize/store), restoring coverage the
+          sweep had withdrawn. No usable reference, or the object behind the
+          candidate is missing (e.g. a pre-storage-split legacy
+          ``vision/{sha512}.{ext}`` key that no longer resolves in the
+          vision-scoped store) → falls through to the full path, and the
+          row's vision_url is overwritten with the fresh bare key
+          (self-heal). A row that moved to a DIFFERENT live key is confirmed
+          at that current key — the stale snapshot is never written back
+          over it;
         - the download happens only when *mediaData* is empty: a download
           that already returned None earlier in the receipt flow (e.g. by
           the save-attachments path) is RETRIED here — a transient failure
@@ -2292,7 +2342,17 @@ class BaseBotHandler(CommandHandlerMixin):
           carrying EXIF), and send-time delivery does no resize;
         - storage happens before the DB write: a failed write may leave an
           orphan storage object (acceptable), but ``vision_url`` is never
-          published before the object exists.
+          published before the object exists;
+        - the two storage/DB critical sections — the reuse short-exit
+          (in-lock row reread → current-key-or-hint probe → bare touch
+          (unchanged) or republish (GC-cleared, still-live shared key)) and the
+          store-and-publish section (dedup ``exists()`` + ``store()`` +
+          ``vision_url`` write) — run under the module-level
+          ``visionStorageLock`` shared with the TTL-GC sweep (see the
+          lock's docstring for the protocol and why serializing them
+          closes the receipt/GC races). The download and normalization
+          stay OUTSIDE the lock so network/encoder I/O never serializes
+          against the GC.
 
         Normalization parameters (dimension, output format, quality) come
         from the vision settings cached in ``__init__``
@@ -2311,17 +2371,23 @@ class BaseBotHandler(CommandHandlerMixin):
             fileId: Platform file id used when a download is required.
             mediaData: Already-downloaded bytes (e.g. fetched by the
                 save-attachments path), or None when no bytes are available.
-            existingVisionUrl: vision_url already recorded on the media row
-                (None when the row has none). When it references a live
-                object in the vision-scoped store, everything after the
-                reuse check is skipped; when the object is missing, the
-                full path runs and republishes a fresh key.
+            existingVisionUrl: vision_url snapshot the caller read BEFORE this
+                method took the storage lock (None when the row had none).
+                Treated as a HINT only: the reuse step revalidates the row's
+                CURRENT reference under the lock first. When the resulting
+                candidate references a live object in the vision-scoped
+                store, everything after the reuse check is skipped (one
+                ``updated_at`` touch — or a ``vision_url`` republish when
+                the GC cleared the reference — still runs); when the object
+                is missing, the full path runs and republishes a fresh key.
 
         Returns:
             ``(visionUrl, availableMediaData)`` where *visionUrl* is the
             storage key written to ``media_attachments.vision_url`` (None on
-            skip/failure; the reused *existingVisionUrl* on the early-reuse
-            path) and *availableMediaData* is whatever bytes exist
+            skip/failure; on the early-reuse path the row's CURRENT verified
+            key — the live row reference when one exists, which may differ
+            from the stale *existingVisionUrl* snapshot, else the republished
+            snapshot key) and *availableMediaData* is whatever bytes exist
             after this method's download step (None when there are none),
             for reuse by the parse path.
         """
@@ -2333,17 +2399,56 @@ class BaseBotHandler(CommandHandlerMixin):
                 )
                 return (None, None)
 
-            if existingVisionUrl and self.visionStorage.exists(existingVisionUrl):
-                # Early reuse: the row already points at a live object in
-                # the vision-scoped store, so the value is already in the
-                # row — skip the download, normalization, store, and DB
-                # write entirely (repeated receipts are idempotent). A
-                # stale key (vision_url set but the object disappeared,
-                # e.g. a legacy pre-storage-split `vision/{sha512}.{ext}`
-                # key that no longer resolves in the vision-scoped store)
-                # falls through to the full path below and the row's
-                # vision_url gets overwritten with the fresh bare key.
-                return (existingVisionUrl, mediaData)
+            async with visionStorageLock:
+                # Revalidate the row's CURRENT reference under the lock:
+                # *existingVisionUrl* is a pre-lock snapshot, and the TTL-GC
+                # sweep may have run between the caller's read and this
+                # critical section — most importantly the retained-file
+                # GC-first order (an expired row's shared key was kept alive
+                # by a fresh row, but the expired row's vision_url was
+                # CLEARED). The PK read is cheap; a vanished row is treated
+                # as "no current reference".
+                currentRow = await self.db.mediaAttachments.getMediaAttachment(mediaId)
+                currentVisionUrl: Optional[str] = currentRow.get("vision_url") if currentRow else None
+                # The row's live reference wins; the caller's snapshot is
+                # only a hint for the GC-cleared case. When the row has moved
+                # to a different key, the stale snapshot is discarded — it is
+                # never written back over a newer row reference.
+                candidate = currentVisionUrl if currentVisionUrl else existingVisionUrl
+                if candidate and self.visionStorage.exists(candidate):
+                    # Early reuse: a live object backs the candidate key in
+                    # the vision-scoped store, so the download,
+                    # normalization, and store steps are all skipped
+                    # (repeated receipts are idempotent). Which single write
+                    # runs depends on whether the row still carries the
+                    # reference (by construction below the two cases are
+                    # exhaustive: a non-None currentVisionUrl always equals
+                    # the candidate):
+                    # - unchanged reference (currentVisionUrl == candidate):
+                    #   one bare touch of ``updated_at`` — the
+                    #   receipt-freshness/LRU signal the vision TTL-GC sweeps
+                    #   on, so every covered re-receipt refreshes the
+                    #   retention clock;
+                    # - GC-cleared reference (currentVisionUrl is None): the
+                    #   sweep kept the shared file (a fresh row still
+                    #   references the same key) but blanked this row's
+                    #   vision_url — republish the verified key (a
+                    #   ``vision_url`` write only: no download, no
+                    #   normalization, no storage write) so the successful
+                    #   re-receipt restores native-image coverage, with the
+                    #   ride-along ``updated_at`` refresh making the row live
+                    #   again.
+                    # Everything else (no usable reference, or the object
+                    # behind the candidate vanished — e.g. a legacy
+                    # pre-storage-split `vision/{sha512}.{ext}` key that no
+                    # longer resolves in the vision-scoped store) falls
+                    # through to the full path below and the row's vision_url
+                    # gets overwritten with a fresh bare key (self-heal).
+                    if currentVisionUrl == candidate:
+                        await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId)
+                    else:
+                        await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, visionUrl=candidate)
+                    return (candidate, mediaData)
 
             if mediaData is None:
                 if self._bot is None:
@@ -2384,13 +2489,14 @@ class BaseBotHandler(CommandHandlerMixin):
             ext = normalizedMime.split("/")[-1]
             sha512 = hashlib.sha512(normalizedBytes).hexdigest()
             key = f"{sha512}.{ext}"
-            # Content dedup: store only when not already present, mirroring storeAttachment.
-            if not self.visionStorage.exists(key):
-                self.visionStorage.store(key, normalizedBytes)
-            # Store-then-write: the write below may still fail (leaving an
-            # orphan storage object — acceptable), but vision_url is never
-            # published before the object exists.
-            await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, visionUrl=key)
+            async with visionStorageLock:
+                # Content dedup: store only when not already present, mirroring storeAttachment.
+                if not self.visionStorage.exists(key):
+                    self.visionStorage.store(key, normalizedBytes)
+                # Store-then-write: the write below may still fail (leaving an
+                # orphan storage object — acceptable), but vision_url is never
+                # published before the object exists.
+                await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, visionUrl=key)
             return (key, mediaData)
         except Exception as e:
             logger.warning(f"Native-vision store failed for chat {chatId}: {type(e).__name__}: {e}")

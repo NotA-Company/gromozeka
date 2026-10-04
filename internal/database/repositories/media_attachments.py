@@ -19,7 +19,7 @@ Example:
 
 import datetime
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from internal.models import MessageType
 from lib.db import utils as dbUtils
@@ -371,3 +371,124 @@ class MediaAttachmentsRepository(BaseRepository):
             logger.error(f"Failed to get media group last updated timestamp: {e}")
             logger.exception(e)
             return None
+
+    async def getExpiredVisionAttachments(self, cutoff: datetime.datetime) -> List[MediaAttachmentDict]:
+        """Get media attachments whose vision image is expired for TTL garbage collection.
+
+        Selects rows that still reference a vision object (``vision_url`` is
+        set) whose ``updated_at`` is older than the cutoff. The
+        ``updated_at`` column doubles as the receipt-freshness/LRU signal:
+        it is refreshed by every update (including the bare touch on the
+        vision reuse path), so a row older than the cutoff has not been
+        re-received within the retention window.
+
+        Args:
+            cutoff: Expiration boundary (aware UTC); rows with ``updated_at``
+                strictly before it are returned.
+
+        Returns:
+            List of MediaAttachmentDict objects past the cutoff, empty list
+            if none are expired. On a database failure the error is logged
+            (ERROR) by the repository and an empty list is returned; the
+            exception is not propagated to the caller.
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                """
+                SELECT * FROM media_attachments
+                WHERE vision_url IS NOT NULL AND updated_at < :cutoff
+            """,
+                {"cutoff": cutoff},
+            )
+
+            return [dbUtils.sqlToTypedDict(row, MediaAttachmentDict) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get expired vision attachments: {e}")
+            return []
+
+    async def getLiveVisionUrls(self, cutoff: datetime.datetime) -> Optional[Set[str]]:
+        """Get vision storage keys still referenced by live (non-expired) rows.
+
+        Dedup guard for the TTL garbage collector: content-addressed
+        ``{sha512}.{ext}`` keys are shared across rows, so a file may only
+        be deleted from the vision store when no live row still references
+        its key.
+
+        Args:
+            cutoff: Freshness boundary (aware UTC); rows with ``updated_at``
+                at or after it count as live.
+
+        Returns:
+            Three-valued contract — the caller MUST distinguish all three:
+
+            - Populated set: keys referenced by at least one live row.
+            - Empty set: the query succeeded and genuinely NO live row
+              references any vision object.
+            - ``None``: the query itself FAILED (error logged (ERROR) by
+              the repository; the exception is not propagated).
+
+            This method is the sanctioned exception to this repository's
+            empty-sentinel-on-error convention because its only caller is
+            a DESTRUCTIVE garbage collector that deletes every stored
+            file absent from the returned set: mistaking a failed lookup
+            for "nothing is live" would authorize deleting files that
+            live rows may still reference. Failure must therefore be
+            observable as ``None``, never collapsed into emptiness.
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                """
+                SELECT DISTINCT vision_url FROM media_attachments
+                WHERE vision_url IS NOT NULL AND updated_at >= :cutoff
+            """,
+                {"cutoff": cutoff},
+            )
+
+            return {row["vision_url"] for row in rows}
+        except Exception as e:
+            logger.error(f"Failed to get live vision urls: {e}")
+            return None
+
+    async def clearVisionUrl(self, mediaId: str) -> bool:
+        """Clear the vision_url of a media attachment (vision TTL garbage collection).
+
+        Sets ``vision_url`` to NULL and refreshes ``updated_at`` in a single
+        UPDATE — the ride-along ``updated_at`` refresh is consistent with
+        every update in this repository and marks the row as freshly
+        examined by the GC pass.
+
+        Args:
+            mediaId: Media attachment unique identifier (file_unique_id).
+
+        Returns:
+            bool: True if the update executed successfully, False otherwise.
+            A mediaId matching no row is not an error (True, same semantics
+            as updateMediaAttachment). On a database failure the error is
+            logged (ERROR) by the repository and False is returned; the
+            exception is not propagated to the caller.
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(readonly=False)
+            await sqlProvider.execute(
+                """
+                UPDATE media_attachments
+                SET
+                    vision_url = NULL,
+                    updated_at = :updatedAt
+                WHERE
+                    file_unique_id = :mediaId
+            """,
+                {
+                    "mediaId": mediaId,
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
+                },
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear media attachment vision_url: {e}")
+            return False

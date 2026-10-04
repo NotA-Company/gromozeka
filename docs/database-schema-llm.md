@@ -200,7 +200,7 @@ CREATE TABLE media_attachments (
 
 **Note on `metadata`:** `migration_013` declares `metadata TEXT NOT NULL` (no `DEFAULT ''`) for cross-RDBMS portability — application code always supplies the value.
 
-**Note on `vision_url`:** Added by `migration_030` (nullable TEXT, no default) for the native-vision feature — the **bare** content key `{sha512}.{ext}` (sha512 over the normalized bytes; no app-layer prefix) of the content-deduplicated NORMALIZED image bytes in the **vision-scoped** StorageService instance (configured from the `[storage.storages.vision]` table — absent table = null backend, feature off; ADR-029), written at receipt time by `BaseBotHandler._storeVisionImage` when the chat's `native-vision` setting is on, read at construction time by `EnsuredMessage.toModelMessage(nativeImages=True)` (native-vision v2, ADR-028 — the v1 chat-time reader `LLMMessageHandler._applyNativeVision` was deleted). Distinct from `local_url` (ORIGINAL bytes via the default-scope store, e.g. resender). NULL = no vision bytes → the chat-time path degrades to the text `description` — that includes pre-split rows holding legacy `vision/{sha512}.{ext}` keys, unreadable at chat time by design (no migration, no dual-read — the scoped store uses bare keys and the old objects live in the old default store; a re-receipt with `native-vision` on self-heals such rows via the store-only DONE backfill, overwriting the stale key with a fresh bare one). Objects are retained until the TTL-GC follow-up lands (`bot.vision.ttl-days` is target retention only). See ADR-027 + ADR-028 + ADR-029 in [`llm/architecture.md`](llm/architecture.md) and the specs [`docs/design/native-vision-v2-construction-attach.md`](design/native-vision-v2-construction-attach.md) / [`docs/design/native-vision-design-v1.md`](design/native-vision-design-v1.md) / [`docs/design/scoped-storage-design-v1.md`](design/scoped-storage-design-v1.md) (scoped store).
+**Note on `vision_url`:** Added by `migration_030` (nullable TEXT, no default) for the native-vision feature — the **bare** content key `{sha512}.{ext}` (sha512 over the normalized bytes; no app-layer prefix) of the content-deduplicated NORMALIZED image bytes in the **vision-scoped** StorageService instance (configured from the `[storage.storages.vision]` table — absent table = null backend, feature off; ADR-029), written at receipt time by `BaseBotHandler._storeVisionImage` when the chat's `native-vision` setting is on, read at construction time by `EnsuredMessage.toModelMessage(nativeImages=True)` (native-vision v2, ADR-028 — the v1 chat-time reader `LLMMessageHandler._applyNativeVision` was deleted). Distinct from `local_url` (ORIGINAL bytes via the default-scope store, e.g. resender). NULL = no vision bytes → the chat-time path degrades to the text `description` — that includes pre-split rows holding legacy `vision/{sha512}.{ext}` keys, unreadable at chat time by design (no migration, no dual-read — the scoped store uses bare keys and the old objects live in the old default store; a re-receipt with `native-vision` on self-heals such rows via the store-only DONE backfill, overwriting the stale key with a fresh bare one). Retention is enforced by the hourly vision TTL-GC (`HandlersManager._visionGcCronJob`; `bot.vision.ttl-days`, default 30, `0` disables — see [`llm/handlers.md`](llm/handlers.md) §9.7): rows with `vision_url IS NOT NULL AND updated_at` older than the cutoff get their stored file deleted (only when no live row still references the same content key — dedup hot-set guard) and `vision_url` cleared (`clearVisionUrl`); the reuse path's bare `updated_at` touch keeps actively re-received media alive, and cleared rows degrade to the description fallback and self-heal on re-receipt. See ADR-027 + ADR-028 + ADR-029 in [`llm/architecture.md`](llm/architecture.md) and the specs [`docs/design/native-vision-v2-construction-attach.md`](design/native-vision-v2-construction-attach.md) / [`docs/design/native-vision-design-v1.md`](design/native-vision-design-v1.md) / [`docs/design/scoped-storage-design-v1.md`](design/scoped-storage-design-v1.md) (scoped store).
 
 ---
 ### user_data (DROPPED)
@@ -1045,7 +1045,7 @@ db.mediaAttachments.updateMediaAttachment(
     prompt: Optional[str] = None
 ) -> bool
 ```
-Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist. The `visionUrl` kwarg writes `media_attachments.vision_url` (migration_030) — the StorageService key of the normalized image bytes, set only by the native-vision receipt-time store (`BaseBotHandler._storeVisionImage`); there is deliberately no way to clear it back to NULL from this method yet (a future TTL-GC cron owns that).
+Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist. The `visionUrl` kwarg writes `media_attachments.vision_url` (migration_030) — the StorageService key of the normalized image bytes, set only by the native-vision receipt-time store (`BaseBotHandler._storeVisionImage`); there is deliberately no way to clear it back to NULL from this method — the hourly vision TTL-GC owns clearing via the dedicated `clearVisionUrl` (below). A bare call with no fields (`updateMediaAttachment(mediaId=…)`) performs only the ride-along `updated_at` refresh — the reuse-path LRU touch that keeps actively re-received media alive for the TTL-GC (see [`llm/handlers.md`](llm/handlers.md) §9.7).
 
 **Get Media Attachment**
 ```python
@@ -1084,6 +1084,30 @@ db.mediaAttachments.ensureMediaInGroup(
 ) -> bool
 ```
 Idempotent upsert into `media_groups` (`ON CONFLICT DO NOTHING`).
+
+**Get Expired Vision Attachments (vision TTL-GC)**
+```python
+db.mediaAttachments.getExpiredVisionAttachments(
+    cutoff: datetime.datetime
+) -> List[MediaAttachmentDict]
+```
+TTL-GC snapshot query: rows with `vision_url IS NOT NULL AND updated_at < cutoff`. On a database failure returns `[]` (error logged by the repository; `updated_at` doubles as the LRU signal the GC sweeps on).
+
+**Get Live Vision URLs (vision TTL-GC dedup guard)**
+```python
+db.mediaAttachments.getLiveVisionUrls(
+    cutoff: datetime.datetime
+) -> Optional[Set[str]]
+```
+Distinct vision keys referenced by live (`updated_at >= cutoff`) rows — content-addressed keys are shared across rows, so a stored file may be deleted only when its key is absent from this set. **Three-valued contract**: populated set / empty set (the query succeeded, genuinely nothing live) / `None` (the query FAILED — the caller must abort the sweep; the sanctioned exception to this repository's empty-sentinel-on-error convention, because the only caller is a destructive garbage collector).
+
+**Clear Vision URL (vision TTL-GC)**
+```python
+db.mediaAttachments.clearVisionUrl(
+    mediaId: str
+) -> bool
+```
+Sets `vision_url = NULL` with a ride-along `updated_at` refresh in one UPDATE — used by the hourly vision TTL-GC after the stored file is deleted (`HandlersManager._visionGcCronJob`; see [`llm/handlers.md`](llm/handlers.md) §9.7).
 
 ---
 ### Spam Detection Operations

@@ -21,6 +21,7 @@ import datetime
 import hashlib
 import logging
 import types
+from collections.abc import Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, Generator, List, Optional, Tuple, TypedDict, cast
@@ -29,7 +30,19 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from PIL import Image
 
+from internal.bot.common.handlers.common import CommonHandler
+from internal.bot.common.handlers.configure import ConfigureCommandHandler
+from internal.bot.common.handlers.delete_from_user import DeleteFromUserMessageHandler
+from internal.bot.common.handlers.dev_commands import DevCommandsHandler
+from internal.bot.common.handlers.help_command import HelpHandler
+from internal.bot.common.handlers.llm_messages import LLMMessageHandler
 from internal.bot.common.handlers.manager import HandlersManager
+from internal.bot.common.handlers.media import MediaHandler
+from internal.bot.common.handlers.message_preprocessor import MessagePreprocessorHandler
+from internal.bot.common.handlers.react_on_user import ReactOnUserMessageHandler
+from internal.bot.common.handlers.spam import SpamHandler
+from internal.bot.common.handlers.summarization import SummarizationHandler
+from internal.bot.common.handlers.topic_manager import TopicManagerHandler
 from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
 from internal.bot.models import (
     BotProvider,
@@ -1703,6 +1716,12 @@ class TestProcessMediaV2Vision:
     _MEDIA_GROUP_ID = "media-group-vision-test"
     """mediaGroupId attached to every EnsuredMessage (required by _processMediaV2)."""
 
+    _SHARER_MEDIA_ID = "sharer-file-unique-id-002"
+    """file_unique_id of the second (live) row sharing a vision content key."""
+
+    _EXPIRED_TS = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+    """Backdated ``updated_at`` modelling an expired-style row (TTL-GC swept it)."""
+
     _VISION_CONFIG: Dict[str, object] = {
         "max-image-dimension": 2048,
         "image-format": "image/jpeg",
@@ -1991,6 +2010,24 @@ class TestProcessMediaV2Vision:
         )
         if visionUrl is not None:
             await testDatabase.mediaAttachments.updateMediaAttachment(mediaId=self._MEDIA_ID, visionUrl=visionUrl)
+
+    @staticmethod
+    async def _backdateUpdatedAt(testDatabase: Database, mediaId: str, ts: datetime.datetime) -> None:
+        """Backdate a row's ``updated_at`` via the canonical raw-SQL test pattern.
+
+        Same pattern as the TTL-GC tests in ``test_manager.py``: the repo API
+        has no ``updated_at`` setter, so the timestamp is written directly.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            mediaId: Media attachment unique identifier to backdate.
+            ts: Timestamp (aware UTC) to write.
+        """
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "UPDATE media_attachments SET updated_at = :ts WHERE file_unique_id = :id",
+            {"ts": ts.isoformat(), "id": mediaId},
+        )
 
     async def _processImage(
         self,
@@ -2915,17 +2952,20 @@ class TestProcessMediaV2Vision:
     # ``_processMediaV2`` entry point against a pre-seeded row.
     # ------------------------------------------------------------------
 
-    async def test_doneBackfill_zeroWork_whenVisionUrlSetAndObjectExists(
+    async def test_doneBackfill_bareTouch_whenVisionUrlSetAndObjectExists(
         self, testDatabase: Database, tmp_path: Path
     ) -> None:
-        """DONE + vision_url set + live object → immediate return, ZERO extra work.
+        """DONE + vision_url set + live object → immediate return, ONE bare touch.
 
         The common "already covered" re-receipt must exit before any
-        download, DB write, or parse spawn: the reuse check inside
-        ``_storeVisionImage`` confirms the stored object is live, so nothing
-        happens beyond the row read, the (hoisted, pre-match) settings
-        fetch, and that one storage stat — no download, no store write, no
-        parse, no background task; ``vision_url`` is unchanged.
+        download, field-changing DB write, or parse spawn: the reuse check
+        inside ``_storeVisionImage`` confirms the stored object is live, so
+        exactly one bare-touch ``updateMediaAttachment(mediaId=...)`` runs
+        (it refreshes ``updated_at`` only — the receipt-freshness/LRU
+        signal the vision TTL-GC sweeps on) and nothing else happens beyond
+        the row read, the (hoisted, pre-match) settings fetch, and that one
+        storage stat — no download, no store write, no parse, no background
+        task; ``vision_url`` is unchanged.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2946,7 +2986,7 @@ class TestProcessMediaV2Vision:
         updateCalls: List[Tuple[str, Dict[str, object]]] = []
 
         async def countingUpdate(repo: MediaAttachmentsRepository, mediaId: str, **kwargs: object) -> bool:
-            """Record every ``updateMediaAttachment`` call (none may happen).
+            """Record every ``updateMediaAttachment`` call (exactly the bare touch).
 
             Args:
                 repo: The repository instance the production call site used.
@@ -2954,13 +2994,37 @@ class TestProcessMediaV2Vision:
                 **kwargs: The field updates.
 
             Returns:
-                True (unreachable in this test — the DONE arm must return
-                before any DB write).
+                True. The covered DONE receipt performs no field-changing
+                write, so the recorded return value is never inspected.
             """
             updateCalls.append((mediaId, kwargs))
             return True
 
-        with patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=countingUpdate):
+        realStore = StorageService.store
+        storeCalls: List[Tuple[str, bytes]] = []
+
+        def spyingStore(storageSelf: StorageService, key: str, data: bytes) -> None:
+            """Record every storage write, then delegate to the real method.
+
+            Class-level spy (the established pattern for the repositories
+            here), applied to ``StorageService`` so BOTH scopes are covered —
+            the vision reuse path must not write anywhere.
+
+            Args:
+                storageSelf: The StorageService instance ``store`` ran on.
+                key: Storage key written.
+                data: Payload bytes.
+
+            Returns:
+                None
+            """
+            storeCalls.append((key, data))
+            realStore(storageSelf, key, data)
+
+        with (
+            patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=countingUpdate),
+            patch.object(StorageService, "store", new=spyingStore),
+        ):
             ret = await handler._processMediaV2(
                 ensuredMessage=self._makeEnsuredMessage(),
                 mediaType=MessageType.IMAGE,
@@ -2974,12 +3038,233 @@ class TestProcessMediaV2Vision:
         # (every receipt pays the same single cache-backed read).
         handler.getChatSettings.assert_awaited_once()
         handler._parseImage.assert_not_called()
-        assert updateCalls == []
+        # Exactly ONE update — the reuse path's bare touch: only the
+        # `mediaId` kwarg, so no field (vision_url included) is changed.
+        assert updateCalls == [(self._MEDIA_ID, {})]
+        # And ZERO storage writes of any kind (vision or attachment scope):
+        # the covered receipt only confirms the existing object and touches
+        # the row — it never stores.
+        assert storeCalls == []
 
         row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
         assert row is not None
         assert row["status"] == MediaStatus.DONE
         assert row["vision_url"] == liveKey
+
+    async def test_reuseGClearedReference_republishesLiveSharedKey(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """GC cleared the row's reference but kept the shared file → republish.
+
+        Regression for the retained-file GC-first interleaving: expired row
+        A and live row B share content key K, so the TTL-GC sweep deletes
+        NOTHING but CLEARS A's ``vision_url`` (delete-then-clear, file
+        retained via B). A re-receipt of A arrives with the PRE-LOCK
+        snapshot ``existingVisionUrl=K`` — the pre-fix code probed only the
+        OBJECT (``exists(K)`` True via B's reference), performed a bare
+        touch, and left A ``vision_url=NULL`` despite the successful
+        re-receipt. The reuse step must instead revalidate the row's
+        CURRENT reference under the lock, detect the cleared reference,
+        and REPUBLISH the verified still-live key: exactly one
+        ``vision_url`` write (with the ride-along ``updated_at`` refresh)
+        and nothing else — no download, no normalization, no storage
+        write, no warning; coverage is restored on the same receipt.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: Pytest log-capture fixture (warnings must stay empty).
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        imageBytes = self._makeImageBytes()
+        sharedKey = self._placeVisionObject(handler, imageBytes)
+
+        # Row A: expired-style (backdated), referencing the shared key.
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, visionUrl=sharedKey)
+        await self._backdateUpdatedAt(testDatabase, self._MEDIA_ID, self._EXPIRED_TS)
+        # Row B: fresh, referencing the SAME key — holds the object alive.
+        await testDatabase.mediaAttachments.addMediaAttachment(
+            fileUniqueId=self._SHARER_MEDIA_ID,
+            fileId="sharer-platform-file-id",
+            mediaType=MessageType.IMAGE,
+            status=MediaStatus.DONE,
+        )
+        await testDatabase.mediaAttachments.updateMediaAttachment(mediaId=self._SHARER_MEDIA_ID, visionUrl=sharedKey)
+
+        # The GC sweep's effect on A (delete-then-clear with file retained):
+        # A's reference is cleared, the object itself is untouched.
+        assert handler.visionStorage.exists(sharedKey) is True
+        assert await testDatabase.mediaAttachments.clearVisionUrl(self._MEDIA_ID) is True
+        rowA = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert rowA is not None
+        assert rowA["vision_url"] is None
+
+        downloadMock = self._wireDownload(handler, imageBytes)
+
+        realUpdate = MediaAttachmentsRepository.updateMediaAttachment
+        updateCalls: List[Tuple[str, Dict[str, object]]] = []
+
+        async def countingUpdate(repo: MediaAttachmentsRepository, mediaId: str, **kwargs: object) -> bool:
+            """Record every ``updateMediaAttachment`` call, then delegate.
+
+            The spy DELEGATES to the real repository method (unlike the bare
+            touch tests, where a no-op spy suffices): the republish write
+            must actually land for the row-level assertions below to hold.
+
+            Args:
+                repo: The repository instance the production call site used.
+                mediaId: Media attachment unique identifier.
+                **kwargs: The field updates.
+
+            Returns:
+                The real method's result.
+            """
+            updateCalls.append((mediaId, kwargs))
+            return await realUpdate(repo, mediaId, **kwargs)  # type: ignore[arg-type]
+
+        realStore = StorageService.store
+        storeCalls: List[Tuple[str, bytes]] = []
+
+        def spyingStore(storageSelf: StorageService, key: str, data: bytes) -> None:
+            """Record every storage write, then delegate to the real method.
+
+            Class-level spy (the established pattern for the repositories
+            here), applied to ``StorageService`` so BOTH scopes are covered —
+            the republish path must not write anywhere.
+
+            Args:
+                storageSelf: The StorageService instance ``store`` ran on.
+                key: Storage key written.
+                data: Payload bytes.
+
+            Returns:
+                None
+            """
+            storeCalls.append((key, data))
+            realStore(storageSelf, key, data)
+
+        with (
+            patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=countingUpdate),
+            patch.object(StorageService, "store", new=spyingStore),
+            caplog.at_level(logging.WARNING),
+        ):
+            visionUrl, mediaData = await handler._storeVisionImage(
+                chatId=self._CHAT_ID,
+                mediaId=self._MEDIA_ID,
+                mediaType=MessageType.IMAGE,
+                fileId=self._FILE_ID,
+                mediaData=None,
+                existingVisionUrl=sharedKey,  # stale pre-lock snapshot
+            )
+
+        # Republished the still-live shared key; no bytes were produced.
+        assert visionUrl == sharedKey
+        assert mediaData is None
+        downloadMock.assert_not_called()
+        assert storeCalls == []
+        # Exactly ONE update — the republish: ONLY the visionUrl kwarg
+        # (the bare touch would carry no kwargs and would NOT restore
+        # coverage).
+        assert updateCalls == [(self._MEDIA_ID, {"visionUrl": sharedKey})]
+        # No failure warnings from the fail-soft boundary.
+        assert [r for r in caplog.records if "Native-vision store failed" in r.message] == []
+
+        # Row A is covered again, with a refreshed retention clock.
+        rowA = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert rowA is not None
+        assert rowA["status"] == MediaStatus.DONE
+        assert rowA["vision_url"] == sharedKey
+        assert rowA["updated_at"] > self._EXPIRED_TS
+        # The shared object was never re-stored nor deleted; B is untouched.
+        assert handler.visionStorage.exists(sharedKey) is True
+        rowB = await testDatabase.mediaAttachments.getMediaAttachment(self._SHARER_MEDIA_ID)
+        assert rowB is not None
+        assert rowB["vision_url"] == sharedKey
+
+    async def test_reuseRowMovedToDifferentLiveKey_usesCurrentKey(self, testDatabase: Database, tmp_path: Path) -> None:
+        """Row's current key differs from the caller's stale hint → confirm at K2.
+
+        The row's live reference always wins: the row currently carries K2
+        (live object) while the caller passes the stale pre-lock hint K1
+        (also live). The reuse step must confirm the row at its CURRENT key
+        (bare touch, NO ``vision_url`` kwarg) and return K2 — the stale
+        snapshot is never written back over the newer row reference.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        staleKey = self._placeVisionObject(handler, self._makeImageBytes(color=(0, 0, 255)))
+        currentKey = self._placeVisionObject(handler, self._makeImageBytes(color=(255, 0, 0)))
+        assert staleKey != currentKey
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, visionUrl=currentKey)
+
+        downloadMock = self._wireDownload(handler, self._makeImageBytes())
+
+        realUpdate = MediaAttachmentsRepository.updateMediaAttachment
+        updateCalls: List[Tuple[str, Dict[str, object]]] = []
+
+        async def countingUpdate(repo: MediaAttachmentsRepository, mediaId: str, **kwargs: object) -> bool:
+            """Record every ``updateMediaAttachment`` call, then delegate.
+
+            Delegating spy (the bare touch must really refresh ``updated_at``
+            for the row to read as live again).
+
+            Args:
+                repo: The repository instance the production call site used.
+                mediaId: Media attachment unique identifier.
+                **kwargs: The field updates.
+
+            Returns:
+                The real method's result.
+            """
+            updateCalls.append((mediaId, kwargs))
+            return await realUpdate(repo, mediaId, **kwargs)  # type: ignore[arg-type]
+
+        realStore = StorageService.store
+        storeCalls: List[Tuple[str, bytes]] = []
+
+        def spyingStore(storageSelf: StorageService, key: str, data: bytes) -> None:
+            """Record every storage write, then delegate to the real method.
+
+            Args:
+                storageSelf: The StorageService instance ``store`` ran on.
+                key: Storage key written.
+                data: Payload bytes.
+
+            Returns:
+                None
+            """
+            storeCalls.append((key, data))
+            realStore(storageSelf, key, data)
+
+        with (
+            patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=countingUpdate),
+            patch.object(StorageService, "store", new=spyingStore),
+        ):
+            visionUrl, mediaData = await handler._storeVisionImage(
+                chatId=self._CHAT_ID,
+                mediaId=self._MEDIA_ID,
+                mediaType=MessageType.IMAGE,
+                fileId=self._FILE_ID,
+                mediaData=None,
+                existingVisionUrl=staleKey,  # stale pre-lock hint (still live)
+            )
+
+        # The CURRENT key is confirmed and returned, not the stale hint.
+        assert visionUrl == currentKey
+        assert mediaData is None
+        downloadMock.assert_not_called()
+        assert storeCalls == []
+        # Touch-only: the bare touch carries NO visionUrl kwarg — a
+        # snapshot-over-write here would clobber the newer row reference.
+        assert updateCalls == [(self._MEDIA_ID, {})]
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.DONE
+        assert row["vision_url"] == currentKey
 
     async def test_doneBackfill_visionUrlNull_visionOn_storesOnce_statusStaysDone(
         self, testDatabase: Database, tmp_path: Path
@@ -3133,10 +3418,11 @@ class TestProcessMediaV2Vision:
         The pre-existing waste this fixes: a FAILED row falls through to the
         vision branch, which used to re-download even though usable bytes
         were already stored. With the reuse check the vision branch returns
-        silently; the parse retry is unchanged and still makes its OWN
-        download attempt (returning None here), so exactly ONE download
-        happens — the pre-fix receipt performed two (the vision branch's +
-        the parse retry's) and logged a vision "returned no data" WARNING.
+        after its single bare-touch ``updated_at`` refresh; the parse retry
+        is unchanged and still makes its OWN download attempt (returning
+        None here), so exactly ONE download happens — the pre-fix receipt
+        performed two (the vision branch's + the parse retry's) and logged
+        a vision "returned no data" WARNING.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -3147,7 +3433,31 @@ class TestProcessMediaV2Vision:
         liveKey = self._placeVisionObject(handler, self._makeImageBytes())
         await self._seedMediaRow(testDatabase, status=MediaStatus.FAILED, visionUrl=liveKey)
 
-        with caplog.at_level(logging.WARNING):
+        # Pass-through spy: record every updateMediaAttachment call while
+        # the real repository still runs, so the row-state reads below stay
+        # genuine post-write observations.
+        updateCalls: List[Tuple[str, Dict[str, object]]] = []
+        realUpdate = MediaAttachmentsRepository.updateMediaAttachment
+
+        async def spyingUpdate(repo: MediaAttachmentsRepository, mediaId: str, **kwargs: object) -> bool:
+            """Record one ``updateMediaAttachment`` call, then delegate to the real method.
+
+            Args:
+                repo: The repository instance the production call site used.
+                mediaId: Media attachment unique identifier.
+                **kwargs: The field updates.
+
+            Returns:
+                Whatever the real ``updateMediaAttachment`` returns.
+            """
+            updateCalls.append((mediaId, kwargs))
+            realUpdateCallable = cast("Callable[..., Awaitable[bool]]", realUpdate)
+            return await realUpdateCallable(repo, mediaId, **kwargs)
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=spyingUpdate),
+        ):
             ret, downloadMock = await self._processImage(
                 handler, mediaId=self._MEDIA_ID, data=None, parseAttachments=True
             )
@@ -3159,6 +3469,13 @@ class TestProcessMediaV2Vision:
         warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
         assert warnings == []
         assert ret.task is not None
+        # The reuse path contributed exactly ONE bare touch (only the
+        # `mediaId` kwarg), and no call on this receipt ever passed a
+        # visionUrl kwarg — vision_url is written only by the full store
+        # path, which the reuse exit skipped.
+        bareTouchCalls = [(mid, kwargs) for mid, kwargs in updateCalls if kwargs == {}]
+        assert bareTouchCalls == [(self._MEDIA_ID, {})]
+        assert all("visionUrl" not in kwargs for _, kwargs in updateCalls)
 
         row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
         assert row is not None
@@ -3338,6 +3655,10 @@ class TestHandlersManagerVisionScopeInject:
     real ``HandlersManager`` constructions in ``test_stats.py``). The raise
     happens BEFORE the handler pipeline is built, so no handler stubbing is
     needed here.
+
+    Also pins the init-time caching of ``[bot.vision].ttl-days`` into
+    ``_visionTtlDays`` (vision TTL-GC): real constructions with controlled
+    vision tables cover the explicit, default, and clamped-negative values.
     """
 
     @pytest.fixture(autouse=True)
@@ -3351,6 +3672,69 @@ class TestHandlersManagerVisionScopeInject:
         yield
         StorageService._instances.clear()
 
+    @staticmethod
+    def _makeConstructionConfigManager(visionConfig: Dict[str, object]) -> Mock:
+        """Build a ``ConfigManager`` stub sufficient for a real manager construction.
+
+        Wires every getter ``HandlersManager.__init__`` reads: the bot/vision/
+        storage tables plus all optional-handler feature gates disabled, and
+        ``get`` returning ``{}`` so the resender/divination/sandbox handlers
+        stay off.
+
+        Args:
+            visionConfig: The ``[bot.vision]`` table to serve.
+
+        Returns:
+            A Mock serving controlled config dicts.
+        """
+        cm = Mock()
+        cm.getBotConfig = Mock(return_value={"token": "test_token", "owners": [123456]})
+        cm.getVisionConfig = Mock(return_value=visionConfig)
+        cm.getStorageConfig = Mock(return_value={"type": "null"})
+        cm.getOpenWeatherMapConfig = Mock(return_value={"enabled": False})
+        cm.getYandexSearchConfig = Mock(return_value={"enabled": False})
+        cm.getSearchHistoryConfig = Mock(return_value={"enabled": False})
+        cm.getStatsConfig = Mock(return_value={"enabled": False})
+        cm.get = Mock(return_value={})
+        return cm
+
+    @classmethod
+    def _constructManager(cls, visionConfig: Dict[str, object]) -> HandlersManager:
+        """Run a real ``HandlersManager`` construction with handler inits stubbed.
+
+        Mirrors the construction pattern used by ``test_stats.py``: only the
+        pipeline handlers' ``__init__``s, the custom-handler loader, and the
+        ``QueueService`` singleton are patched — everything else in
+        ``__init__`` (including the vision TTL caching under test) executes
+        for real against null-backend storage.
+
+        Args:
+            visionConfig: The ``[bot.vision]`` table to serve.
+
+        Returns:
+            The constructed ``HandlersManager``.
+        """
+        configManager = cls._makeConstructionConfigManager(visionConfig)
+        with (
+            patch.object(MessagePreprocessorHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(SpamHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(ConfigureCommandHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(SummarizationHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(UserMemoriesHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(DevCommandsHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(MediaHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(CommonHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(HelpHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(DeleteFromUserMessageHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(ReactOnUserMessageHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(TopicManagerHandler, "__init__", lambda self, **kwargs: None),
+            patch.object(LLMMessageHandler, "__init__", lambda self, **kwargs: None),
+            patch("internal.bot.common.handlers.module_loader.CustomHandlerLoader") as mockLoader,
+            patch.object(QueueService, "getInstance", return_value=Mock()),
+        ):
+            mockLoader.return_value.loadAll.return_value = []
+            return HandlersManager(configManager=configManager, database=Mock(), botProvider=BotProvider.TELEGRAM)
+
     def test_badVisionNamedTable_crashesConstruction(self) -> None:
         """A malformed ``[storage.storages.vision]`` table aborts manager construction."""
         configManager = Mock()
@@ -3360,6 +3744,24 @@ class TestHandlersManagerVisionScopeInject:
 
         with pytest.raises(StorageConfigError):
             HandlersManager(configManager=configManager, database=Mock(), botProvider=BotProvider.TELEGRAM)
+
+    def test_initCachesVisionTtlDays(self) -> None:
+        """A real construction caches an explicit ``ttl-days = 7`` into ``_visionTtlDays``."""
+        manager = self._constructManager({"ttl-days": 7})
+
+        assert manager._visionTtlDays == 7
+
+    def test_initCachesVisionTtlDays_defaultWhenAbsent(self) -> None:
+        """An absent ``ttl-days`` falls back to the 30-day default."""
+        manager = self._constructManager({})
+
+        assert manager._visionTtlDays == 30
+
+    def test_initCachesVisionTtlDays_negativeClampedToZero(self) -> None:
+        """A negative ``ttl-days`` is clamped to 0 (GC disabled)."""
+        manager = self._constructManager({"ttl-days": -5})
+
+        assert manager._visionTtlDays == 0
 
 
 class _ModelInfoDict(TypedDict, total=False):

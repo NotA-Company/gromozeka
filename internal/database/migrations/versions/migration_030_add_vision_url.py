@@ -15,8 +15,9 @@ Migration Details:
   (``vision/{sha512}.{ext}``); NULL until the native-vision store step runs.
 
 The column is intentionally nullable with no default: pre-feature rows have
-no vision bytes, and "has vision bytes" stays a cheap NULL predicate that a
-future GC cron can clear with a single UPDATE.
+no vision bytes, and "has vision bytes" stays a cheap NULL predicate that
+the vision GC (HandlersManager._visionGcCronJob, hourly) can clear with a
+single UPDATE.
 
 **Reversible:** ``down()`` drops the column (SQLite >= 3.35.0 supports
 ``DROP COLUMN``; same constraint as migration_026's rollback).

@@ -27,6 +27,7 @@ Example:
 """
 
 import asyncio
+import datetime
 import logging
 import time
 from collections import deque
@@ -65,10 +66,11 @@ from internal.services.queue_service import DelayedTask, DelayedTaskFunction, Qu
 from internal.services.storage import StorageScope, StorageService
 from lib import utils
 from lib.cache import GenericDatabaseCache
+from lib.db import utils as dbUtils
 from lib.rate_limiter.manager import RateLimiterManager
 from lib.stats import NullStatsStorage, StatsStorage
 
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, visionStorageLock
 from .chat_search import ChatSearchHandler
 from .common import CommonHandler
 from .configure import ConfigureCommandHandler
@@ -138,6 +140,10 @@ BAYES_TOKEN_CLEANUP_RULES: Tuple[Tuple[int, int], ...] = (
 # +-------------+---------+---------------------+---------------------+
 # So it looks like worth to delete only tokens with total_count <= 2.
 # After year or two need to recheck to see if total_count 3+ is worth to be cleaned as well.
+
+# Vision TTL-GC cadence: minimum seconds between two vision garbage-collection
+# passes (enforced by HandlersManager._visionGcCronJob() on the shared CRON_JOB tick).
+_VISION_GC_INTERVAL_SECONDS: int = 3600
 
 
 class HandlerParallelism(IntEnum):
@@ -458,6 +464,13 @@ class HandlersManager(CommandHandlerGetterInterface):
             storage.injectConfig(self.configManager, scope=storageVariant)
 
         self.queueService = QueueService.getInstance()
+
+        # Vision TTL-GC retention window (days), cached at init — restart-required,
+        # house convention (mirrors the cached feature flags in message_preprocessor
+        # and the stats service). 0 disables the GC.
+        self._visionTtlDays: int = max(0, int(self.configManager.getVisionConfig().get("ttl-days", 30)))
+        self._lastVisionGcTime: float = 0.0
+
         # Initialize default Chat Settings
         botConfig = configManager.getBotConfig()
         defaultSettings: ChatSettingsDict = {k: ChatSettingsValue("") for k in ChatSettingsKey}
@@ -650,6 +663,9 @@ class HandlersManager(CommandHandlerGetterInterface):
         """Global Lock for Queue management (checking, creating, deleting)"""
 
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
+        if self._visionTtlDays > 0:
+            # Register it only if TTL enabled
+            self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._visionGcCronJob)
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         self._shutdownEvent = asyncio.Event()
 
@@ -711,6 +727,135 @@ class HandlersManager(CommandHandlerGetterInterface):
 
             for stateName in stalledStateNames:
                 self.chatStates.pop(stateName)
+
+    async def _visionGcCronJob(self, task: DelayedTask) -> None:
+        """Hourly garbage collection for expired native-vision images.
+
+        Subscribed on the shared CRON_JOB tick (60s) next to
+        :meth:`_dtCronJob`; an elapsed-time gate (the same pattern as
+        StatsAggregationService._dtCronJob) throttles the actual pass to
+        once per ``_VISION_GC_INTERVAL_SECONDS``. The first tick after
+        startup runs immediately (``_lastVisionGcTime`` starts at 0) —
+        same behavior as the stats cron.
+
+        For every media row still referencing a vision object whose
+        ``updated_at`` predates the retention cutoff:
+
+        - The stored file is deleted from the VISION storage scope only
+          when NO live (non-expired) row still references the same
+          content-addressed key (identical re-sent images share one
+          stored object).
+        - The row's ``vision_url`` reference is then cleared. File
+          deletion happens BEFORE the clear so a mid-crash row still
+          matches the next hour's expired query and retries; the delete
+          itself is idempotent (False on an already-gone file).
+
+        Shutdown needs no special handling: the tick loop dies on
+        DO_EXIT and this handler simply stops being called.
+
+        Concurrency: the whole snapshot + sweep runs under the shared
+        module-level ``visionStorageLock`` (imported from
+        ``handlers.base``), serializing it against
+        ``_storeVisionImage``'s two storage/DB critical sections. That
+        closes the snapshot TOCTOU races in BOTH GC-first orders: a receipt
+        publishing during the sweep either runs entirely before the snapshot
+        (its row counts as live) or blocks until after the sweep and
+        revalidates the row's current reference under the lock — a
+        deleted-file outcome sends it to the store path (re-store before
+        publish), a retained-but-cleared shared key is detected and
+        REPUBLISHED from the still-live object (see the lock's docstring in
+        base.py).
+
+        Args:
+            task: DelayedTask instance containing task execution context
+
+        Returns:
+            None
+        """
+        # Feature off (ttl-days = 0) — checked BEFORE the elapsed gate so a
+        # disabled GC costs nothing beyond the tick dispatch itself.
+        if self._visionTtlDays <= 0:
+            return
+
+        # Elapsed gate: run at most once per _VISION_GC_INTERVAL_SECONDS.
+        nowTime = time.time()
+        if nowTime - self._lastVisionGcTime < _VISION_GC_INTERVAL_SECONDS:
+            return
+        self._lastVisionGcTime = nowTime
+
+        try:
+            cutoff = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=self._visionTtlDays)
+
+            async with visionStorageLock:
+                expiredRows = await self.db.mediaAttachments.getExpiredVisionAttachments(cutoff)
+                if not expiredRows:
+                    logger.debug("Vision GC: no expired vision attachments")
+                    return
+
+                liveKeys = await self.db.mediaAttachments.getLiveVisionUrls(cutoff)
+                if liveKeys is None:
+                    # Three-valued repo contract: None means the live-lookup
+                    # itself FAILED. Deleting the files missing from a set we
+                    # could not compute could destroy objects live rows still
+                    # reference, so fail safe: abort the cycle with rows (and
+                    # files) untouched; the next tick retries.
+                    logger.warning(
+                        "Vision GC: live vision-url lookup failed — aborting sweep, nothing deleted or cleared"
+                    )
+                    return
+
+                visionStorage = StorageService.getInstance(StorageScope.VISION)
+
+                # Outcome-based counters: they count what actually happened,
+                # not attempts. deletedFiles is a set because content-addressed
+                # keys are shared across expired rows — the same file may be
+                # (idempotently) deleted once per referencing row.
+                clearedRows = 0
+                keptHotRows = 0
+                missingFiles = 0
+                deletedFiles: Set[str] = set()
+                for row in expiredRows:
+                    try:
+                        mediaId = row["file_unique_id"]
+                        key = row["vision_url"]
+                        if key is None:
+                            # Defensive: the expired query filters vision_url IS NOT NULL.
+                            continue
+                        fileRetained = key in liveKeys
+                        if not fileRetained:
+                            # True → the file existed and is now deleted;
+                            # False → the object was already gone (missing),
+                            # which is not an error and must not inflate the
+                            # deleted count.
+                            if visionStorage.delete(key):
+                                deletedFiles.add(key)
+                            else:
+                                missingFiles += 1
+                        # Delete-then-clear ordering keeps this retryable: if the
+                        # clear below is lost to a crash, the row still matches
+                        # next hour's expired query and the idempotent delete
+                        # handles the already-gone file.
+                        if await self.db.mediaAttachments.clearVisionUrl(mediaId):
+                            clearedRows += 1
+                            if fileRetained:
+                                # Row cleared but its file kept: a fresh row still
+                                # references the same key and holds the object alive.
+                                keptHotRows += 1
+                    except Exception as e:
+                        # One bad row never kills the batch — skip and retry next cycle.
+                        logger.warning(f"Vision GC: failed to process row {row.get('file_unique_id')}: {e}")
+                        continue
+
+                logger.info(
+                    f"Vision GC: cleared {clearedRows}/{len(expiredRows)} expired row(s), "
+                    f"deleted {len(deletedFiles)} distinct file(s) "
+                    f"({missingFiles} delete(s) hit an already-missing file), "
+                    f"{keptHotRows} row(s) cleared with file retained (shared key still live)"
+                )
+        except Exception as e:
+            # The dispatcher never propagates handler exceptions, but emit our
+            # own meaningful one-shot warning for the failed cycle.
+            logger.warning(f"Vision GC: cycle failed: {e}")
 
     async def _cleanupOldData(self) -> None:
         """Clean up old data from the database.

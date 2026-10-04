@@ -460,8 +460,9 @@ class ConfigManager:
               (never upscales; 0 disables resizing)
             - image-format: Normalized storage MIME ("image/jpeg" or "image/png")
             - image-quality: JPEG quality 1-95 (ignored for PNG)
-            - ttl-days: Retention for stored vision images (enforced by a
-              follow-up GC cron)
+            - ttl-days: Retention for stored vision images (enforced by the
+              hourly vision GC, HandlersManager._visionGcCronJob; 0 disables
+              the GC)
 
         Returns:
             VisionConfigDict: Vision configuration dictionary with the keys
