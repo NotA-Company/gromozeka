@@ -738,17 +738,29 @@ class HandlersManager(CommandHandlerGetterInterface):
         startup runs immediately (``_lastVisionGcTime`` starts at 0) —
         same behavior as the stats cron.
 
-        For every media row still referencing a vision object whose
-        ``updated_at`` predates the retention cutoff:
+        The sweep input and its retention decisions come from ONE
+        snapshot-consistent statement
+        (``MediaAttachmentsRepository.getExpiredVisionAttachmentsWithRetention``):
+        every expired row is selected together with a per-row flag saying
+        whether its key still has a live (non-expired) sharer, so
+        expired-ness and retention are decided at a single DB evaluation
+        point.
+
+        For every expired row still referencing a vision object:
 
         - The stored file is deleted from the VISION storage scope only
           when NO live (non-expired) row still references the same
           content-addressed key (identical re-sent images share one
-          stored object).
+          stored object) — per the snapshot's retention flag.
         - The row's ``vision_url`` reference is then cleared. File
           deletion happens BEFORE the clear so a mid-crash row still
           matches the next hour's expired query and retries; the delete
           itself is idempotent (False on an already-gone file).
+
+        If the snapshot query itself fails, the repository signals that
+        with ``None`` and the whole cycle aborts untouched: sweeping on a
+        snapshot that could not be computed could delete objects live rows
+        still reference.
 
         Shutdown needs no special handling: the tick loop dies on
         DO_EXIT and this handler simply stops being called.
@@ -761,10 +773,18 @@ class HandlersManager(CommandHandlerGetterInterface):
         publishing during the sweep either runs entirely before the snapshot
         (its row counts as live) or blocks until after the sweep and
         revalidates the row's current reference under the lock — a
-        deleted-file outcome sends it to the store path (re-store before
-        publish), a retained-but-cleared shared key is detected and
-        REPUBLISHED from the still-live object (see the lock's docstring in
-        base.py).
+        deleted-file or retained-but-cleared outcome sends the receipt to
+        the store path, which re-derives the same content-addressed key,
+        skips the physical write via the dedup ``exists()`` check when the
+        object survived on a shared reference, and republishes the key
+        (see the lock's docstring in base.py). The one-statement snapshot
+        additionally keeps the retention decision immune to ORDINARY
+        (lock-blind) ``updateMediaAttachment`` refreshes: the receipt-path
+        write never takes the lock, so it could previously land between the
+        two queries and flip an expired shared-key row to live, dropping
+        the key from the retained set; with expired-ness and retention
+        decided atomically, a mid-sweep refresh can no longer remove a
+        shared key's protection.
 
         Args:
             task: DelayedTask instance containing task execution context
@@ -787,21 +807,27 @@ class HandlersManager(CommandHandlerGetterInterface):
             cutoff = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=self._visionTtlDays)
 
             async with visionStorageLock:
-                expiredRows = await self.db.mediaAttachments.getExpiredVisionAttachments(cutoff)
-                if not expiredRows:
-                    logger.debug("Vision GC: no expired vision attachments")
+                # ONE snapshot-consistent statement: expired-ness and retention
+                # are decided at the same DB evaluation point, so a concurrent
+                # ordinary (lock-blind) updateMediaAttachment refresh cannot
+                # strip a shared key's protection between a snapshot query and
+                # the retention decision.
+                result = await self.db.mediaAttachments.getExpiredVisionAttachmentsWithRetention(cutoff)
+                if result is None:
+                    # Three-valued repo contract: None means the snapshot query
+                    # itself FAILED. Sweeping on a snapshot we could not compute
+                    # could destroy objects live rows still reference, so fail
+                    # safe: abort the cycle with rows (and files) untouched;
+                    # the next tick retries.
+                    logger.warning(
+                        "Vision GC: expired-attachment snapshot lookup failed — "
+                        "aborting sweep, nothing deleted or cleared"
+                    )
                     return
 
-                liveKeys = await self.db.mediaAttachments.getLiveVisionUrls(cutoff)
-                if liveKeys is None:
-                    # Three-valued repo contract: None means the live-lookup
-                    # itself FAILED. Deleting the files missing from a set we
-                    # could not compute could destroy objects live rows still
-                    # reference, so fail safe: abort the cycle with rows (and
-                    # files) untouched; the next tick retries.
-                    logger.warning(
-                        "Vision GC: live vision-url lookup failed — aborting sweep, nothing deleted or cleared"
-                    )
+                expiredRows, retainedKeys = result
+                if not expiredRows:
+                    logger.debug("Vision GC: no expired vision attachments")
                     return
 
                 visionStorage = StorageService.getInstance(StorageScope.VISION)
@@ -821,7 +847,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                         if key is None:
                             # Defensive: the expired query filters vision_url IS NOT NULL.
                             continue
-                        fileRetained = key in liveKeys
+                        fileRetained = key in retainedKeys
                         if not fileRetained:
                             # True → the file existed and is now deleted;
                             # False → the object was already gone (missing),

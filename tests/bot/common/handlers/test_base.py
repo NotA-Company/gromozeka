@@ -70,7 +70,7 @@ from internal.services.storage import StorageScope, StorageService
 from internal.services.storage.exceptions import StorageConfigError
 from internal.services.stt import STTOutcome, STTService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
-from lib.ai.imaging import VisionOutputImageFormat
+from lib.ai.imaging import VisionOutputImageFormat, normalizeVisionImageStrict
 from lib.ai.manager import LLMManager
 from lib.stt.models import STTErrorCode
 
@@ -3051,24 +3051,23 @@ class TestProcessMediaV2Vision:
         assert row["status"] == MediaStatus.DONE
         assert row["vision_url"] == liveKey
 
-    async def test_reuseGClearedReference_republishesLiveSharedKey(
+    async def test_reuseGClearedReference_selfHealsViaStorePath(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """GC cleared the row's reference but kept the shared file → republish.
+        """GC cleared the row's reference but kept the shared file → store path self-heals.
 
         Regression for the retained-file GC-first interleaving: expired row
         A and live row B share content key K, so the TTL-GC sweep deletes
         NOTHING but CLEARS A's ``vision_url`` (delete-then-clear, file
-        retained via B). A re-receipt of A arrives with the PRE-LOCK
-        snapshot ``existingVisionUrl=K`` — the pre-fix code probed only the
-        OBJECT (``exists(K)`` True via B's reference), performed a bare
-        touch, and left A ``vision_url=NULL`` despite the successful
-        re-receipt. The reuse step must instead revalidate the row's
-        CURRENT reference under the lock, detect the cleared reference,
-        and REPUBLISH the verified still-live key: exactly one
-        ``vision_url`` write (with the ride-along ``updated_at`` refresh)
-        and nothing else — no download, no normalization, no storage
-        write, no warning; coverage is restored on the same receipt.
+        retained via B). A re-receipt of A runs the real ``_storeVisionImage``:
+        the in-lock row re-read finds no current reference, so the reuse
+        short-exit is skipped and the flow falls through to the store path —
+        exactly ONE download, normalization runs, the derived content-addressed
+        key EQUALS the still-present shared object's key (identical
+        re-normalized bytes), the dedup ``exists()`` probe hits, the
+        physical ``store()`` write is SKIPPED, and the key is republished on
+        the row (``vision_url`` write with the ride-along ``updated_at``
+        refresh). Self-healing with no reference hint whatsoever.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -3077,7 +3076,20 @@ class TestProcessMediaV2Vision:
         """
         handler = await self._makeHandler(testDatabase, tmp_path)
         imageBytes = self._makeImageBytes()
-        sharedKey = self._placeVisionObject(handler, imageBytes)
+        # The shared object was originally stored by a receipt over the
+        # NORMALIZED bytes: derive the content-addressed key exactly the way
+        # the store path will (same dimension/format/quality as the cached
+        # _VISION_CONFIG), so the re-derived key matches.
+        normalized = normalizeVisionImageStrict(
+            imageBytes=imageBytes,
+            maxDimension=2048,
+            outputFormat=VisionOutputImageFormat.JPEG,
+            quality=85,
+        )
+        assert normalized is not None
+        normalizedBytes, _ = normalized
+        sharedKey = f"{hashlib.sha512(normalizedBytes).hexdigest()}.jpeg"
+        handler.visionStorage.store(sharedKey, normalizedBytes)
 
         # Row A: expired-style (backdated), referencing the shared key.
         await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, visionUrl=sharedKey)
@@ -3130,7 +3142,7 @@ class TestProcessMediaV2Vision:
 
             Class-level spy (the established pattern for the repositories
             here), applied to ``StorageService`` so BOTH scopes are covered —
-            the republish path must not write anywhere.
+            the dedup-skip path must not write anywhere.
 
             Args:
                 storageSelf: The StorageService instance ``store`` ran on.
@@ -3143,9 +3155,33 @@ class TestProcessMediaV2Vision:
             storeCalls.append((key, data))
             realStore(storageSelf, key, data)
 
+        realExists = StorageService.exists
+        existsCalls: List[str] = []
+
+        def spyingExists(storageSelf: StorageService, key: str) -> bool:
+            """Record every ``exists()`` probe, then delegate to the real method.
+
+            The store path must probe the derived key exactly ONCE (the
+            dedup check); the reuse short-exit must NOT probe anything (the
+            in-lock row re-read finds no current reference).
+
+            Args:
+                storageSelf: The StorageService instance ``exists`` ran on.
+                key: Storage key probed.
+
+            Returns:
+                The real method's result.
+            """
+            existsCalls.append(key)
+            return realExists(storageSelf, key)
+
         with (
             patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=countingUpdate),
             patch.object(StorageService, "store", new=spyingStore),
+            patch.object(StorageService, "exists", new=spyingExists),
+            patch(
+                "internal.bot.common.handlers.base.normalizeVisionImageStrict", wraps=normalizeVisionImageStrict
+            ) as normalizeSpy,
             caplog.at_level(logging.WARNING),
         ):
             visionUrl, mediaData = await handler._storeVisionImage(
@@ -3154,17 +3190,17 @@ class TestProcessMediaV2Vision:
                 mediaType=MessageType.IMAGE,
                 fileId=self._FILE_ID,
                 mediaData=None,
-                existingVisionUrl=sharedKey,  # stale pre-lock snapshot
             )
 
-        # Republished the still-live shared key; no bytes were produced.
+        # The store path ran end-to-end minus the physical write.
         assert visionUrl == sharedKey
-        assert mediaData is None
-        downloadMock.assert_not_called()
+        assert mediaData == imageBytes
+        downloadMock.assert_awaited_once()
+        normalizeSpy.assert_called_once()
+        assert existsCalls == [sharedKey]
         assert storeCalls == []
-        # Exactly ONE update — the republish: ONLY the visionUrl kwarg
-        # (the bare touch would carry no kwargs and would NOT restore
-        # coverage).
+        # Exactly ONE update — the republish: ONLY the visionUrl kwarg (the
+        # bare touch would carry no kwargs and would NOT restore coverage).
         assert updateCalls == [(self._MEDIA_ID, {"visionUrl": sharedKey})]
         # No failure warnings from the fail-soft boundary.
         assert [r for r in caplog.records if "Native-vision store failed" in r.message] == []
@@ -3181,23 +3217,20 @@ class TestProcessMediaV2Vision:
         assert rowB is not None
         assert rowB["vision_url"] == sharedKey
 
-    async def test_reuseRowMovedToDifferentLiveKey_usesCurrentKey(self, testDatabase: Database, tmp_path: Path) -> None:
-        """Row's current key differs from the caller's stale hint → confirm at K2.
+    async def test_reuseCurrentLiveKey_confirmsWithBareTouch(self, testDatabase: Database, tmp_path: Path) -> None:
+        """Row's current key references a live object → confirm at that key.
 
-        The row's live reference always wins: the row currently carries K2
-        (live object) while the caller passes the stale pre-lock hint K1
-        (also live). The reuse step must confirm the row at its CURRENT key
-        (bare touch, NO ``vision_url`` kwarg) and return K2 — the stale
-        snapshot is never written back over the newer row reference.
+        The in-lock row re-read finds the row's live reference K2 backed by
+        a live object: the reuse step confirms the row at its CURRENT key
+        (bare touch, NO ``vision_url`` kwarg) and returns K2 — no download,
+        no normalization, no storage write.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
             tmp_path: pytest tmp dir for the fs storage backend.
         """
         handler = await self._makeHandler(testDatabase, tmp_path)
-        staleKey = self._placeVisionObject(handler, self._makeImageBytes(color=(0, 0, 255)))
         currentKey = self._placeVisionObject(handler, self._makeImageBytes(color=(255, 0, 0)))
-        assert staleKey != currentKey
         await self._seedMediaRow(testDatabase, status=MediaStatus.DONE, visionUrl=currentKey)
 
         downloadMock = self._wireDownload(handler, self._makeImageBytes())
@@ -3249,10 +3282,9 @@ class TestProcessMediaV2Vision:
                 mediaType=MessageType.IMAGE,
                 fileId=self._FILE_ID,
                 mediaData=None,
-                existingVisionUrl=staleKey,  # stale pre-lock hint (still live)
             )
 
-        # The CURRENT key is confirmed and returned, not the stale hint.
+        # The CURRENT key is confirmed and returned.
         assert visionUrl == currentKey
         assert mediaData is None
         downloadMock.assert_not_called()

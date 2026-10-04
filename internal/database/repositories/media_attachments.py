@@ -19,7 +19,7 @@ Example:
 
 import datetime
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from internal.models import MessageType
 from lib.db import utils as dbUtils
@@ -372,86 +372,104 @@ class MediaAttachmentsRepository(BaseRepository):
             logger.exception(e)
             return None
 
-    async def getExpiredVisionAttachments(self, cutoff: datetime.datetime) -> List[MediaAttachmentDict]:
-        """Get media attachments whose vision image is expired for TTL garbage collection.
+    async def getExpiredVisionAttachmentsWithRetention(
+        self, cutoff: datetime.datetime, *, dataSource: Optional[str] = None
+    ) -> Optional[Tuple[List[MediaAttachmentDict], Set[str]]]:
+        """Get expired vision rows AND their retained keys from ONE consistent snapshot.
 
-        Selects rows that still reference a vision object (``vision_url`` is
-        set) whose ``updated_at`` is older than the cutoff. The
-        ``updated_at`` column doubles as the receipt-freshness/LRU signal:
-        it is refreshed by every update (including the bare touch on the
-        vision reuse path), so a row older than the cutoff has not been
-        re-received within the retention window.
+        Single-statement sweep input for the vision TTL garbage collector.
+        In one database evaluation point (an atomic snapshot on SQLite, an
+        MVCC-consistent read on PostgreSQL/MySQL) the statement selects
+        every row past the retention cutoff that still references a vision
+        object and, per row, whether that row's ``vision_url`` is shared by
+        at least one live row (``updated_at >= cutoff``):
+
+        ```sql
+        SELECT e.*,
+               EXISTS(
+                   SELECT 1 FROM media_attachments l
+                   WHERE l.vision_url = e.vision_url AND l.updated_at >= :cutoff
+               ) AS retained
+        FROM media_attachments e
+        WHERE e.vision_url IS NOT NULL AND e.updated_at < :cutoff
+        ```
+
+        The ``updated_at`` column doubles as the receipt-freshness/LRU
+        signal: it is refreshed by every update (including the bare touch
+        on the vision reuse path), so a row older than the cutoff has not
+        been re-received within the retention window.
+
+        Single-statement consistency is the shipped property: expiry and
+        retention are decided at ONE database evaluation point, so no
+        interleaved write can make the two decisions inconsistent — a
+        mid-sweep re-receipt can no longer strip a live row's shared-key
+        protection (the destructive race belonged only to the intermediate,
+        uncommitted two-query shape, not to the committed baseline).
 
         Args:
             cutoff: Expiration boundary (aware UTC); rows with ``updated_at``
-                strictly before it are returned.
-
-        Returns:
-            List of MediaAttachmentDict objects past the cutoff, empty list
-            if none are expired. On a database failure the error is logged
-            (ERROR) by the repository and an empty list is returned; the
-            exception is not propagated to the caller.
-        """
-        try:
-            sqlProvider = await self.manager.getProvider(readonly=True)
-            rows = await sqlProvider.executeFetchAll(
-                """
-                SELECT * FROM media_attachments
-                WHERE vision_url IS NOT NULL AND updated_at < :cutoff
-            """,
-                {"cutoff": cutoff},
-            )
-
-            return [dbUtils.sqlToTypedDict(row, MediaAttachmentDict) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get expired vision attachments: {e}")
-            return []
-
-    async def getLiveVisionUrls(self, cutoff: datetime.datetime) -> Optional[Set[str]]:
-        """Get vision storage keys still referenced by live (non-expired) rows.
-
-        Dedup guard for the TTL garbage collector: content-addressed
-        ``{sha512}.{ext}`` keys are shared across rows, so a file may only
-        be deleted from the vision store when no live row still references
-        its key.
-
-        Args:
-            cutoff: Freshness boundary (aware UTC); rows with ``updated_at``
-                at or after it count as live.
+                strictly before it are expired, rows at or after it count as
+                live sharers.
+            dataSource: Optional data source name for multi-source routing.
 
         Returns:
             Three-valued contract — the caller MUST distinguish all three:
 
-            - Populated set: keys referenced by at least one live row.
-            - Empty set: the query succeeded and genuinely NO live row
-              references any vision object.
+            - Populated tuple: ``(expiredRows, retainedKeys)`` from ONE
+              consistent snapshot. *expiredRows* is the sweep input (rows
+              with ``vision_url IS NOT NULL AND updated_at < cutoff``, as
+              MediaAttachmentDict objects — the internal ``retained`` flag
+              is stripped); *retainedKeys* contains exactly the expired
+              rows' keys that at least one live row shares — the keys the
+              GC must NOT delete; every other expired key is safe to delete.
+            - ``([], set())``: the query succeeded and genuinely nothing is
+              expired.
             - ``None``: the query itself FAILED (error logged (ERROR) by
               the repository; the exception is not propagated).
 
             This method is the sanctioned exception to this repository's
             empty-sentinel-on-error convention because its only caller is
-            a DESTRUCTIVE garbage collector that deletes every stored
-            file absent from the returned set: mistaking a failed lookup
-            for "nothing is live" would authorize deleting files that
-            live rows may still reference. Failure must therefore be
-            observable as ``None``, never collapsed into emptiness.
+            a DESTRUCTIVE garbage collector that deletes every stored file
+            whose key is absent from the retained set: mistaking a failed
+            lookup for "nothing is expired / retained" would authorize
+            deleting files that live rows may still reference. Failure must
+            therefore be observable as ``None``, never collapsed into
+            emptiness.
         """
         try:
-            sqlProvider = await self.manager.getProvider(readonly=True)
+            sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
                 """
-                SELECT DISTINCT vision_url FROM media_attachments
-                WHERE vision_url IS NOT NULL AND updated_at >= :cutoff
+                SELECT e.*,
+                       EXISTS(
+                           SELECT 1 FROM media_attachments l
+                           WHERE l.vision_url = e.vision_url AND l.updated_at >= :cutoff
+                       ) AS retained
+                FROM media_attachments e
+                WHERE e.vision_url IS NOT NULL AND e.updated_at < :cutoff
             """,
                 {"cutoff": cutoff},
             )
 
-            return {row["vision_url"] for row in rows}
+            expiredRows: List[MediaAttachmentDict] = []
+            retainedKeys: Set[str] = set()
+            for row in rows:
+                if row["retained"]:
+                    retainedKeys.add(row["vision_url"])
+                # Strip the synthetic retained flag: the typed dicts carry
+                # only real media_attachments columns.
+                expiredRows.append(
+                    dbUtils.sqlToTypedDict(
+                        {key: value for key, value in row.items() if key != "retained"},
+                        MediaAttachmentDict,
+                    )
+                )
+            return (expiredRows, retainedKeys)
         except Exception as e:
-            logger.error(f"Failed to get live vision urls: {e}")
+            logger.error(f"Failed to get expired vision attachments with retention: {e}")
             return None
 
-    async def clearVisionUrl(self, mediaId: str) -> bool:
+    async def clearVisionUrl(self, mediaId: str, *, dataSource: Optional[str] = None) -> bool:
         """Clear the vision_url of a media attachment (vision TTL garbage collection).
 
         Sets ``vision_url`` to NULL and refreshes ``updated_at`` in a single
@@ -461,6 +479,7 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Args:
             mediaId: Media attachment unique identifier (file_unique_id).
+            dataSource: Optional data source name for multi-source routing.
 
         Returns:
             bool: True if the update executed successfully, False otherwise.
@@ -470,10 +489,12 @@ class MediaAttachmentsRepository(BaseRepository):
             exception is not propagated to the caller.
 
         Note:
-            Writes to default source. Cannot write to readonly sources.
+            Writes to the routed source with ``readonly=False`` (default
+            source when no *dataSource* is given). Cannot write to readonly
+            sources.
         """
         try:
-            sqlProvider = await self.manager.getProvider(readonly=False)
+            sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=False)
             await sqlProvider.execute(
                 """
                 UPDATE media_attachments

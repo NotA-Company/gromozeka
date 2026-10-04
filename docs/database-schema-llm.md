@@ -9,7 +9,7 @@ category: reference
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 30 (up to `migration_030`)
+**Migrations**: 31 (up to `migration_031`)
 
 ---
 ## Table Definitions
@@ -1085,29 +1085,34 @@ db.mediaAttachments.ensureMediaInGroup(
 ```
 Idempotent upsert into `media_groups` (`ON CONFLICT DO NOTHING`).
 
-**Get Expired Vision Attachments (vision TTL-GC)**
+**Get Expired Vision Attachments With Retention (vision TTL-GC sweep input)**
 ```python
-db.mediaAttachments.getExpiredVisionAttachments(
-    cutoff: datetime.datetime
-) -> List[MediaAttachmentDict]
+db.mediaAttachments.getExpiredVisionAttachmentsWithRetention(
+    cutoff: datetime.datetime,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[Tuple[List[MediaAttachmentDict], Set[str]]]
 ```
-TTL-GC snapshot query: rows with `vision_url IS NOT NULL AND updated_at < cutoff`. On a database failure returns `[]` (error logged by the repository; `updated_at` doubles as the LRU signal the GC sweeps on).
-
-**Get Live Vision URLs (vision TTL-GC dedup guard)**
-```python
-db.mediaAttachments.getLiveVisionUrls(
-    cutoff: datetime.datetime
-) -> Optional[Set[str]]
+ONE combined snapshot statement — the expired rows AND their retention decisions from a single database evaluation point:
+```sql
+SELECT e.*, EXISTS(
+    SELECT 1 FROM media_attachments l
+    WHERE l.vision_url = e.vision_url AND l.updated_at >= :cutoff
+) AS retained
+FROM media_attachments e
+WHERE e.vision_url IS NOT NULL AND e.updated_at < :cutoff
 ```
-Distinct vision keys referenced by live (`updated_at >= cutoff`) rows — content-addressed keys are shared across rows, so a stored file may be deleted only when its key is absent from this set. **Three-valued contract**: populated set / empty set (the query succeeded, genuinely nothing live) / `None` (the query FAILED — the caller must abort the sweep; the sanctioned exception to this repository's empty-sentinel-on-error convention, because the only caller is a destructive garbage collector).
+Each expired row (`vision_url IS NOT NULL AND updated_at < cutoff`) is selected together with a per-row `retained` flag (does any live row, `updated_at >= cutoff`, share its key?); the repository strips the synthetic flag and returns `(expiredRows, retainedKeys)`. Content-addressed keys are shared across rows, so the GC may delete a stored file only when its key is absent from *retainedKeys*. **Three-valued contract**: populated tuple / `([], set())` (the query succeeded, genuinely nothing expired) / `None` (the query FAILED — the caller must abort the sweep; the sanctioned exception to this repository's empty-sentinel-on-error convention, because the only caller is a destructive garbage collector). **Snapshot consistency is the point of the single-statement shape**: expired-ness and retention are decided together in one consistent statement at a single evaluation point, so a mid-sweep re-receipt cannot strip a live row's shared-key protection. The destructive expired-side race existed only in an intermediate, never-shipped two-query refinement of this method (expired rows snapshot, then a separate retained-keys self-join — a concurrent lock-blind `updateMediaAttachment` refresh landing BETWEEN the queries could flip an expired row to live and drop a shared key's protection mid-sweep); the committed baseline fetched ALL live keys, which was immune to that race at the cost of scanning every live row. Served by the migration-031 index `idx_media_attachments_vision_url_updated_at (vision_url, updated_at)`.
 
 **Clear Vision URL (vision TTL-GC)**
 ```python
 db.mediaAttachments.clearVisionUrl(
-    mediaId: str
+    mediaId: str,
+    *,
+    dataSource: Optional[str] = None
 ) -> bool
 ```
-Sets `vision_url = NULL` with a ride-along `updated_at` refresh in one UPDATE — used by the hourly vision TTL-GC after the stored file is deleted (`HandlersManager._visionGcCronJob`; see [`llm/handlers.md`](llm/handlers.md) §9.7).
+Sets `vision_url = NULL` with a ride-along `updated_at` refresh in one UPDATE — used by the hourly vision TTL-GC after the stored file is deleted (`HandlersManager._visionGcCronJob`; see [`llm/handlers.md`](llm/handlers.md) §9.7). Writes to the routed source with `readonly=False` (default source when no *dataSource* is given); a `mediaId` matching no row is not an error (`True`).
 
 ---
 ### Spam Detection Operations

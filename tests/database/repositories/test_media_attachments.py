@@ -7,7 +7,7 @@ real in-memory SQLite database (all migrations applied via the
 
 import datetime
 from typing import Optional
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from internal.database import Database
 from internal.database.models import MediaStatus
@@ -97,13 +97,15 @@ class TestMediaAttachmentsRepository:
             {"ts": ts.isoformat(), "id": mediaId},
         )
 
-    async def testGetExpiredVisionAttachments_returnsOnlyOldRowsWithVisionUrl(self, testDatabase: Database) -> None:
-        """Expired query returns exactly old rows that still reference a vision object.
+    async def testGetExpiredVisionAttachmentsWithRetention_filtersExpiredRows(self, testDatabase: Database) -> None:
+        """Combined query returns exactly expired rows that reference a vision object.
 
         Seeds three rows — an old row with a vision_url (must be returned),
         a fresh row with a vision_url (still within the retention window),
         and an old row with a NULL vision_url (nothing to collect). Only
         the first matches ``vision_url IS NOT NULL AND updated_at < cutoff``.
+        Nothing is shared, so the retained set is empty; the synthetic
+        ``retained`` flag must be stripped from the typed dicts.
 
         Args:
             testDatabase: Fresh in-memory Database with migrations applied.
@@ -121,46 +123,28 @@ class TestMediaAttachmentsRepository:
         await self._backdateUpdatedAt(testDatabase, "old-null", oldTs)
 
         cutoff = datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc)
-        expired = await repo.getExpiredVisionAttachments(cutoff)
+        result = await repo.getExpiredVisionAttachmentsWithRetention(cutoff)
 
-        assert len(expired) == 1
-        assert expired[0]["file_unique_id"] == "old-vision"
-        assert expired[0]["vision_url"] == "abcd1234.jpeg"
+        assert result is not None
+        expiredRows, retainedKeys = result
+        assert len(expiredRows) == 1
+        assert expiredRows[0]["file_unique_id"] == "old-vision"
+        assert expiredRows[0]["vision_url"] == "abcd1234.jpeg"
+        assert "retained" not in expiredRows[0]
+        assert retainedKeys == set()
 
-    async def testGetLiveVisionUrls_returnsOnlyFreshKeys(self, testDatabase: Database) -> None:
-        """Live-vision-keys query returns exactly the keys referenced by fresh rows.
+    async def testGetExpiredVisionAttachmentsWithRetention_sharedKeyRetainedColdKeyNot(
+        self, testDatabase: Database
+    ) -> None:
+        """Combined query retains exactly expired keys that a live row shares.
 
-        Same seeds and cutoff as the expired-query test: only the fresh row
-        counts as live, so exactly its content-addressed key is returned
-        (the dedup guard for the TTL-GC delete decision).
-
-        Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
-
-        Returns:
-            None
-        """
-        repo = testDatabase.mediaAttachments
-        await self._seedAttachmentWithVisionUrl(testDatabase, "old-vision", "abcd1234.jpeg")
-        await self._seedAttachmentWithVisionUrl(testDatabase, "fresh-vision", "efgh5678.jpeg")
-        await self._seedAttachmentWithVisionUrl(testDatabase, "old-null", None)
-
-        oldTs = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
-        await self._backdateUpdatedAt(testDatabase, "old-vision", oldTs)
-        await self._backdateUpdatedAt(testDatabase, "old-null", oldTs)
-
-        cutoff = datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc)
-        liveUrls = await repo.getLiveVisionUrls(cutoff)
-
-        assert isinstance(liveUrls, set)
-        assert all(isinstance(url, str) for url in liveUrls)
-        assert liveUrls == {"efgh5678.jpeg"}
-
-    async def testGetLiveVisionUrls_emptySetWhenNoLiveRows(self, testDatabase: Database) -> None:
-        """Live-vision-keys query returns an empty set when no row is live.
-
-        A single fully-expired row (old + vision_url) leaves nothing live
-        at a cutoff after its ``updated_at``.
+        Seeds: an expired row sharing its key with a fresh row (RETAINED —
+        the GC must keep the shared object alive, AND its row must be in
+        the expired list), an expired row whose key nothing live references
+        (row in the list, key ABSENT — deletable), and an expired row with
+        a NULL vision_url (contributes nothing). The retention decision
+        covers only expired rows' keys — NOT every live key (the old
+        fetch-all semantics).
 
         Args:
             testDatabase: Fresh in-memory Database with migrations applied.
@@ -169,23 +153,61 @@ class TestMediaAttachmentsRepository:
             None
         """
         repo = testDatabase.mediaAttachments
-        await self._seedAttachmentWithVisionUrl(testDatabase, "old-vision", "abcd1234.jpeg")
+        # Expired row sharing its key with a live row → key retained.
+        await self._seedAttachmentWithVisionUrl(testDatabase, "expired-shared", "abcd1234.jpeg")
+        await self._seedAttachmentWithVisionUrl(testDatabase, "live-sharer", "abcd1234.jpeg")
+        # Expired-only key (nothing live references it) → row listed, key absent.
+        await self._seedAttachmentWithVisionUrl(testDatabase, "expired-cold", "efgh5678.jpeg")
+        # Expired row with no vision object → contributes nothing.
+        await self._seedAttachmentWithVisionUrl(testDatabase, "expired-null", None)
 
         oldTs = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
-        await self._backdateUpdatedAt(testDatabase, "old-vision", oldTs)
+        await self._backdateUpdatedAt(testDatabase, "expired-shared", oldTs)
+        await self._backdateUpdatedAt(testDatabase, "expired-cold", oldTs)
+        await self._backdateUpdatedAt(testDatabase, "expired-null", oldTs)
 
         cutoff = datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc)
-        assert await repo.getLiveVisionUrls(cutoff) == set()
+        result = await repo.getExpiredVisionAttachmentsWithRetention(cutoff)
 
-    async def testGetLiveVisionUrls_dbFailure_returnsNone(self, testDatabase: Database) -> None:
-        """A failed live-vision-keys query returns None, NOT an empty set.
+        assert result is not None
+        expiredRows, retainedKeys = result
+        assert {row["file_unique_id"] for row in expiredRows} == {"expired-shared", "expired-cold"}
+        assert isinstance(retainedKeys, set)
+        assert all(isinstance(url, str) for url in retainedKeys)
+        assert retainedKeys == {"abcd1234.jpeg"}
+        assert "efgh5678.jpeg" not in retainedKeys
+
+    async def testGetExpiredVisionAttachmentsWithRetention_nothingExpired_returnsEmptyTuple(
+        self, testDatabase: Database
+    ) -> None:
+        """Combined query returns ``([], set())`` when genuinely nothing is expired.
+
+        Only fresh rows exist: the query succeeded and the empty tuple
+        (never ``None``) is the "nothing expired, nothing retained"
+        sentinel.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+
+        Returns:
+            None
+        """
+        repo = testDatabase.mediaAttachments
+        await self._seedAttachmentWithVisionUrl(testDatabase, "fresh-row", "abcd1234.jpeg")
+
+        cutoff = datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc)
+        assert await repo.getExpiredVisionAttachmentsWithRetention(cutoff) == ([], set())
+
+    async def testGetExpiredVisionAttachmentsWithRetention_dbFailure_returnsNone(self, testDatabase: Database) -> None:
+        """A failed combined query returns None, NOT an empty tuple.
 
         The repository's empty-sentinel-on-error convention is deliberately
         broken for this one method (the sanctioned exception): its only
         caller is a DESTRUCTIVE garbage collector that deletes every stored
-        file absent from the returned set, so a query failure must be
-        observable as ``None`` — mistaking it for "genuinely nothing live"
-        would authorize deleting files live rows may still reference.
+        file whose key is absent from the retained set, so a query failure
+        must be observable as ``None`` — mistaking it for "genuinely
+        nothing expired" would authorize deleting files live rows may
+        still reference.
 
         The failure is simulated the canonical way for ``__slots__``
         repositories: a CLASS-level patch on ``DatabaseManager.getProvider``
@@ -204,9 +226,33 @@ class TestMediaAttachmentsRepository:
         with patch.object(
             DatabaseManager, "getProvider", new_callable=AsyncMock, side_effect=Exception("provider unavailable")
         ):
-            liveUrls = await repo.getLiveVisionUrls(datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc))
+            result = await repo.getExpiredVisionAttachmentsWithRetention(
+                datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc)
+            )
 
-        assert liveUrls is None
+        assert result is None
+
+    async def testGetExpiredVisionAttachmentsWithRetention_forwardsDataSource(self, testDatabase: Database) -> None:
+        """The keyword-only dataSource kwarg is forwarded to ``getProvider``.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+
+        Returns:
+            None
+        """
+        repo = testDatabase.mediaAttachments
+        providerMock = Mock()
+        providerMock.executeFetchAll = AsyncMock(return_value=[])
+        mockGetProvider = AsyncMock(return_value=providerMock)
+
+        with patch.object(DatabaseManager, "getProvider", mockGetProvider):
+            result = await repo.getExpiredVisionAttachmentsWithRetention(
+                datetime.datetime(2021, 1, 1, tzinfo=datetime.timezone.utc), dataSource="replica"
+            )
+
+        mockGetProvider.assert_awaited_once_with(dataSource="replica", readonly=True)
+        assert result == ([], set())
 
     async def testClearVisionUrl_nullsUrlAndRefreshesUpdatedAt(self, testDatabase: Database) -> None:
         """clearVisionUrl nulls vision_url and refreshes updated_at in one UPDATE.

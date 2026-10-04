@@ -223,7 +223,7 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
    ```bash
    ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1
    ```
-   If the last is `migration_030_*.py`, the next is `031`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `031`.
+   If the last is `migration_031_*.py`, the next is `032`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `032`.
 
 2. **Create the migration file** with the pattern `migration_{version:03d}_{description}.py`
 
@@ -238,15 +238,15 @@ from lib.db.providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
-class Migration031AddUserPreferences(BaseMigration):
+class Migration032AddUserPreferences(BaseMigration):
     """Add user preferences table.
 
     Attributes:
-        version: Migration version number (31).
+        version: Migration version number (32).
         description: Human-readable description.
     """
 
-    version: int = 31
+    version: int = 32
     description: str = "Add user preferences table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
@@ -291,7 +291,7 @@ def getMigration() -> Type[BaseMigration]:
     Returns:
         Type[BaseMigration]: The migration class for this module.
     """
-    return Migration031AddUserPreferences
+    return Migration032AddUserPreferences
 ```
 
 **Migration pattern requirements:**

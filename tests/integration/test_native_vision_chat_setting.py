@@ -94,12 +94,12 @@ def testNativeVisionHasInfoEntry() -> None:
     assert isinstance(entry["short"], str) and entry["short"]
     longText: str = entry["long"]
     assert isinstance(longText, str) and longText
-    # The long description must document the load-bearing facts (design §3.1):
-    # images go straight to vision models, a storage backend is required,
-    # images are stored on disk, and EXIF metadata is stripped.
-    assert "хранилищ" in longText.lower()
-    assert "диск" in longText.lower()
-    assert "exif" in longText.lower()
+    # The long description must document the surviving load-bearing facts:
+    # images go straight to the chat's vision models instead of a textual
+    # description, and BOTH chat models (primary and fallback) must support
+    # image input.
+    assert "vision-модели" in longText.lower()
+    assert "обе модели" in longText.lower()
 
 
 def testDefaultFromTomlIsFalse(defaultsConfigManager: ConfigManager) -> None:

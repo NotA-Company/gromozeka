@@ -18,7 +18,8 @@ import asyncio
 import datetime
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
@@ -35,9 +36,10 @@ from internal.bot.common.handlers.manager import (
     HandlersManager,
 )
 from internal.database import Database
+from internal.database.models import MediaAttachmentDict
 from internal.database.repositories.media_attachments import MediaAttachmentsRepository
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction
-from internal.services.storage import StorageService
+from internal.services.storage import StorageScope, StorageService
 
 
 def _mockRateLimiterManager(statsList: list) -> Mock:
@@ -389,14 +391,15 @@ class TestVisionGc:
 
     Uses the ``HandlersManager.__new__`` bypass pattern from
     ``TestCleanupOldData``: only the attributes the GC touches are set — a real
-    ``Database`` (``testDatabase`` fixture, so the Phase-A repo methods run
+    ``Database`` (``testDatabase`` fixture, so the repo methods run
     against real in-memory SQLite) plus the two init-cached GC attributes.
-    ``StorageService.getInstance`` is class-patched, so no ``StorageService``
-    singleton reset is needed here. Rows are seeded through the real repo API
-    and backdated with the canonical raw-SQL pattern from
-    ``tests/database/repositories/test_media_attachments.py``. Repo spy patches
-    are applied at CLASS level — the repositories use ``__slots__``, so
-    instance attributes are read-only.
+    ``StorageService.getInstance`` is class-patched (so no ``StorageService``
+    singleton reset is needed) everywhere EXCEPT the real-fs-store regression
+    test, which clears ``StorageService._instances`` itself. Rows are seeded
+    through the real repo API and backdated with the canonical raw-SQL pattern
+    from ``tests/database/repositories/test_media_attachments.py``. Repo spy
+    patches are applied at CLASS level — the repositories use ``__slots__``,
+    so instance attributes are read-only.
     """
 
     _OLD_TS = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
@@ -489,7 +492,9 @@ class TestVisionGc:
         with (
             patch.object(StorageService, "getInstance", return_value=Mock()),
             patch.object(
-                MediaAttachmentsRepository, "getExpiredVisionAttachments", new_callable=AsyncMock
+                MediaAttachmentsRepository,
+                "getExpiredVisionAttachmentsWithRetention",
+                new_callable=AsyncMock,
             ) as mockExpired,
         ):
             await manager._visionGcCronJob(self._makeTask())
@@ -508,7 +513,9 @@ class TestVisionGc:
         with (
             patch.object(StorageService, "getInstance", return_value=Mock()),
             patch.object(
-                MediaAttachmentsRepository, "getExpiredVisionAttachments", new_callable=AsyncMock
+                MediaAttachmentsRepository,
+                "getExpiredVisionAttachmentsWithRetention",
+                new_callable=AsyncMock,
             ) as mockExpired,
         ):
             await manager._visionGcCronJob(self._makeTask())
@@ -658,16 +665,16 @@ class TestVisionGc:
 
         assert manager._lastVisionGcTime > 0.0
 
-    async def testLiveKeysLookupFailed_abortsSweep(
+    async def testRetainedKeysLookupFailed_abortsSweep(
         self, testDatabase: Database, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """``getLiveVisionUrls`` returning None (lookup FAILED) aborts the sweep.
+        """``getExpiredVisionAttachmentsWithRetention`` returning None (query FAILED) aborts the sweep.
 
         Regression for the fail-destructive sentinel: None must never be
-        treated as "nothing is live". With expired rows present and the
-        live-lookup failing, NO file is deleted, NO row is cleared (rows
-        keep their ``vision_url`` for the next tick's retry), and a single
-        WARNING explains the abort.
+        treated as "nothing is expired" (or as emptiness at all). With the
+        combined snapshot query failing, NO file is deleted, NO row is
+        cleared (rows keep their ``vision_url`` for the next tick's retry),
+        and a single WARNING explains the abort.
 
         Args:
             testDatabase: Fresh in-memory Database with migrations applied.
@@ -682,7 +689,12 @@ class TestVisionGc:
         realClear = repo.clearVisionUrl
         with (
             patch.object(StorageService, "getInstance", return_value=storageMock),
-            patch.object(MediaAttachmentsRepository, "getLiveVisionUrls", new_callable=AsyncMock, return_value=None),
+            patch.object(
+                MediaAttachmentsRepository,
+                "getExpiredVisionAttachmentsWithRetention",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch.object(MediaAttachmentsRepository, "clearVisionUrl", side_effect=realClear) as mockClear,
             caplog.at_level(logging.WARNING),
         ):
@@ -698,6 +710,88 @@ class TestVisionGc:
         warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert "aborting sweep" in warnings[0].getMessage()
+
+    async def testMidSweepRefreshOfExpiredRow_keepsSharedObjectAndLiveRow(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """A mid-sweep refresh of an expired row cannot strip a shared key's protection.
+
+        Regression pinning the residual post-snapshot window of the combined
+        retention query: expired row A and live row B share key K. The spy
+        wraps the real combined ``getExpiredVisionAttachmentsWithRetention``,
+        then refreshes A via the real ``updateMediaAttachment`` (lock-blind
+        receipt-path write) before the sweep uses it — safe because retention
+        was decided atomically with expired-ness. K stays retained (row B was
+        live at statement time): the object survives, B's reference is
+        intact, and A is merely cleared (self-heals on next receipt).
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            tmp_path: pytest tmp dir for the real fs vision store.
+        """
+        StorageService._instances.clear()
+        try:
+            configManager = Mock()
+            configManager.getStorageConfig = Mock(
+                return_value={
+                    "type": "null",
+                    "storages": {"vision": {"type": "fs", "fs": {"base-dir": str(tmp_path / "vision")}}},
+                }
+            )
+            visionStorage = StorageService.getInstance(StorageScope.VISION)
+            visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
+
+            manager = self._buildManager(testDatabase, visionTtlDays=1)
+            repo = testDatabase.mediaAttachments
+            await self._seedAttachmentWithVisionUrl(testDatabase, "row-A", "shared.jpeg")
+            await self._seedAttachmentWithVisionUrl(testDatabase, "row-B", "shared.jpeg")
+            await self._backdateUpdatedAt(testDatabase, "row-A", self._OLD_TS)
+
+            # The shared object exists in the real fs vision store.
+            visionStorage.store("shared.jpeg", b"normalized-bytes")
+            assert visionStorage.exists("shared.jpeg")
+
+            realLookup = repo.getExpiredVisionAttachmentsWithRetention
+            realUpdate = repo.updateMediaAttachment
+
+            async def refreshAfterSnapshot(
+                cutoff: datetime.datetime,
+            ) -> Optional[Tuple[List[MediaAttachmentDict], Set[str]]]:
+                """Delegate the combined snapshot, then flip row A live.
+
+                Args:
+                    cutoff: Expiration boundary the GC passes through.
+
+                Returns:
+                    The real combined (expiredRows, retainedKeys) result.
+                """
+                result = await realLookup(cutoff)
+                # The exact production interleaving: an ordinary (lock-blind)
+                # receipt-path refresh lands AFTER the combined snapshot
+                # returns and BEFORE the sweep uses it.
+                await realUpdate("row-A")
+                return result
+
+            with patch.object(
+                MediaAttachmentsRepository,
+                "getExpiredVisionAttachmentsWithRetention",
+                side_effect=refreshAfterSnapshot,
+            ):
+                await manager._visionGcCronJob(self._makeTask())
+
+            # The shared object survived: row B's live reference was honored.
+            assert visionStorage.exists("shared.jpeg")
+            rowB = await repo.getMediaAttachment("row-B")
+            assert rowB is not None
+            assert rowB["vision_url"] == "shared.jpeg"
+
+            # Row A was in the expired snapshot → cleared by the sweep
+            # (acceptable outcome; self-heals on its next receipt).
+            rowA = await repo.getMediaAttachment("row-A")
+            assert rowA is not None
+            assert rowA["vision_url"] is None
+        finally:
+            StorageService._instances.clear()
 
     async def testConcurrentPublishDuringSweep_objectRestoredByReceipt(self, testDatabase: Database) -> None:
         """A receipt publishing mid-sweep cannot end up with a dangling row.
