@@ -34,7 +34,6 @@ from lib.stats import StatsStorage
 from .models import (
     ERROR_STATUSES,
     LLMAbstractTool,
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
@@ -876,8 +875,8 @@ class AbstractModel(ABC):
 
         Raw message OBJECT lists are handled here directly: when *data* is a
         list/tuple whose every element is a :class:`ModelMessage` and at least
-        one is image-bearing (:class:`ModelImageMessage` /
-        :class:`ModelImagesMessage`), it is first serialized with the
+        one is image-bearing (:class:`ModelImagesMessage`), it is first
+        serialized with the
         canonical ``[message.toDict() for message in data]`` shape. Without
         that, the object list would fall through the trusted boundary below
         and ``json.dumps(..., default=str)`` would embed every image's FULL
@@ -918,7 +917,7 @@ class AbstractModel(ABC):
         if (
             isinstance(data, (list, tuple))
             and all(isinstance(m, ModelMessage) for m in data)
-            and any(isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in data)
+            and any(isinstance(m, ModelImagesMessage) for m in data)
         ):
             # Image-bearing message OBJECT list: serialize to the exact shape
             # the trusted boundary (:func:`_isMessageList`) recognizes, so

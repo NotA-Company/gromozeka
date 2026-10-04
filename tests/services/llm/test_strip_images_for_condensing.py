@@ -9,8 +9,9 @@ lazy-resolver consumption (§4.6) at the unit level:
   role / contentKey / weight / source (existing envelope contract).
 - When the envelope text carries NO media description and no resolver
   resolves, a short marker is appended so a text-only condenser knows an
-  image was there: singular form for ``ModelImageMessage``, count-bearing
-  form (grammatical pluralization) for ``ModelImagesMessage``.
+  image was there: the legacy singular form for a 1-image message,
+  count-bearing form (grammatical pluralization) for counts >= 2 — decided
+  by ``len(message.images)`` on the single ``ModelImagesMessage`` class.
 - When the message carries a ``descriptionResolver`` and it resolves to
   truthy text, the resolved description is injected wrapped in
   ``<media-description>...</media-description>`` (the TEXT envelope's tag)
@@ -27,7 +28,7 @@ import json
 from unittest.mock import AsyncMock
 
 from internal.services.llm.service import stripImagesForCondensing
-from lib.ai.models import ModelImageMessage, ModelImagesMessage, ModelMessage
+from lib.ai.models import ModelImagesMessage, ModelMessage
 
 
 class TestStripImagesForCondensingMarker:
@@ -43,13 +44,13 @@ class TestStripImagesForCondensingMarker:
         assert await stripImagesForCondensing(message) is message
 
     async def testSingleImageWithoutDescriptionGetsSingularMarker(self) -> None:
-        """A ModelImageMessage without a description gains the singular marker.
+        """A 1-image ModelImagesMessage without a description gains the singular marker.
 
         Returns:
             None
         """
         source = object()
-        message = ModelImageMessage(role="assistant", content="look at this", image=bytearray(b"IMG"))
+        message = ModelImagesMessage(role="assistant", content="look at this", images=[bytearray(b"IMG")])
         # Non-default envelope fields: preservation must be proven against
         # real values (defaults passing through defaults proves nothing).
         message.contentKey = "text"
@@ -81,18 +82,6 @@ class TestStripImagesForCondensingMarker:
         assert type(stripped) is ModelMessage
         assert stripped.content == "album\n[2 images attached, omitted for condensing]"
 
-    async def testMultiImageSingleImageUsesGrammaticalSingular(self) -> None:
-        """A 1-image ModelImagesMessage reads "1 image", not "1 images".
-
-        Returns:
-            None
-        """
-        message = ModelImagesMessage(role="user", content="one pic", images=[bytearray(b"1")])
-
-        stripped = await stripImagesForCondensing(message)
-
-        assert stripped.content == "one pic\n[1 image attached, omitted for condensing]"
-
     async def testJsonEnvelopeWithDescriptionGetsNoMarker(self) -> None:
         """A JSON envelope carrying ``mediaDescription`` is preserved exactly.
 
@@ -108,7 +97,7 @@ class TestStripImagesForCondensingMarker:
             {"login": "user1", "date": "1970-01-01T00:00:00", "text": "look", "mediaDescription": "a red square"}
         )
         source = object()
-        message = ModelImageMessage(role="assistant", content=content, image=bytearray(b"IMG"))
+        message = ModelImagesMessage(role="assistant", content=content, images=[bytearray(b"IMG")])
         message.contentKey = "text"
         message.weight = 3
         message.source = source
@@ -164,7 +153,7 @@ class TestStripImagesForCondensingMarker:
         Returns:
             None
         """
-        message = ModelImageMessage(role="user", content="", image=bytearray(b"IMG"))
+        message = ModelImagesMessage(role="user", content="", images=[bytearray(b"IMG")])
 
         stripped = await stripImagesForCondensing(message)
 
@@ -189,7 +178,7 @@ class TestStripImagesForCondensingResolver:
         """
         source = object()
         resolver = AsyncMock(return_value="a red square on a green table")
-        message = ModelImageMessage(role="assistant", content="look at this", image=bytearray(b"IMG"))
+        message = ModelImagesMessage(role="assistant", content="look at this", images=[bytearray(b"IMG")])
         message.contentKey = "text"
         message.weight = 7
         message.source = source
@@ -255,7 +244,7 @@ class TestStripImagesForCondensingResolver:
             None
         """
         resolver = AsyncMock(return_value="")
-        message = ModelImageMessage(role="user", content="look", image=bytearray(b"IMG"))
+        message = ModelImagesMessage(role="user", content="look", images=[bytearray(b"IMG")])
         message.descriptionResolver = resolver
 
         stripped = await stripImagesForCondensing(message)
@@ -275,7 +264,7 @@ class TestStripImagesForCondensingResolver:
             None
         """
         resolver = AsyncMock(return_value="a red square")
-        message = ModelImageMessage(role="user", content="look", image=bytearray(b"IMG"))
+        message = ModelImagesMessage(role="user", content="look", images=[bytearray(b"IMG")])
         message.descriptionResolver = resolver
 
         stripped = await stripImagesForCondensing(message)

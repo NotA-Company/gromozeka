@@ -11,13 +11,12 @@ Covers:
 - Per-field renderer overrides (_STR_RENDERERS).
 - Default-skip rules (None, False, empty containers).
 - Integer 0 tokens are NOT skipped.
-- ModelImageMessage.toDict multimodal payload shape (regression: the text
+- ModelImagesMessage.toDict multimodal payload shape (regression: the text
   part must carry the OpenAI ``text`` key, not ``content``).
-- ModelImagesMessage.toDict (native-vision Phase 2a): multi-image sibling —
+- ModelImagesMessage.toDict (native-vision Phase 2a): image message class —
   text block + one image_url block per image in list order, empty content
-  omitting the text part, single-image parity with ModelImageMessage,
-  per-image format conversion, self.images never mutated, and identical
-  consecutive serialisations.
+  omitting the text part, per-image format conversion, self.images never
+  mutated, and identical consecutive serialisations.
 
 Image-manipulation coverage (convertImageIfNeeded, normalizeVisionImage,
 normalizeVisionImageStrict, VisionOutputImageFormat, _stripJpegExif) lives in
@@ -32,7 +31,6 @@ import pytest
 from PIL import Image
 
 from lib.ai.models import (
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelMessageDescriptionResolver,
@@ -381,7 +379,7 @@ def testStrSubclassDataNoneOmitted() -> None:
 
 
 # ============================================================================
-# ModelImageMessage.toDict — multimodal payload shape
+# ModelImagesMessage.toDict — multimodal payload shape
 # ============================================================================
 
 
@@ -440,10 +438,10 @@ def _pixelRgb(image: Image.Image, x: int, y: int) -> Tuple[int, int, int]:
     return (int(pixel[0]), int(pixel[1]), int(pixel[2]))
 
 
-class TestModelImageMessageTextPart:
+class TestModelImagesMessageTextPart:
     """Regression: multimodal text part must carry the OpenAI ``text`` key.
 
-    Before the fix, ``ModelImageMessage.toDict()`` emitted
+    Before the fix, ``ModelImagesMessage.toDict()`` emitted
     ``{"type": "text", "content": ...}`` for a non-empty prompt. Strict
     OpenAI-compatible upstreams reject that payload with ``400 text content
     parts must carry a string "text" (got undefined)``. The OpenAI chat
@@ -456,7 +454,9 @@ class TestModelImageMessageTextPart:
         Returns:
             None
         """
-        msg = ModelImageMessage(role="user", content="Что изображено на фотографии?", image=bytearray(_tinyPngBytes()))
+        msg = ModelImagesMessage(
+            role="user", content="Что изображено на фотографии?", images=[bytearray(_tinyPngBytes())]
+        )
 
         rendered = msg.toDict()
 
@@ -473,7 +473,7 @@ class TestModelImageMessageTextPart:
         Returns:
             None
         """
-        msg = ModelImageMessage(role="user", content="describe", image=bytearray(_tinyPngBytes()))
+        msg = ModelImagesMessage(role="user", content="describe", images=[bytearray(_tinyPngBytes())])
 
         rendered = msg.toDict()
 
@@ -490,7 +490,7 @@ class TestModelImageMessageTextPart:
         Returns:
             None
         """
-        msg = ModelImageMessage(role="user", content="", image=bytearray(_tinyPngBytes()))
+        msg = ModelImagesMessage(role="user", content="", images=[bytearray(_tinyPngBytes())])
 
         rendered = msg.toDict()
 
@@ -506,7 +506,7 @@ class TestModelImageMessageTextPart:
 class TestModelImagesMessage:
     """Tests for :class:`lib.ai.models.ModelImagesMessage` (Phase 2a infra).
 
-    The multi-image sibling of ``ModelImageMessage`` must serialise every
+    The image message class must serialise every
     embedded image into its own ``image_url`` block, in list order, after
     the optional text block; convert each image independently when the
     target model's ``supportedImageFormats`` demand it; never mutate
@@ -565,22 +565,6 @@ class TestModelImagesMessage:
 
         typesList = [block["type"] for block in rendered["content"]]
         assert typesList == ["image_url", "image_url"]
-
-    def testSingleImageMatchesModelImageMessageShape(self) -> None:
-        """A one-image ModelImagesMessage serialises identically to ModelImageMessage.
-
-        The structural-shape contract: with the same role/content/source
-        bytes the two classes must produce equal dicts, so downstream
-        providers cannot tell them apart in the single-image case.
-
-        Returns:
-            None
-        """
-        png = _tinyPngBytes()
-        multi = ModelImagesMessage(role="user", content="describe", images=[bytearray(png)])
-        single = ModelImageMessage(role="user", content="describe", image=bytearray(png))
-
-        assert multi.toDict() == single.toDict()
 
     def testPerImageFormatConversionMixedSources(self) -> None:
         """PNG + WebP sources both convert to image/jpeg when the model demands it.
@@ -726,7 +710,6 @@ class TestModelMessageDescriptionResolver:
         """
         for message in (
             ModelMessage(role="user", content="text"),
-            ModelImageMessage(role="user", content="text", image=bytearray(b"IMG")),
             ModelImagesMessage(role="user", content="text", images=[bytearray(b"IMG")]),
         ):
             assert message.descriptionResolver is None

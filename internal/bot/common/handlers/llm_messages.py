@@ -55,7 +55,6 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.services.llm import TOOLS_DEFAULT_DICT_KEY, ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
@@ -328,7 +327,7 @@ class LLMMessageHandler(BaseBotHandler):
         if logger.isEnabledFor(logging.DEBUG):
             messageHistoryStr = ""
             for msg in messagesHistory:
-                if isinstance(msg, (ModelImageMessage, ModelImagesMessage)):
+                if isinstance(msg, ModelImagesMessage):
                     messageHistoryStr += f"\t{msg.toLogMessage()}\n"
                 else:
                     messageHistoryStr += f"\t{repr(msg)}\n"

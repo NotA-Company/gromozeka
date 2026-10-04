@@ -14,7 +14,7 @@ Features:
     - Extensible model architecture
 
 Example:
-    >>> from lib.ai import LLMManager, ModelMessage, ModelImageMessage
+    >>> from lib.ai import LLMManager, ModelMessage, ModelImagesMessage
     >>>
     >>> # Initialize the manager
     >>> manager = LLMManager()
@@ -45,8 +45,7 @@ Exports:
     LLMToolFunction: Model for tool/function definitions
     LLMToolCall: Model for tool/function call results
     ModelMessage: Model for text messages
-    ModelImageMessage: Model for image messages
-    ModelImagesMessage: Model for multi-image messages
+    ModelImagesMessage: Model for messages with one or more images
     ModelResultStatus: Enum for result status (success, error, timeout)
     ModelRunResult: Model for model run results
     ModelStructuredResult: Model for structured-output model run results
@@ -62,7 +61,6 @@ from .models import (
     LLMParameterType,
     LLMToolCall,
     LLMToolFunction,
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
@@ -83,7 +81,6 @@ __all__ = [
     "LLMToolFunction",
     "LLMToolCall",
     "ModelMessage",
-    "ModelImageMessage",
     "ModelImagesMessage",
     "ModelResultStatus",
     "ModelRunResult",

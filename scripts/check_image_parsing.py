@@ -91,7 +91,7 @@ from internal.config.manager import ConfigManager  # noqa: E402
 from lib.ai import (  # noqa: E402
     AbstractModel,
     LLMManager,
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -223,7 +223,7 @@ async def probeModel(
         modelName: The registered model key used for display.
         model: The ``AbstractModel`` instance to probe.
         providerName: The provider name (e.g. ``openrouter``).
-        messages: Pre-built list of ModelMessage / ModelImageMessage.
+        messages: Pre-built list of ModelMessage / ModelImagesMessage.
 
     Returns:
         A populated ``ProbeResult`` dataclass.
@@ -711,10 +711,10 @@ async def main() -> int:
             role="system",
             content=_DEFAULT_PARSE_IMAGE_PROMPT,
         ),
-        ModelImageMessage(
+        ModelImagesMessage(
             role="user",
             content=args.message,
-            image=bytearray(imageData),
+            images=[bytearray(imageData)],
         ),
     ]
 

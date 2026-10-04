@@ -43,7 +43,7 @@ from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
 )
@@ -530,10 +530,10 @@ class MediaHandler(BaseBotHandler):
                     role="system",
                     content=prompt,
                 ),
-                ModelImageMessage(
+                ModelImagesMessage(
                     role="user",
                     # content="",
-                    image=bytearray(mediaData),
+                    images=[bytearray(mediaData)],
                 ),
             ]
 

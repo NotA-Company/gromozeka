@@ -27,7 +27,6 @@ from lib.ai.models import (
     LLMFunctionParameter,
     LLMToolCall,
     LLMToolFunction,
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
@@ -148,15 +147,17 @@ def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
     return ret
 
 
-#: Appended to the stripped copy of a single-image message's text when the
+#: Appended to the stripped copy of a single-image (imageCount == 1)
+#: message's text when the
 #: envelope carries no media description, so a text-only condenser still
 #: knows an image was there (and was dropped deliberately, not lost).
 _STRIPPED_IMAGE_MARKER = "\n[image attached, omitted for condensing]"
 
-#: Appended to the stripped copy of a multi-image message's text when the
-#: envelope carries no media description. ``{imageCount}`` is the number of
-#: dropped images; ``{imagePlural}`` is ``"s"`` unless exactly one image was
-#: dropped (grammatical singular).
+#: Appended to the stripped copy of an image-bearing message's text (any
+#: count other than 1, including zero) when the envelope carries no media
+#: description. ``{imageCount}`` is the number of dropped images;
+#: ``{imagePlural}`` is ``"s"`` unless exactly one image was dropped
+#: (grammatical singular).
 _STRIPPED_IMAGES_MARKER_TEMPLATE = "\n[{imageCount} image{imagePlural} attached, omitted for condensing]"
 
 
@@ -217,7 +218,7 @@ async def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
             resolved media description, or the omission marker when nothing
             resolves) without images and without a resolver.
     """
-    if not isinstance(message, (ModelImageMessage, ModelImagesMessage)):
+    if not isinstance(message, ModelImagesMessage):
         return message
     content = message.content
     if not _contentCarriesMediaDescription(content):
@@ -226,13 +227,20 @@ async def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
             resolved = await message.descriptionResolver()
         if resolved:
             content += f"\n<media-description>{resolved}</media-description>"
-        elif isinstance(message, ModelImagesMessage):
-            imageCount = len(message.images)
-            content += _STRIPPED_IMAGES_MARKER_TEMPLATE.format(
-                imageCount=imageCount, imagePlural="" if imageCount == 1 else "s"
-            )
         else:
-            content += _STRIPPED_IMAGE_MARKER
+            # Marker choice is COUNT-based: the legacy singular marker is
+            # preserved byte-identical for the one-image case; the template
+            # covers all other counts, including zero (a zero-image
+            # ModelImagesMessage is reachable and falls into this branch).
+            # The pluralization expression is kept as-is for safety even
+            # though imageCount can no longer be 1 here.
+            imageCount = len(message.images)
+            if imageCount == 1:
+                content += _STRIPPED_IMAGE_MARKER
+            else:
+                content += _STRIPPED_IMAGES_MARKER_TEMPLATE.format(
+                    imageCount=imageCount, imagePlural="" if imageCount == 1 else "s"
+                )
     return ModelMessage(
         role=message.role,
         content=content,

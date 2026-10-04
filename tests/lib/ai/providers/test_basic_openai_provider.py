@@ -40,7 +40,7 @@ from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
     LLMToolFunction,
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelStructuredResult,
@@ -1044,7 +1044,7 @@ async def testProviderThreadingConvertsImagePerConfig(testModel: BasicOpenAIMode
 
     Locks the integration wire-up: ``_generateText`` reads
     ``self._config.get("input_image_format")`` and forwards it as
-    ``supportedImageFormats`` to ``ModelImageMessage.toDict``, which re-encodes
+    ``supportedImageFormats`` to ``ModelImagesMessage.toDict``, which re-encodes
     an embedded WebP image into JPEG. Asserts the outgoing ``messages`` payload
     carries a ``data:image/jpeg;base64,...`` URL — proving the conversion ran
     because the model's config advertised only JPEG.
@@ -1063,7 +1063,7 @@ async def testProviderThreadingConvertsImagePerConfig(testModel: BasicOpenAIMode
     Image.new("RGB", (4, 4), (0, 0, 255)).save(webpBuf, format="WEBP")
     webpBytes = webpBuf.getvalue()
 
-    messages = [ModelImageMessage(role="user", content="describe this", image=bytearray(webpBytes))]
+    messages = [ModelImagesMessage(role="user", content="describe this", images=[bytearray(webpBytes)])]
 
     # Minimal mock response so generateText completes.
     mockResponse = Mock(spec=ChatCompletion)

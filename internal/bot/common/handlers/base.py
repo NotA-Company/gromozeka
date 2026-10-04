@@ -72,7 +72,7 @@ from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageScope, StorageService
 from internal.services.stt import STTService
 from lib.ai import (
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
 )
@@ -2149,14 +2149,14 @@ class BaseBotHandler(CommandHandlerMixin):
                         role="system",
                         content=imagePrompt,
                     ),
-                    ModelImageMessage(
+                    ModelImagesMessage(
                         role="user",
                         # content=ensuredMessage.messageText,
                         # Openrouer LLMs does not support adding text to message with image.
                         # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
                         # So let's delete it
                         content="",
-                        image=bytearray(mediaData),
+                        images=[bytearray(mediaData)],
                     ),
                 ]
 

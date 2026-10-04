@@ -10,7 +10,7 @@ Key components:
 - LLMToolFunction: Function tool with parameters and callable implementation
 - LLMToolCall: Represents a tool call request from an LLM
 - ModelMessage: Standard message format for LLM conversations
-- ModelImageMessage: Message with image content support
+- ModelImagesMessage: Message with one or more images (image content support)
 - ModelRunResult: Unified result structure for LLM responses
 - ModelResultStatus: Enumeration of possible result statuses
 
@@ -629,7 +629,7 @@ class ModelMessage:
             skipRole: If True, omit the role from the output (default: False).
             supportedImageFormats: Optional list of acceptable input image MIME
                 types. Ignored by the base class; honoured by
-                :meth:`ModelImageMessage.toDict` to re-encode embedded images.
+                :meth:`ModelImagesMessage.toDict` to re-encode embedded images.
                 Accepted here so providers can pass it uniformly to every
                 message in a list regardless of concrete type.
 
@@ -717,138 +717,14 @@ class ModelMessage:
         return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
 
 
-class ModelImageMessage(ModelMessage):
-    """Represents a message with image content for multimodal LLMs.
-
-    This class extends ModelMessage to support image content alongside text.
-    Images are automatically converted to base64 and embedded in the message
-    with appropriate MIME type detection.
-
-    Example:
-        >>> with open("image.jpg", "rb") as f:
-        ...     image_data = bytearray(f.read())
-        >>> message = ModelImageMessage(
-        ...     role="user",
-        ...     content="What's in this image?",
-        ...     image=image_data
-        ... )
-        >>> message_dict = message.toDict()
-        >>> "image_url" in str(message_dict)
-        True
-    """
-
-    def __init__(self, role: str = "user", content: str = "", image: bytearray = bytearray()):
-        """Initialize an image message.
-
-        Args:
-            role: The message role (default: "user").
-            content: The text content of the message (default: "").
-            image: The image data as a bytearray (default: empty bytearray).
-
-        Returns:
-            None
-        """
-        super().__init__(role, content)
-        self.image = image
-
-    def toDict(
-        self,
-        contentKey: Optional[str] = None,
-        content: Optional[Any] = None,
-        skipRole: bool = False,
-        supportedImageFormats: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """Convert the message to a dictionary with image content.
-
-        This method overrides the parent to convert the image to base64 and
-        format it according to the OpenAI multimodal message specification.
-
-        Args:
-            contentKey: Optional override for the content key (default: None).
-            content: Optional override for the content value (default: None).
-            skipRole: If True, omit the role from the output (default: False).
-            supportedImageFormats: Optional ordered list of acceptable input
-                image MIME types for the target model. When the embedded image's
-                detected MIME is not in the list, it is re-encoded to the first
-                listed format (e.g. WebP -> JPEG). ``None`` or empty preserves
-                the original format. The conversion result is derived into a
-                LOCAL variable; ``self.image`` is never mutated, so repeated
-                serialisation (e.g. primary then fallback model) always starts
-                from the original bytes.
-
-        Returns:
-            Dict[str, Any]: A dictionary representation with the image embedded
-                as a base64 data URI.
-
-        Note:
-            The image MIME type is automatically detected using the python-magic
-            library. Conversion failures degrade gracefully: the original bytes
-            are sent unchanged (see :func:`convertImageIfNeeded`).
-
-        Example:
-            >>> message = ModelImageMessage(
-            ...     role="user",
-            ...     content="Describe this image",
-            ...     image=bytearray(b"fake_image_data")
-            ... )
-            >>> result = message.toDict()
-            >>> isinstance(result.get("content"), list)
-            True
-        """
-        if content is None:
-            imageBytes, mimeType = convertImageIfNeeded(bytes(self.image), supportedImageFormats)
-            base64Image = base64.b64encode(imageBytes).decode("utf-8")
-
-            content = []
-            if self.content:
-                content.append({"type": "text", "text": self.content})
-
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mimeType};base64,{base64Image}",
-                    },
-                }
-            )
-
-        return super().toDict(contentKey, content=content, skipRole=skipRole)
-
-    def toLogMessage(self, contentLengthLimit: int = 128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
-        """Return a string representation of the message for logging.
-
-        Args:
-            contentLengthLimit: The maximum length of the content to include in the log message.
-            _selfDict: Optional dictionary representation of the message. To be used by subclasses only.
-
-        Returns:
-            str: String representation of the message.
-        """
-        selfDict = _selfDict if _selfDict is not None else self.toDict()
-        if "content" in selfDict and isinstance(selfDict["content"], list):
-            newContent = []
-            for item in selfDict["content"]:
-                if isinstance(item, dict) and "image_url" in item:
-                    newItem = item.copy()
-                    if isinstance(item["image_url"], dict) and "url" in item["image_url"]:
-                        urlLen = len(item["image_url"]["url"])
-                        newItem["image_url"]["url"] = f"{newItem['image_url']['url'][:32]}...({urlLen} bytes)"
-
-                    newContent.append(newItem)
-                    continue
-                newContent.append(item)
-            selfDict["content"] = newContent
-        return super().toLogMessage(contentLengthLimit, selfDict)
-
-
 class ModelImagesMessage(ModelMessage):
-    """Represents a message with multiple images for multimodal LLMs.
+    """Represents a message with one or more images for multimodal LLMs.
 
-    Multi-image sibling of :class:`ModelImageMessage` (native-vision design
-    v1 §3.4): holds an ordered list of images (e.g. a Telegram album or a Max
-    multi-attachment) and serialises them into a single OpenAI-style multipart
-    user message — an optional text block followed by one ``image_url`` block
-    per image, in list order.
+    Image message class (native-vision design v1 §3.4): holds an ordered
+    list of images — a single image or a multi-image set (e.g. a Telegram
+    album or a Max multi-attachment) — and serialises them into a single
+    OpenAI-style multipart user message: an optional text block followed
+    by one ``image_url`` block per image, in list order.
 
     Example:
         >>> message = ModelImagesMessage(
@@ -869,7 +745,7 @@ class ModelImagesMessage(ModelMessage):
         source: Optional[object] = None,
         descriptionResolver: Optional[ModelMessageDescriptionResolver] = None,
     ) -> None:
-        """Initialize a multi-image message.
+        """Initialize a message with one or more embedded images.
 
         Args:
             role: The message role (default: "user").
@@ -904,7 +780,7 @@ class ModelImagesMessage(ModelMessage):
         skipRole: bool = False,
         supportedImageFormats: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Convert the message to a dictionary with multiple image blocks.
+        """Convert the message to a dictionary with one image block per embedded image.
 
         This method overrides the parent to convert every embedded image to
         base64 and format the message according to the OpenAI multimodal

@@ -43,7 +43,6 @@ from PIL import Image
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.models import (
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
@@ -993,7 +992,7 @@ class TestEstimateTokensCountMessageObjects:
         assert objectEstimate < verbatimEstimate
 
     def testSingleImageObjectListEstimateMatchesSerializedDictEstimate(self) -> None:
-        """The single-image ModelImageMessage sibling gets the same conversion.
+        """A single-image ModelImagesMessage gets the same conversion.
 
         Returns:
             None
@@ -1001,7 +1000,7 @@ class TestEstimateTokensCountMessageObjects:
         model = _makeNoStructuredModel()
         messages = [
             ModelMessage(role="user", content="look at this"),
-            ModelImageMessage(role="user", content="describe", image=bytearray(_makeLargePngBytes())),
+            ModelImagesMessage(role="user", content="describe", images=[bytearray(_makeLargePngBytes())]),
         ]
 
         assert model.getEstimateTokensCount(messages) == model.getEstimateTokensCount([m.toDict() for m in messages])

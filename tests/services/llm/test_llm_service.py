@@ -26,7 +26,6 @@ from lib.ai.models import (
     LLMParameterType,
     LLMToolCall,
     LLMToolFunction,
-    ModelImageMessage,
     ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
@@ -2204,15 +2203,16 @@ class TestCondenseContextCoverage:
         condensing.generateText.assert_awaited_once()
         requestMessages = condensing.generateText.call_args.args[0]
         assert all(isinstance(m, ModelMessage) for m in requestMessages)
-        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
         serialized = [m.toDict() for m in requestMessages]
         assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
         # The envelope text (not a blanked placeholder) reached the condenser.
         # The envelope carries no media description, so the omission marker
         # is appended: the condenser knows an image was there and dropped
-        # deliberately, not lost.
+        # deliberately, not lost. Marker choice is count-based: a 1-image
+        # message gets the legacy singular marker.
         assert any("IMG ENVELOPE" in m["content"] for m in serialized)
-        assert "IMG ENVELOPE\n[1 image attached, omitted for condensing]" in [m["content"] for m in serialized]
+        assert "IMG ENVELOPE\n[image attached, omitted for condensing]" in [m["content"] for m in serialized]
 
         # Coverage survived the text-only copy: the summary still covers the
         # image message's source metadata.
@@ -2769,7 +2769,7 @@ class TestCondenseContextImageStripGating:
         assert isinstance(result, list)
         condensing.generateText.assert_awaited_once()
         requestMessages = condensing.generateText.call_args.args[0]
-        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
         serialized = [m.toDict() for m in requestMessages]
         assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
         # The envelope text survived the strip.
@@ -2806,7 +2806,7 @@ class TestCondenseContextImageStripGating:
         assert isinstance(result, list)
         condensing.generateText.assert_awaited_once()
         requestMessages = condensing.generateText.call_args.args[0]
-        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
         assert any("IMG ENVELOPE" in m.content for m in requestMessages)
         assert set(coverage.keys()) == {0}
 
@@ -2840,7 +2840,7 @@ class TestCondenseContextImageStripGating:
         assert isinstance(result, list)
         condensing.generateText.assert_awaited_once()
         requestMessages = condensing.generateText.call_args.args[0]
-        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
         assert set(coverage.keys()) == {0}
 
     async def testTextOnlyCondenserInjectsResolvedDescription(self, llmService: LLMService) -> None:
@@ -2894,7 +2894,7 @@ class TestCondenseContextImageStripGating:
         condensing.generateText.assert_awaited_once()
         requestMessages = condensing.generateText.call_args.args[0]
         # No image message types and no serialized image payloads crossed.
-        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
         serialized = [m.toDict() for m in requestMessages]
         assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
         # The resolver's description was injected right after the envelope
