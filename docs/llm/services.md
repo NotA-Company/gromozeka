@@ -347,7 +347,7 @@ There is no `internal/services/llm/utils.py` and no standalone `reconstructMessa
 **File:** [`internal/services/storage/service.py`](../../internal/services/storage/service.py)  
 **Import:** `from internal.services.storage import StorageService, StorageScope`
 
-`StorageService` is a **scoped singleton** (ADR-029): one instance per `StorageScope`, held in the `_instances: Dict[str, "StorageService"]` registry keyed on `scope.value`. The `DEFAULT` scope is the long-standing attachments store (top-level `[storage]` table); every other scope resolves to its own `[storage.storages.{scope.value}]` table. Arg-less `getInstance()` / `injectConfig(configManager)` calls still address the DEFAULT instance — every pre-existing call site is unchanged.
+`StorageService` is a **scoped singleton** (ADR-029): one instance per `StorageScope`, held in the `_instances: Dict[str, "StorageService"]` registry keyed on `scope.value`. The `DEFAULT` scope is the long-standing attachments store (top-level `[storage]` table); every other scope resolves to its own `[storage.storages.{scope.value}]` table. Arg-less `getInstance()` returns/creates the DEFAULT-scoped instance — every pre-existing call site is unchanged — while `injectConfig(configManager)` takes no scope: it configures whichever scoped instance it is called on.
 
 ```python
 storage = StorageService.getInstance()  # DEFAULT scope — arg-less = StorageScope.DEFAULT
@@ -357,7 +357,7 @@ storage.injectConfig(configManager)
 
 # Scoped access (e.g. the native-vision store)
 visionStorage = StorageService.getInstance(StorageScope.VISION)
-visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
+visionStorage.injectConfig(configManager)  # no scope arg — the instance reads its own scope's table
 
 # Store binary data
 storage.store("my/key.png", imageBytes)
@@ -384,7 +384,7 @@ keys: List[str] = storage.list(prefix="attachments/", limit=100)
   - **absent table** → silent `NullStorageBackend` (feature off). **No inheritance** from `[storage]` — every scope's backend is fully determined by its own table.
   - **present but malformed** → `StorageConfigError` → startup crash, exact parity with a bad default table.
 
-**Wiring:** `HandlersManager.__init__` iterates every `StorageScope` member in a loop (`internal/bot/common/handlers/manager.py`, `for storageVariant in StorageScope:` → `getInstance(storageVariant)` + `injectConfig(configManager, scope=storageVariant)` per scope) — it holds no `visionStorage` attribute of its own. `self.visionStorage` lives on `BaseBotHandler` (`BaseBotHandler.__init__` binds `self.visionStorage = StorageService.getInstance(StorageScope.VISION)`), and `EnsuredMessage._loadNativeVisionImages` obtains the vision store through the same scoped singleton accessor.
+**Wiring:** `HandlersManager.__init__` iterates every `StorageScope` member in a loop (`internal/bot/common/handlers/manager.py`, `for storageVariant in StorageScope:` → `getInstance(storageVariant)` + arg-less `injectConfig(configManager)` per scope — each instance reads its own scope's table) — it holds no `visionStorage` attribute of its own. `self.visionStorage` lives on `BaseBotHandler` (`BaseBotHandler.__init__` binds `self.visionStorage = StorageService.getInstance(StorageScope.VISION)`), and `EnsuredMessage._loadNativeVisionImages` obtains the vision store through the same scoped singleton accessor.
 
 **Backends:** `null` (no-op), `fs` (filesystem), `s3` (AWS S3/compatible)
 

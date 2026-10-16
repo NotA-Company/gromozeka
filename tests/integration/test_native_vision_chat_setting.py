@@ -309,7 +309,7 @@ async def testShippedDefaultFlowsToRealConsumer(
             }
         )
         visionStorage = StorageService.getInstance(StorageScope.VISION)
-        visionStorage.injectConfig(storageConfigManager, scope=StorageScope.VISION)
+        visionStorage.injectConfig(storageConfigManager)
 
         # Real consumer handler (real BaseBotHandler + LLMMessageHandler inits);
         # only the queue singleton is stubbed and the LLM model catalog is a

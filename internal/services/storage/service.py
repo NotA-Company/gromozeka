@@ -36,8 +36,9 @@ class StorageScope(StrEnum):
 
     Attributes:
         DEFAULT: The default store (top-level ``[storage]`` table; the
-            long-standing attachments store). Argless ``getInstance()`` /
-            ``injectConfig(configManager)`` calls resolve here.
+            long-standing attachments store). Argless ``getInstance()``
+            returns/creates this instance; ``injectConfig(configManager)``
+            configures whichever scoped instance it is called on.
         VISION: The native-vision store (``[storage.storages.vision]``
             table). An absent table resolves to a null backend (feature
             off); a present-but-malformed table crashes at inject time,
@@ -145,9 +146,10 @@ class StorageService:
         storage = StorageService.getInstance()
         storage.injectConfig(configManager)
 
-        # Scoped access (e.g. the native-vision store)
+        # Scoped access (e.g. the native-vision store); injectConfig takes no
+        # scope — the instance always reads its OWN scope's config table
         vision = StorageService.getInstance(StorageScope.VISION)
-        vision.injectConfig(configManager, scope=StorageScope.VISION)
+        vision.injectConfig(configManager)
 
         # Store and retrieve objects
         storage.store("my-key", b"data")
@@ -192,9 +194,9 @@ class StorageService:
         The ``hasattr`` guard and the initialization assignments run under the
         class lock so a concurrent first-time caller cannot re-run them (and
         cannot reset ``backend``/``initialized`` on an instance another thread
-        has already configured). The ``scope`` parameter (forwarded by Python
+        has already configured).         The ``scope`` parameter (forwarded by Python
         from ``__new__``) is retained as the instance's bound construction
-        scope, which ``injectConfig`` validates against.
+        scope, which selects the storage configuration ``injectConfig`` reads.
 
         Args:
             scope: The storage scope this instance was created for
@@ -220,29 +222,24 @@ class StorageService:
         """
         return cls(scope)
 
-    def injectConfig(self, configManager: "ConfigManager", scope: StorageScope = StorageScope.DEFAULT) -> None:
+    def injectConfig(self, configManager: "ConfigManager") -> None:
         """
-        Initialize this scope's instance with configuration from ConfigManager.
+        Initialize this instance with the storage configuration for its scope.
 
-        For the DEFAULT scope, reads the top-level ``[storage]`` table. For
-        any other scope, reads the ``[storage.storages.{scope.value}]`` table:
-        an absent table silently resolves to a null backend (feature off),
-        while a present table is validated exactly like the default one (bad
-        config raises, never falls back).
+        The instance reads the configuration for its OWN scope (fixed at
+        construction time): the DEFAULT scope reads the top-level ``[storage]``
+        table, any other scope reads the ``[storage.storages.{scope.value}]``
+        table — an absent table silently resolves to a null backend (feature
+        off), while a present table is validated exactly like the default one
+        (bad config raises, never falls back).
 
         This method should be called once per scope during application
         initialization.
 
         Args:
             configManager: The configuration manager containing storage settings
-            scope: The storage scope to configure (default: StorageScope.DEFAULT).
-                Must match the scope this instance was created for
 
         Raises:
-            ValueError: If ``scope`` does not match the scope this instance was
-                created for (e.g. an arg-less call on the VISION instance).
-                Raised before any state changes, so the instance's backend is
-                never silently redirected to another scope's storage
             StorageConfigError: If configuration is invalid or backend creation fails
 
         Configuration format (identical for the default and every named table):
@@ -259,16 +256,8 @@ class StorageService:
                 }
             }
         """
-        if scope is not self.scope:
-            raise ValueError(
-                f"injectConfig scope mismatch: instance was created for scope "
-                f"'{self.scope.value}' but injectConfig was called with scope "
-                f"'{scope.value}'; use StorageService.getInstance(scope) to get "
-                f"the instance for the target scope"
-            )
-
         try:
-            if scope is StorageScope.DEFAULT:
+            if self.scope is StorageScope.DEFAULT:
                 # Get the default storage configuration from ConfigManager
                 config = configManager.getStorageConfig()  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -280,18 +269,18 @@ class StorageService:
                 storages = configManager.getStorageConfig().get(
                     "storages", {}
                 )  # pyright: ignore[reportAttributeAccessIssue]
-                config = storages.get(scope.value) if isinstance(storages, dict) else None
+                config = storages.get(self.scope.value) if isinstance(storages, dict) else None
 
                 if config is None:
                     # Absent named storage = feature explicitly off, NOT an error
                     self.backend = NullStorageBackend()
                     self.initialized = True
-                    logger.info(f"StorageService scope '{scope.value}' not configured; using NullStorageBackend")
+                    logger.info(f"StorageService scope '{self.scope.value}' not configured; using NullStorageBackend")
                     return
 
             self.backend = _buildBackend(config)
             self.initialized = True
-            logger.info(f"StorageService scope '{scope.value}' initialized with {config.get('type')} backend")
+            logger.info(f"StorageService scope '{self.scope.value}' initialized with {config.get('type')} backend")
 
         except StorageConfigError:
             raise

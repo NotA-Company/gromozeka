@@ -29,7 +29,7 @@ storage.injectConfig(configManager)
 
 # Scoped access (e.g. the native-vision store; see Named Storages below)
 visionStorage = StorageService.getInstance(StorageScope.VISION)
-visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
+visionStorage.injectConfig(configManager)
 
 # Store binary data
 storage.store("my-document.pdf", pdfData)
@@ -157,7 +157,7 @@ base-dir = "storage/vision"
 
 - An **absent** named table resolves to a silent `NullStorageBackend` — the feature stores nothing (feature off, not an error).
 - A **present-but-malformed** table raises `StorageConfigError` at `injectConfig()` time and aborts startup, exactly like a bad default `[storage]` table.
-- A named storage is selected via `StorageService.getInstance(StorageScope.NAME)` + `injectConfig(configManager, scope=StorageScope.NAME)`; arg-less `getInstance()` / `injectConfig(configManager)` calls still address the default attachments store.
+- A named storage is selected via `StorageService.getInstance(StorageScope.NAME)`; that instance's arg-less `injectConfig(configManager)` then reads its own scope's table. Selection is `getInstance()`'s job — an arg-less `getInstance()` returns/creates the DEFAULT-scoped instance (the default attachments store) — while `injectConfig(configManager)` only configures whichever scoped instance it is called on.
 - `StorageScope` is the closed set of sanctioned scopes: adding a storage later means one enum member plus its config table.
 
 ## API Reference
@@ -179,17 +179,16 @@ storage = StorageService.getInstance()                           # default scope
 visionStorage = StorageService.getInstance(StorageScope.VISION)  # vision scope
 ```
 
-#### injectConfig(configManager: ConfigManager, scope: StorageScope = StorageScope.DEFAULT) -> None
+#### injectConfig(configManager: ConfigManager) -> None
 
-Initialize this scope's instance with configuration. Must be called once per scope before using that instance. The DEFAULT scope reads the top-level `[storage]` table; any other scope reads its `[storage.storages.{scope.value}]` table — an absent table silently resolves to a null backend (feature off), while a present table is validated exactly like the default one (bad config raises, never falls back).
+Initialize this instance with the configuration for its own scope (fixed at construction time — `injectConfig` takes no scope argument). Must be called once per scope before using that instance. The DEFAULT scope reads the top-level `[storage]` table; any other scope reads its `[storage.storages.{scope.value}]` table — an absent table silently resolves to a null backend (feature off), while a present table is validated exactly like the default one (bad config raises, never falls back).
 
 ```python
-storage.injectConfig(configManager)                                  # default scope
-visionStorage.injectConfig(configManager, scope=StorageScope.VISION)  # vision scope
+storage.injectConfig(configManager)  # default scope
+visionStorage.injectConfig(configManager)  # vision scope
 ```
 
 **Raises:**
-- ValueError: If the scope passed to injectConfig does not match the scope this instance was constructed for (production code path) — raised before any state change, so the backend is never silently redirected to another scope's storage
 - StorageConfigError: If configuration is invalid or backend creation fails (an absent NAMED table does not raise — it resolves to the null backend)
 
 #### store(key: str, data: bytes) -> None

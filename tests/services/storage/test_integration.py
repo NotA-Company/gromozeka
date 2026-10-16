@@ -329,7 +329,7 @@ class TestStorageServiceScopedIntegration:
         }
 
         vision = StorageService.getInstance(StorageScope.VISION)
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)
 
         assert isinstance(vision.backend, FSStorageBackend)
 

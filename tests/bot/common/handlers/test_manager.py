@@ -809,7 +809,7 @@ class TestVisionGc:
                 }
             )
             visionStorage = StorageService.getInstance(StorageScope.VISION)
-            visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
+            visionStorage.injectConfig(configManager)
 
             manager = self._buildManager(testDatabase, visionTtlDays=1)
             repo = testDatabase.mediaAttachments
@@ -1009,7 +1009,7 @@ class TestVisionGc:
                 }
             )
             visionStorage = StorageService.getInstance(StorageScope.VISION)
-            visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
+            visionStorage.injectConfig(configManager)
 
             # A real decodable PNG so the receipt's libmagic guard and the
             # strict normalization (asyncio.to_thread thread hop) run for real.

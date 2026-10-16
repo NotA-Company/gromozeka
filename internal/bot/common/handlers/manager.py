@@ -461,7 +461,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         for storageVariant in StorageScope:
             storage = StorageService.getInstance(storageVariant)
-            storage.injectConfig(self.configManager, scope=storageVariant)
+            storage.injectConfig(self.configManager)
 
         self.queueService = QueueService.getInstance()
 

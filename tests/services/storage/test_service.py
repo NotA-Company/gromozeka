@@ -6,6 +6,7 @@ initialization, configuration, and operation delegation to backends.
 """
 
 import threading
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -518,7 +519,7 @@ class TestStorageServiceScopedInstances:
         """Test that a new scope starts uninitialized even when the default scope is configured"""
         mockConfigManager.getStorageConfig.return_value = {"type": "null"}
         default = StorageService.getInstance(StorageScope.DEFAULT)
-        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager)
 
         vision = StorageService.getInstance(StorageScope.VISION)
 
@@ -538,9 +539,9 @@ class TestStorageServiceScopedInstances:
         }
 
         default = StorageService.getInstance(StorageScope.DEFAULT)
-        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager)
         vision = StorageService.getInstance(StorageScope.VISION)
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)
 
         assert default.backendType == "null"
         assert vision.backendType == "fs"
@@ -551,7 +552,7 @@ class TestStorageServiceScopedInstances:
 
         vision = StorageService.getInstance(StorageScope.VISION)
 
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)  # must not raise
+        vision.injectConfig(mockConfigManager)  # must not raise
 
         assert vision.initialized is True
         assert isinstance(vision.backend, NullStorageBackend)
@@ -563,7 +564,7 @@ class TestStorageServiceScopedInstances:
 
         vision = StorageService.getInstance(StorageScope.VISION)
 
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)
 
         assert vision.initialized is True
         assert isinstance(vision.backend, NullStorageBackend)
@@ -610,7 +611,7 @@ class TestStorageServiceScopedInstances:
         vision = StorageService.getInstance(StorageScope.VISION)
 
         with pytest.raises(StorageConfigError) as excInfo:
-            vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+            vision.injectConfig(mockConfigManager)
 
         assert str(excInfo.value) == expectedMessage
 
@@ -632,9 +633,9 @@ class TestStorageServiceScopedInstances:
         }
 
         default = StorageService.getInstance(StorageScope.DEFAULT)
-        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager)
         vision = StorageService.getInstance(StorageScope.VISION)
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)
 
         # Save backend references BEFORE any re-inject.
         visionBackendBefore = vision.backend
@@ -642,7 +643,7 @@ class TestStorageServiceScopedInstances:
 
         # Re-inject the default scope as null; vision must keep its backend object
         mockConfigManager.getStorageConfig.return_value = {"type": "null"}
-        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager)
 
         assert default.backend is not defaultBackendBefore  # default's backend was replaced
         assert vision.backend is visionBackendBefore  # identity: same object, untouched
@@ -656,7 +657,7 @@ class TestStorageServiceScopedInstances:
             "type": "null",
             "storages": {"vision": {"type": "null"}},
         }
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)
 
         assert vision.backend is not visionBackendBefore  # vision's backend was replaced
         assert default.backend is defaultBackendAfterDefaultReinject  # identity: same object
@@ -664,8 +665,15 @@ class TestStorageServiceScopedInstances:
         assert isinstance(default.backend, NullStorageBackend)
 
 
-class TestStorageServiceScopeBinding:
-    """Test that injectConfig is bound to the instance's construction scope"""
+class TestStorageServiceScopeConfigSelection:
+    """Test that each instance's injectConfig reads its OWN scope's config table
+
+    injectConfig takes no scope argument (user decision): the config table is
+    derived strictly from the instance's construction scope, so the former
+    scope-mismatch ValueError is structurally impossible. These pins replace
+    the obsolete mismatch-guard tests — what must hold is that each scope
+    reads ITS OWN table and never another scope's.
+    """
 
     def testConstructionScopeIsRetained(self):
         """Test that each instance retains the scope it was created for"""
@@ -675,56 +683,85 @@ class TestStorageServiceScopeBinding:
         assert default.scope == StorageScope.DEFAULT
         assert vision.scope == StorageScope.VISION
 
-    def testInjectConfigScopeMismatchRaisesAndLeavesBackendUntouched(self, mockConfigManager):
-        """Test that a scope-mismatched injectConfig raises ValueError BEFORE touching the backend
+    def testVisionInstanceReadsVisionConfigSection(self, mockConfigManager: Mock, tmp_path: Path) -> None:
+        """Test that an arg-less injectConfig on the VISION instance reads the vision table
 
-        Regression (review-large finding): getInstance(StorageScope.VISION) followed
-        by an arg-less injectConfig(configManager) used to silently configure the
-        vision instance with the DEFAULT attachments config. The call must raise
-        and the vision instance's backend must stay un-redirected.
+        Regression context (review-large finding, now pinned structurally):
+        an arg-less call used to risk configuring the vision instance with the
+        DEFAULT attachments config. With distinct fs base dirs in each
+        section, the configured backend's baseDir pins WHICH section was read.
+
+        Args:
+            mockConfigManager: Mock ConfigManager fixture.
+            tmp_path: Temporary directory holding the distinct default/vision fs base dirs.
         """
-        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
-
-        vision = StorageService.getInstance(StorageScope.VISION)
-
-        with pytest.raises(ValueError, match="scope mismatch"):
-            vision.injectConfig(mockConfigManager)  # defaults to DEFAULT scope on the vision instance
-
-        assert vision.backend is None
-        assert vision.initialized is False
-        assert vision.backendType is None
-
-    def testInjectConfigScopeMismatchSymmetricRaises(self, mockConfigManager, tmp_path):
-        """Test the symmetric mismatch: DEFAULT instance configured with scope=VISION raises"""
+        defaultDir = tmp_path / "default"
+        visionDir = tmp_path / "vision"
+        defaultDir.mkdir()
+        visionDir.mkdir()
         mockConfigManager.getStorageConfig.return_value = {
             "type": "fs",
-            "fs": {"base-dir": str(tmp_path)},
+            "fs": {"base-dir": str(defaultDir)},
+            "storages": {"vision": {"type": "fs", "fs": {"base-dir": str(visionDir)}}},
         }
 
-        default = StorageService.getInstance(StorageScope.DEFAULT)
-
-        with pytest.raises(ValueError, match="scope mismatch"):
-            default.injectConfig(mockConfigManager, scope=StorageScope.VISION)
-
-        assert default.backend is None
-        assert default.initialized is False
-
-    def testMatchingScopeInjectStillConfigures(self, mockConfigManager):
-        """Test that scope-matched injection still works on both instances"""
-        mockConfigManager.getStorageConfig.return_value = {
-            "type": "null",
-            "storages": {"vision": {"type": "null"}},
-        }
-
-        default = StorageService.getInstance(StorageScope.DEFAULT)
         vision = StorageService.getInstance(StorageScope.VISION)
-        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)  # arg-less: scope comes from the instance
 
-        assert default.initialized is True
-        assert isinstance(default.backend, NullStorageBackend)
+        assert isinstance(vision.backend, FSStorageBackend)
+        assert vision.backend.baseDir == visionDir  # the VISION section, not the default one
+
+    def testDefaultInstanceReadsDefaultConfigSection(self, mockConfigManager: Mock, tmp_path: Path) -> None:
+        """Test that an arg-less injectConfig on the DEFAULT instance reads the top-level table
+
+        Args:
+            mockConfigManager: Mock ConfigManager fixture.
+            tmp_path: Temporary directory holding the distinct default/vision fs base dirs.
+        """
+        defaultDir = tmp_path / "default"
+        visionDir = tmp_path / "vision"
+        defaultDir.mkdir()
+        visionDir.mkdir()
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "fs",
+            "fs": {"base-dir": str(defaultDir)},
+            "storages": {"vision": {"type": "fs", "fs": {"base-dir": str(visionDir)}}},
+        }
+
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager)  # arg-less: scope comes from the instance
+
+        assert isinstance(default.backend, FSStorageBackend)
+        assert default.backend.baseDir == defaultDir  # the top-level table, not the vision one
+
+    def testAbsentVisionConfigDoesNotFallBackToDefaultStorage(self, mockConfigManager: Mock, tmp_path: Path) -> None:
+        """Test that an absent vision table leaves the vision instance on the null backend
+
+        Documented ADR-029 semantics: NO inheritance from the default
+        ``[storage]`` table. With a REAL fs default store configured, the
+        vision instance must not receive the default's backend — it gets the
+        silent NullStorageBackend (feature off, never a fallback).
+
+        Args:
+            mockConfigManager: Mock ConfigManager fixture.
+            tmp_path: Temporary directory holding the real default fs base dir.
+        """
+        defaultDir = tmp_path / "default"
+        defaultDir.mkdir()
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "fs",
+            "fs": {"base-dir": str(defaultDir)},
+        }
+
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        default.injectConfig(mockConfigManager)
+        vision = StorageService.getInstance(StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)  # must not raise
+
+        assert isinstance(default.backend, FSStorageBackend)  # default store really configured
+        assert isinstance(vision.backend, NullStorageBackend)  # NOT the default's fs backend
         assert vision.initialized is True
-        assert isinstance(vision.backend, NullStorageBackend)
+        assert vision.backendType == "null"
 
 
 class TestStorageServiceInitializationConcurrency:
@@ -777,7 +814,7 @@ class TestStorageServiceInitializationConcurrency:
         mockConfigManager.getStorageConfig.return_value = {"type": "null"}
 
         vision = StorageService.getInstance(StorageScope.VISION)
-        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        vision.injectConfig(mockConfigManager)
         backendBefore = vision.backend
 
         StorageService.__init__(vision, StorageScope.VISION)  # simulated delayed initializer

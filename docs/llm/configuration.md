@@ -370,7 +370,7 @@ prefix = "objects/"
 - `fs` — filesystem storage
 - `s3` — AWS S3 or compatible (e.g., MinIO, Yandex Object Storage)
 
-**Named storages `[storage.storages.NAME]`** (ADR-029, scoped `StorageService` instances): optional per-feature storages, each table shaped **exactly like `[storage]`** — a `type` key plus the optional `.fs`/`.s3` sub-tables with the same keys, and nothing else. The top-level `[storage]` table remains the DEFAULT scope (the attachments store); a named table is selected via `StorageService.getInstance(StorageScope.NAME)` / `injectConfig(configManager, scope=...)`. Today the only sanctioned named storage is `vision` (`[storage.storages.vision]`, consumed by native vision — see §`[bot.vision]`). Semantics:
+**Named storages `[storage.storages.NAME]`** (ADR-029, scoped `StorageService` instances): optional per-feature storages, each table shaped **exactly like `[storage]`** — a `type` key plus the optional `.fs`/`.s3` sub-tables with the same keys, and nothing else. The top-level `[storage]` table remains the DEFAULT scope (the attachments store); a named table is selected via `StorageService.getInstance(StorageScope.NAME)` (that instance's arg-less `injectConfig(configManager)` reads its own scope's table). Today the only sanctioned named storage is `vision` (`[storage.storages.vision]`, consumed by native vision — see §`[bot.vision]`). Semantics:
 
 - **Absent table** → that scope silently resolves to a `NullStorageBackend` (feature off). There is deliberately **no inheritance** from `[storage]` — every scope's backend is fully determined by its own table.
 - **Present but malformed table** → `StorageConfigError` at inject time → **startup crash**, exact parity with a bad default `[storage]` table.
@@ -1069,7 +1069,7 @@ global-ratelimiter-queue = "stt-global"
 | `getBotToken()` | `str` | Bot API token (exits if missing) |
 | `getOpenWeatherMapConfig()` | `Dict[str, Any]` | `[openweathermap]` section |
 | `getYandexSearchConfig()` | `Dict[str, Any]` | `[yandex-search]` section |
-| `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section (includes any nested `[storage.storages.*]` named-storage tables — there is deliberately no dedicated named-storage accessor; `StorageService.injectConfig(..., scope=...)` reads them out of this dict — ADR-029) |
+| `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section (includes any nested `[storage.storages.*]` named-storage tables — there is deliberately no dedicated named-storage accessor; `StorageService.injectConfig` reads them out of this dict per the instance's own scope — ADR-029) |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
 | `getStatsPagesConfig()` | `Dict[str, Any]` | `[stats.pages]` child section via an inline nested lookup (`self.get("stats", {})` → `.get("pages", {})`; `get()` is literal-key-only, no dot navigation); returns `{}` when missing; consumed by `StatsHandler` |

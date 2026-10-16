@@ -1903,7 +1903,7 @@ class TestProcessMediaV2Vision:
             visionBaseDir=visionBaseDir,
         )
         StorageService.getInstance().injectConfig(configManager)
-        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager)
         return UserMemoriesHandler(
             configManager=configManager,
             database=testDatabase,
@@ -2794,7 +2794,7 @@ class TestProcessMediaV2Vision:
 
         configManager = self._makeMockConfigManager(storageType="fs", storageBaseDir=str(tmp_path))
         StorageService.getInstance().injectConfig(configManager)
-        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager)
         handler = UserMemoriesHandler(
             configManager=configManager,
             database=testDatabase,
@@ -2834,7 +2834,7 @@ class TestProcessMediaV2Vision:
             storageType="fs", storageBaseDir=str(tmp_path), visionConfig=badConfig
         )
         StorageService.getInstance().injectConfig(configManager)
-        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager)
 
         with caplog.at_level(logging.WARNING):
             handler = UserMemoriesHandler(
@@ -3327,7 +3327,7 @@ class TestProcessMediaV2Vision:
             storageType="fs", storageBaseDir=str(tmp_path), visionConfig=badConfig
         )
         StorageService.getInstance().injectConfig(configManager)
-        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager)
 
         with caplog.at_level(logging.WARNING):
             handler = UserMemoriesHandler(
