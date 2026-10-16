@@ -116,7 +116,6 @@ def sampleMessageId():
 class TestDatabaseInitialization:
     """Test database initialization and connection management."""
 
-    @pytest.mark.asyncio
     async def testInitWithMemoryDatabase(self):
         """Test initialization with in-memory database."""
         config: DatabaseManagerConfig = {
@@ -140,7 +139,6 @@ class TestDatabaseInitialization:
         finally:
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def testInitWithFileDatabase(self, tempDbPath):
         """Test initialization with file-based database."""
         config: DatabaseManagerConfig = {
@@ -165,7 +163,6 @@ class TestDatabaseInitialization:
         finally:
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def testInitWithCustomParameters(self, tempDbPath):
         """Test initialization with custom connection parameters."""
         config: DatabaseManagerConfig = {
@@ -189,7 +186,6 @@ class TestDatabaseInitialization:
         finally:
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def testSchemaInitialization(self, inMemoryDb):
         """Test that schema is properly initialized."""
         provider = await inMemoryDb.manager.getProvider()
@@ -203,7 +199,6 @@ class TestDatabaseInitialization:
         )
         assert result is not None
 
-    @pytest.mark.asyncio
     async def testMigrationExecution(self, inMemoryDb):
         """Test that migrations are executed during initialization."""
         # Check that migration version is tracked
@@ -220,7 +215,6 @@ class TestDatabaseInitialization:
 class TestChatMessageOperations:
     """Test chat message CRUD operations."""
 
-    @pytest.mark.asyncio
     async def testSaveChatMessage(self, inMemoryDb, sampleDateTime, sampleChatId, sampleUserId, sampleMessageId):
         """Test saving a chat message with all parameters."""
         # First create user
@@ -237,7 +231,6 @@ class TestChatMessageOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testSaveChatMessageWithOptionalParams(self, inMemoryDb, sampleDateTime, sampleChatId, sampleUserId):
         """Test saving a chat message with optional parameters."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -258,7 +251,6 @@ class TestChatMessageOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testSaveChatMessageDefaultThreadId(self, inMemoryDb, sampleDateTime, sampleChatId, sampleUserId):
         """Test that default thread ID is used when not specified."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -275,7 +267,6 @@ class TestChatMessageOperations:
         assert message is not None
         assert message["thread_id"] == 0
 
-    @pytest.mark.asyncio
     async def testGetChatMessageByMessageId(self, inMemoryDb, sampleDateTime, sampleChatId, sampleUserId):
         """Test retrieving a specific chat message by ID."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -293,13 +284,11 @@ class TestChatMessageOperations:
         assert message["message_text"] == "Find me"
         assert message["username"] == "testuser"
 
-    @pytest.mark.asyncio
     async def testGetChatMessageByMessageIdNotFound(self, inMemoryDb, sampleChatId):
         """Test retrieving non-existent message returns None."""
         message = await inMemoryDb.chatMessages.getChatMessageByMessageId(sampleChatId, 999999)
         assert message is None
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesSince(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages since a specific datetime."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -322,7 +311,6 @@ class TestChatMessageOperations:
         assert len(messages) == 2  # Messages at 3h and 4h
         assert all(msg["date"] > sinceTime for msg in messages)
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesSinceWithLimit(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages with limit."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -340,7 +328,6 @@ class TestChatMessageOperations:
         messages = await inMemoryDb.chatMessages.getChatMessagesSince(sampleChatId, limit=5)
         assert len(messages) == 5
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesSinceWithThreadId(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages filtered by thread ID."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -369,7 +356,6 @@ class TestChatMessageOperations:
         assert len(thread1Messages) == 3
         assert all(msg["thread_id"] == 1 for msg in thread1Messages)
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesSinceWithCategory(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages filtered by category."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -399,7 +385,6 @@ class TestChatMessageOperations:
         assert len(userMessages) == 1
         assert userMessages[0]["message_category"] == MessageCategory.USER
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesSinceWithUserId(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages filtered by sender userId, and backward compat without it.
 
@@ -446,7 +431,6 @@ class TestChatMessageOperations:
         emptyMessages = await inMemoryDb.chatMessages.getChatMessagesSince(sampleChatId, userId=nonExistentUserId)
         assert emptyMessages == []
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesByRootId(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages by root message ID."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -478,7 +462,6 @@ class TestChatMessageOperations:
         assert len(replies) == 3
         assert all(msg["root_message_id"].asInt() == rootId for msg in replies)
 
-    @pytest.mark.asyncio
     async def testGetChatMessagesByUser(self, inMemoryDb, sampleChatId):
         """Test retrieving messages by user ID."""
         user1Id = 1001
@@ -512,7 +495,6 @@ class TestChatMessageOperations:
         assert len(user1Messages) == 3
         assert all(msg["user_id"] == user1Id for msg in user1Messages)
 
-    @pytest.mark.asyncio
     async def testMessageCounterIncrement(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test that message counter increments when saving messages."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -543,7 +525,6 @@ class TestChatMessageOperations:
 class TestChatUserOperations:
     """Test chat user CRUD operations."""
 
-    @pytest.mark.asyncio
     async def testUpdateChatUser(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test creating/updating a chat user."""
         result = await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -554,7 +535,6 @@ class TestChatUserOperations:
         assert user["username"] == "testuser"
         assert user["full_name"] == "Test User"
 
-    @pytest.mark.asyncio
     async def testUpdateChatUserUpdatesExisting(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test that updating a user modifies existing record."""
         # Create user
@@ -567,7 +547,6 @@ class TestChatUserOperations:
         assert user["username"] == "newname"
         assert user["full_name"] == "New Name"
 
-    @pytest.mark.asyncio
     async def testGetChatUser(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving a chat user."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
@@ -578,13 +557,11 @@ class TestChatUserOperations:
         assert user["user_id"] == sampleUserId
         assert user["messages_count"] == 0
 
-    @pytest.mark.asyncio
     async def testGetChatUserNotFound(self, inMemoryDb, sampleChatId):
         """Test retrieving non-existent user returns None."""
         user = await inMemoryDb.chatUsers.getChatUser(sampleChatId, 999999)
         assert user is None
 
-    @pytest.mark.asyncio
     async def testGetChatUserByUsername(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving user by username."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "findme", "Test User")
@@ -593,7 +570,6 @@ class TestChatUserOperations:
         assert user is not None
         assert user["user_id"] == sampleUserId
 
-    @pytest.mark.asyncio
     async def testGetChatUsers(self, inMemoryDb, sampleChatId):
         """Test retrieving all users in a chat."""
         # Create multiple users
@@ -603,7 +579,6 @@ class TestChatUserOperations:
         users = await inMemoryDb.chatUsers.getChatUsers(sampleChatId, limit=10)
         assert len(users) == 5
 
-    @pytest.mark.asyncio
     async def testGetChatUsersWithLimit(self, inMemoryDb, sampleChatId):
         """Test retrieving users with limit."""
         for i in range(10):
@@ -612,7 +587,6 @@ class TestChatUserOperations:
         users = await inMemoryDb.chatUsers.getChatUsers(sampleChatId, limit=3)
         assert len(users) == 3
 
-    @pytest.mark.asyncio
     async def testGetChatUsersSeenSince(self, inMemoryDb, sampleChatId):
         """Test retrieving users seen since a specific time."""
         baseTime = datetime.datetime(2024, 1, 1, 12, 0, 0)
@@ -643,7 +617,6 @@ class TestChatUserOperations:
         users = await inMemoryDb.chatUsers.getChatUsers(sampleChatId, seenSince=futureTime)
         assert len(users) == 0
 
-    @pytest.mark.asyncio
     async def testUpdateUserMetadata(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test updating user metadata."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -655,7 +628,6 @@ class TestChatUserOperations:
         user = await inMemoryDb.chatUsers.getChatUser(sampleChatId, sampleUserId)
         assert json.loads(user["metadata"]) == metadata
 
-    @pytest.mark.asyncio
     async def testGetUserChats(self, inMemoryDb, sampleUserId):
         """Test retrieving all chats a user is in."""
         # Create multiple chats with the user
@@ -667,7 +639,6 @@ class TestChatUserOperations:
         chats = await inMemoryDb.chatUsers.getUserChats(sampleUserId)
         assert len(chats) == 3
 
-    @pytest.mark.asyncio
     async def testGetAllGroupChats(self, inMemoryDb):
         """Test retrieving all group chats."""
         from telegram import Chat
@@ -690,13 +661,11 @@ class TestChatUserOperations:
 class TestChatSettingsOperations:
     """Test chat settings CRUD operations."""
 
-    @pytest.mark.asyncio
     async def testSetChatSetting(self, inMemoryDb, sampleChatId):
         """Test setting a chat setting."""
         result = await inMemoryDb.chatSettings.setChatSetting(sampleChatId, "model", "gpt-4", updatedBy=0)
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetChatSetting(self, inMemoryDb, sampleChatId):
         """Test retrieving a specific chat setting."""
         await inMemoryDb.chatSettings.setChatSetting(sampleChatId, "temperature", "0.7", updatedBy=0)
@@ -704,13 +673,11 @@ class TestChatSettingsOperations:
         value = await inMemoryDb.chatSettings.getChatSetting(sampleChatId, "temperature")
         assert value == "0.7"
 
-    @pytest.mark.asyncio
     async def testGetChatSettingNotFound(self, inMemoryDb, sampleChatId):
         """Test retrieving non-existent setting returns None."""
         value = await inMemoryDb.chatSettings.getChatSetting(sampleChatId, "nonexistent")
         assert value is None
 
-    @pytest.mark.asyncio
     async def testGetChatSettings(self, inMemoryDb, sampleChatId):
         """Test retrieving all settings for a chat."""
         settings = {
@@ -728,13 +695,11 @@ class TestChatSettingsOperations:
             assert key in retrieved
             assert retrieved[key] == (value, 0)
 
-    @pytest.mark.asyncio
     async def testGetChatSettingsEmpty(self, inMemoryDb, sampleChatId):
         """Test retrieving settings for chat with no settings."""
         settings = await inMemoryDb.chatSettings.getChatSettings(sampleChatId)
         assert settings == {}
 
-    @pytest.mark.asyncio
     async def testUnsetChatSetting(self, inMemoryDb, sampleChatId):
         """Test removing a chat setting."""
         await inMemoryDb.chatSettings.setChatSetting(sampleChatId, "test_key", "test_value", updatedBy=0)
@@ -745,7 +710,6 @@ class TestChatSettingsOperations:
         value = await inMemoryDb.chatSettings.getChatSetting(sampleChatId, "test_key")
         assert value is None
 
-    @pytest.mark.asyncio
     async def testClearChatSettings(self, inMemoryDb, sampleChatId):
         """Test clearing all settings for a chat."""
         await inMemoryDb.chatSettings.setChatSetting(sampleChatId, "key1", "value1", updatedBy=0)
@@ -757,7 +721,6 @@ class TestChatSettingsOperations:
         settings = await inMemoryDb.chatSettings.getChatSettings(sampleChatId)
         assert settings == {}
 
-    @pytest.mark.asyncio
     async def testSettingsIsolationBetweenChats(self, inMemoryDb):
         """Test that settings are isolated between different chats."""
         chat1 = 5001
@@ -778,7 +741,6 @@ class TestChatSettingsOperations:
 class TestDelayedTaskOperations:
     """Test delayed task CRUD operations."""
 
-    @pytest.mark.asyncio
     async def testAddDelayedTask(self, inMemoryDb):
         """Test adding a delayed task."""
         taskId = "task_001"
@@ -789,7 +751,6 @@ class TestDelayedTaskOperations:
         result = await inMemoryDb.delayedTasks.addDelayedTask(taskId, function, kwargs, delayedTs)
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetPendingDelayedTasks(self, inMemoryDb):
         """Test retrieving pending delayed tasks."""
         baseTs = int(datetime.datetime.now().timestamp())
@@ -804,7 +765,6 @@ class TestDelayedTaskOperations:
         assert len(tasks) == 3
         assert all(not task["is_done"] for task in tasks)
 
-    @pytest.mark.asyncio
     async def testUpdateDelayedTask(self, inMemoryDb):
         """Test updating a delayed task status."""
         taskId = "task_update"
@@ -818,7 +778,6 @@ class TestDelayedTaskOperations:
         tasks = await inMemoryDb.delayedTasks.getPendingDelayedTasks()
         assert len(tasks) == 0  # Task is done, not pending
 
-    @pytest.mark.asyncio
     async def testDelayedTaskStatusTransitions(self, inMemoryDb):
         """Test task status transitions from pending to done."""
         taskId = "task_transition"
@@ -846,7 +805,6 @@ class TestDelayedTaskOperations:
 class TestMediaOperations:
     """Test media attachment CRUD operations."""
 
-    @pytest.mark.asyncio
     async def testAddMediaAttachment(self, inMemoryDb):
         """Test adding a media attachment."""
         result = await inMemoryDb.mediaAttachments.addMediaAttachment(
@@ -858,7 +816,6 @@ class TestMediaOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testAddMediaAttachmentWithAllParams(self, inMemoryDb):
         """Test adding media with all optional parameters."""
         result = await inMemoryDb.mediaAttachments.addMediaAttachment(
@@ -875,7 +832,6 @@ class TestMediaOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetMediaAttachment(self, inMemoryDb):
         """Test retrieving a media attachment."""
         fileUniqueId = "unique_get"
@@ -890,7 +846,6 @@ class TestMediaOperations:
         assert media["file_unique_id"] == fileUniqueId
         assert media["status"] == MediaStatus.NEW
 
-    @pytest.mark.asyncio
     async def testGetMediaAttachmentNotFound(self, inMemoryDb):
         """Test retrieving non-existent media returns None."""
         media = await inMemoryDb.mediaAttachments.getMediaAttachment("nonexistent")
@@ -905,7 +860,6 @@ class TestMediaOperations:
 class TestCacheStorageOperations:
     """Test cache storage operations."""
 
-    @pytest.mark.asyncio
     async def testSetCacheStorage(self, inMemoryDb):
         """Test setting cache storage entry."""
         result = await inMemoryDb.cache.setCacheStorage(
@@ -915,7 +869,6 @@ class TestCacheStorageOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetCacheStorage(self, inMemoryDb):
         """Test retrieving all cache storage entries."""
         await inMemoryDb.cache.setCacheStorage("ns1", "key1", "value1")
@@ -925,7 +878,6 @@ class TestCacheStorageOperations:
         entries = await inMemoryDb.cache.getCacheStorage()
         assert len(entries) >= 3
 
-    @pytest.mark.asyncio
     async def testUnsetCacheStorage(self, inMemoryDb):
         """Test removing cache storage entry."""
         namespace = "test_ns"
@@ -940,7 +892,6 @@ class TestCacheStorageOperations:
         matching = [e for e in entries if e["namespace"] == namespace and e["key"] == key]
         assert len(matching) == 0
 
-    @pytest.mark.asyncio
     async def testCacheStorageNamespacing(self, inMemoryDb):
         """Test cache storage key namespacing."""
         await inMemoryDb.cache.setCacheStorage("ns1", "key", "value1")
@@ -964,7 +915,6 @@ class TestCacheStorageOperations:
 class TestSpamOperations:
     """Test spam and ham message operations."""
 
-    @pytest.mark.asyncio
     async def testAddSpamMessage(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test adding a spam message."""
         result = await inMemoryDb.spam.addSpamMessage(
@@ -978,7 +928,6 @@ class TestSpamOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetSpamMessages(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving spam messages."""
         for i in range(3):
@@ -995,7 +944,6 @@ class TestSpamOperations:
         messages = await inMemoryDb.spam.getSpamMessages(limit=10)
         assert len(messages) >= 3
 
-    @pytest.mark.asyncio
     async def testGetSpamMessagesByText(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving spam messages by text."""
         text = "Specific spam text"
@@ -1013,7 +961,6 @@ class TestSpamOperations:
         assert len(messages) >= 1
         assert messages[0]["text"] == text
 
-    @pytest.mark.asyncio
     async def testGetSpamMessagesByUserId(self, inMemoryDb, sampleChatId):
         """Test retrieving spam messages by user ID."""
         user1 = 9301
@@ -1027,7 +974,6 @@ class TestSpamOperations:
         assert len(user1Messages) == 2
         assert all(msg["user_id"] == user1 for msg in user1Messages)
 
-    @pytest.mark.asyncio
     async def testDeleteSpamMessagesByUserId(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test deleting spam messages by user ID."""
         await inMemoryDb.spam.addSpamMessage(sampleChatId, sampleUserId, 9501, "Spam", SpamReason.AUTO, 0.9, 1.0)
@@ -1039,7 +985,6 @@ class TestSpamOperations:
         messages = await inMemoryDb.spam.getSpamMessagesByUserId(sampleChatId, sampleUserId)
         assert len(messages) == 0
 
-    @pytest.mark.asyncio
     async def testAddHamMessage(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test adding a ham (non-spam) message."""
         result = await inMemoryDb.spam.addHamMessage(
@@ -1062,7 +1007,6 @@ class TestSpamOperations:
 class TestChatInfoOperations:
     """Test chat info operations."""
 
-    @pytest.mark.asyncio
     async def testupdateChatInfo(self, inMemoryDb):
         """Test adding chat info."""
         result = await inMemoryDb.chatInfo.updateChatInfo(
@@ -1074,7 +1018,6 @@ class TestChatInfoOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetChatInfo(self, inMemoryDb):
         """Test retrieving chat info."""
         chatId = 10002
@@ -1086,13 +1029,11 @@ class TestChatInfoOperations:
         assert info["type"] == "supergroup"
         assert info["is_forum"] is True
 
-    @pytest.mark.asyncio
     async def testGetChatInfoNotFound(self, inMemoryDb):
         """Test retrieving non-existent chat info returns None."""
         info = await inMemoryDb.chatInfo.getChatInfo(999999)
         assert info is None
 
-    @pytest.mark.asyncio
     async def testUpdateChatInfo(self, inMemoryDb):
         """Test updating existing chat info."""
         chatId = 10003
@@ -1103,7 +1044,6 @@ class TestChatInfoOperations:
         assert info["type"] == "supergroup"
         assert info["title"] == "New Title"
 
-    @pytest.mark.asyncio
     async def testUpdateChatTopicInfo(self, inMemoryDb):
         """Test updating chat topic info."""
         chatId = 10004
@@ -1118,7 +1058,6 @@ class TestChatInfoOperations:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetChatTopics(self, inMemoryDb):
         """Test retrieving chat topics."""
         chatId = 10005
@@ -1142,7 +1081,6 @@ class TestChatInfoOperations:
 class TestChatSummarization:
     """Test chat summarization cache operations."""
 
-    @pytest.mark.asyncio
     async def testAddChatSummarization(self, inMemoryDb, sampleChatId):
         """Test adding chat summarization."""
         result = await inMemoryDb.chatSummarization.addChatSummarization(
@@ -1155,7 +1093,6 @@ class TestChatSummarization:
         )
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetChatSummarization(self, inMemoryDb, sampleChatId):
         """Test retrieving chat summarization."""
         topicId = 1
@@ -1184,7 +1121,6 @@ class TestChatSummarization:
         assert result is not None
         assert result["summary"] == summary
 
-    @pytest.mark.asyncio
     async def testGetChatSummarizationNotFound(self, inMemoryDb, sampleChatId):
         """Test retrieving non-existent summarization returns None."""
         result = await inMemoryDb.chatSummarization.getChatSummarization(
@@ -1196,7 +1132,6 @@ class TestChatSummarization:
         )
         assert result is None
 
-    @pytest.mark.asyncio
     async def testUpdateChatSummarization(self, inMemoryDb, sampleChatId):
         """Test updating existing summarization."""
         params = (sampleChatId, 1, 100, 200, "prompt")
@@ -1216,26 +1151,22 @@ class TestChatSummarization:
 class TestGlobalSettings:
     """Test global settings operations."""
 
-    @pytest.mark.asyncio
     async def testSetSetting(self, inMemoryDb):
         """Test setting a global setting."""
         result = await inMemoryDb.common.setSetting("test_key", "test_value")
         assert result is True
 
-    @pytest.mark.asyncio
     async def testGetSetting(self, inMemoryDb):
         """Test retrieving a global setting."""
         await inMemoryDb.common.setSetting("key", "value")
         value = await inMemoryDb.common.getSetting("key")
         assert value == "value"
 
-    @pytest.mark.asyncio
     async def testGetSettingWithDefault(self, inMemoryDb):
         """Test retrieving non-existent setting with default."""
         value = await inMemoryDb.common.getSetting("nonexistent", default="default_value")
         assert value == "default_value"
 
-    @pytest.mark.asyncio
     async def testGetSettings(self, inMemoryDb):
         """Test retrieving all global settings."""
         await inMemoryDb.common.setSetting("key1", "value1")
@@ -1254,7 +1185,6 @@ class TestGlobalSettings:
 class TestTransactionHandling:
     """Test transaction management and error handling."""
 
-    @pytest.mark.asyncio
     async def testTransactionCommit(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test successful transaction commit."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1263,7 +1193,6 @@ class TestTransactionHandling:
         user = await inMemoryDb.chatUsers.getChatUser(sampleChatId, sampleUserId)
         assert user is not None
 
-    @pytest.mark.asyncio
     async def testTransactionRollbackOnError(self, inMemoryDb):
         """Test transaction rollback on error."""
         with pytest.raises(Exception):
@@ -1282,7 +1211,6 @@ class TestTransactionHandling:
         result = await provider.executeFetchOne("SELECT 1")
         assert result is not None
 
-    @pytest.mark.asyncio
     async def testDatabaseLockHandling(self, testDb):
         """Test handling of database lock scenarios."""
         # This test uses file-based DB to test locking
@@ -1292,7 +1220,6 @@ class TestTransactionHandling:
         result = await testDb.common.setSetting("test", "value")
         assert result is True
 
-    @pytest.mark.asyncio
     async def testConstraintViolation(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of constraint violations."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1326,7 +1253,6 @@ class TestTransactionHandling:
 class TestConnectionManagement:
     """Test database connection management."""
 
-    @pytest.mark.asyncio
     async def testMultipleConnections(self, tempDbPath):
         """Test multiple database instances."""
         config: DatabaseManagerConfig = {
@@ -1361,7 +1287,6 @@ class TestConnectionManagement:
 class TestDataValidation:
     """Test data validation and type conversion."""
 
-    @pytest.mark.asyncio
     async def testChatMessageDictValidation(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test ChatMessageDict validation."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1377,7 +1302,6 @@ class TestDataValidation:
         message = await inMemoryDb.chatMessages.getChatMessageByMessageId(sampleChatId, 12001)
         assert isinstance(message["message_category"], MessageCategory)
 
-    @pytest.mark.asyncio
     async def testChatUserDictValidation(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test ChatUserDict validation."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1386,7 +1310,6 @@ class TestDataValidation:
         assert isinstance(user["created_at"], datetime.datetime)
         assert isinstance(user["messages_count"], int)
 
-    @pytest.mark.asyncio
     async def testMediaStatusEnumConversion(self, inMemoryDb):
         """Test MediaStatus enum conversion."""
         fileId = "test_enum"
@@ -1410,7 +1333,6 @@ class TestDataValidation:
 class TestIntegration:
     """Test full workflows across multiple tables."""
 
-    @pytest.mark.asyncio
     async def testFullMessageWorkflow(self, inMemoryDb):
         """Test complete message creation workflow."""
         chatId = 13001
@@ -1444,7 +1366,6 @@ class TestIntegration:
         assert message is not None
         assert message["username"] == "testuser"
 
-    @pytest.mark.asyncio
     async def testMessageWithMediaWorkflow(self, inMemoryDb):
         """Test message with media attachment workflow."""
         chatId = 13101
@@ -1475,7 +1396,6 @@ class TestIntegration:
         assert message is not None
         assert message["media_id"] == mediaId
 
-    @pytest.mark.asyncio
     async def testSpamDetectionWorkflow(self, inMemoryDb):
         """Test spam detection and user marking workflow."""
         chatId = 13201
@@ -1500,7 +1420,6 @@ class TestIntegration:
         spamMessages = await inMemoryDb.spam.getSpamMessagesByUserId(chatId, userId)
         assert len(spamMessages) == 3
 
-    @pytest.mark.asyncio
     async def testChatSettingsWorkflow(self, inMemoryDb):
         """Test chat settings set/get workflow."""
         chatId = 13401
@@ -1515,7 +1434,6 @@ class TestIntegration:
         assert "model" in chatSettings
         assert len(chatSettings) == 2
 
-    @pytest.mark.asyncio
     async def testReferentialIntegrity(self, inMemoryDb):
         """Test referential integrity between tables."""
         chatId = 13501
@@ -1560,7 +1478,6 @@ class TestIntegration:
 class TestPerformance:
     """Test performance with larger datasets."""
 
-    @pytest.mark.asyncio
     async def testBulkMessageInsert(self, inMemoryDb):
         """Test inserting many messages."""
         chatId = 14001
@@ -1579,7 +1496,6 @@ class TestPerformance:
             )
             assert result is True
 
-    @pytest.mark.asyncio
     async def testLargeDatasetQuery(self, inMemoryDb):
         """Test query performance with large dataset."""
         chatId = 14201
@@ -1602,7 +1518,6 @@ class TestPerformance:
         messages = await inMemoryDb.chatMessages.getChatMessagesSince(chatId, limit=100)
         assert len(messages) == 100
 
-    @pytest.mark.asyncio
     async def testConcurrentReadOperations(self, inMemoryDb):
         """Test concurrent read operations."""
         chatId = 14401
@@ -1631,7 +1546,6 @@ class TestPerformance:
 class TestEdgeCases:
     """Test edge cases and special scenarios."""
 
-    @pytest.mark.asyncio
     async def testEmptyStringHandling(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of empty strings."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "", "")
@@ -1641,7 +1555,6 @@ class TestEdgeCases:
         assert user["username"] == ""
         assert user["full_name"] == ""
 
-    @pytest.mark.asyncio
     async def testNullValueHandling(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of NULL values."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1660,7 +1573,6 @@ class TestEdgeCases:
         assert message["reply_id"] is None
         assert message["quote_text"] is None
 
-    @pytest.mark.asyncio
     async def testLongTextHandling(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of very long text."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1678,7 +1590,6 @@ class TestEdgeCases:
         assert message is not None
         assert len(message["message_text"]) == 10000
 
-    @pytest.mark.asyncio
     async def testSpecialCharactersInText(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of special characters."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1696,7 +1607,6 @@ class TestEdgeCases:
         assert message is not None
         assert message["message_text"] == specialText
 
-    @pytest.mark.asyncio
     async def testUnicodeHandling(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of Unicode characters."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1714,7 +1624,6 @@ class TestEdgeCases:
         assert message is not None
         assert message["message_text"] == unicodeText
 
-    @pytest.mark.asyncio
     async def testZeroAndNegativeIds(self, inMemoryDb):
         """Test handling of zero and negative IDs."""
         chatId = 0
@@ -1734,7 +1643,6 @@ class TestEdgeCases:
         message = await inMemoryDb.chatMessages.getChatMessageByMessageId(chatId, messageId)
         assert message is not None
 
-    @pytest.mark.asyncio
     async def testDateTimeBoundaries(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test handling of datetime boundaries."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1765,7 +1673,6 @@ class TestEdgeCases:
         assert oldMsg is not None
         assert futureMsg is not None
 
-    @pytest.mark.asyncio
     async def testJsonDataInFields(self, inMemoryDb):
         """Test storing JSON data in text fields."""
         jsonData = json.dumps({"key1": "value1", "key2": [1, 2, 3], "key3": {"nested": "object"}})
@@ -1790,7 +1697,6 @@ class TestEdgeCases:
 class TestBayesFilterStorage:
     """Test Bayes filter storage operations if bayes_storage is used."""
 
-    @pytest.mark.asyncio
     async def testBayesStorageIntegration(self, inMemoryDb):
         """Test that Bayes storage can be accessed through wrapper."""
         # This tests integration with bayes_storage.py if it uses the wrapper
@@ -1815,7 +1721,6 @@ class TestBayesFilterStorage:
 class TestMigrationAndSchema:
     """Test migration and schema management."""
 
-    @pytest.mark.asyncio
     async def testSchemaVersionTracking(self, inMemoryDb):
         """Test that schema version is tracked."""
         version = await inMemoryDb.common.getSetting("db-migration-version")
@@ -1869,7 +1774,6 @@ class TestMigrationAndSchema:
 class TestCleanupAndResources:
     """Test cleanup and resource management."""
 
-    @pytest.mark.asyncio
     async def testDatabaseCloseCleanup(self, tempDbPath):
         """Test that database close properly cleans up resources."""
         config: DatabaseManagerConfig = {
@@ -1898,7 +1802,6 @@ class TestCleanupAndResources:
         finally:
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def testDatabaseFileCreation(self, tempDbPath):
         """Test that database file is created."""
         config: DatabaseManagerConfig = {
@@ -1919,7 +1822,6 @@ class TestCleanupAndResources:
         finally:
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def testInMemoryDatabaseNoFile(self):
         """Test that in-memory database doesn't create file."""
         config: DatabaseManagerConfig = {
@@ -1947,7 +1849,6 @@ class TestCleanupAndResources:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testSummary():
     """
     Summary of test coverage:

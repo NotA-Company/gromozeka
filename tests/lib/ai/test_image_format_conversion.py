@@ -1,13 +1,13 @@
 """Tests for image input-format conversion.
 
-Covers :func:`lib.ai.models.convertImageIfNeeded` and the
-``supportedImageFormats`` threading in :meth:`ModelImageMessage.toDict`:
+Covers :func:`lib.ai.imaging.convertImageIfNeeded` and the
+``supportedImageFormats`` threading in :meth:`ModelImagesMessage.toDict`:
 
 - Passthrough when *supportedFormats* is None / empty / already contains the MIME.
 - WebP -> JPEG and WebP -> PNG conversion via Pillow (first listed format wins).
 - Graceful degradation on corrupt bytes: original bytes returned, error logged.
-- ``ModelImageMessage.toDict`` converts the embedded image into the data URL and
-  does NOT mutate ``self.image`` (so primary/fallback re-derive from originals).
+- ``ModelImagesMessage.toDict`` converts the embedded image into the data URL and
+  does NOT mutate ``self.images`` (so primary/fallback re-derive from originals).
 """
 
 import base64
@@ -17,7 +17,8 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from lib.ai.models import ModelImageMessage, convertImageIfNeeded
+from lib.ai.imaging import convertImageIfNeeded
+from lib.ai.models import ModelImagesMessage
 
 #: MIME types python-magic reports for our tiny factory images.
 _JPEG_MIME = "image/jpeg"
@@ -79,7 +80,7 @@ def _rgbaPngBytes() -> bytes:
 
 
 class TestConvertImageIfNeeded:
-    """Tests for :func:`lib.ai.models.convertImageIfNeeded`."""
+    """Tests for :func:`lib.ai.imaging.convertImageIfNeeded`."""
 
     def testPassthroughWhenNone(self) -> None:
         """supportedFormats=None returns the original bytes and detected MIME.
@@ -159,7 +160,7 @@ class TestConvertImageIfNeeded:
             None
         """
         original = _webpBytes()
-        with caplog.at_level(logging.WARNING, logger="lib.ai.models"):
+        with caplog.at_level(logging.WARNING, logger="lib.ai.imaging"):
             result, mime = convertImageIfNeeded(original, ["image/bmp"])
         # Original bytes returned untouched.
         assert result == original
@@ -200,7 +201,7 @@ class TestConvertImageIfNeeded:
             None
         """
         corrupt = b"\x00\x01\x02\x03not-an-image-at-all-garbage"
-        with caplog.at_level(logging.ERROR, logger="lib.ai.models"):
+        with caplog.at_level(logging.ERROR, logger="lib.ai.imaging"):
             result, mime = convertImageIfNeeded(corrupt, [_JPEG_MIME])
         # Original bytes returned untouched (graceful degradation; never raises).
         assert result == corrupt
@@ -210,25 +211,25 @@ class TestConvertImageIfNeeded:
         assert _JPEG_MIME in logText
 
 
-class TestModelImageMessageToDict:
-    """Tests for ``supportedImageFormats`` threading in ModelImageMessage.toDict."""
+class TestModelImagesMessageToDict:
+    """Tests for ``supportedImageFormats`` threading in ModelImagesMessage.toDict."""
 
     def testToDictConvertsWebpToJpeg(self) -> None:
         """toDict(supportedImageFormats=[jpeg]) emits a data:image/jpeg URL from a WebP source.
 
-        Also asserts ``self.image`` is NOT mutated by the conversion.
+        Also asserts ``self.images`` is NOT mutated by the conversion.
 
         Returns:
             None
         """
         webp = _webpBytes()
-        msg = ModelImageMessage(role="user", content="look", image=bytearray(webp))
-        imageBefore = bytes(msg.image)
+        msg = ModelImagesMessage(role="user", content="look", images=[bytearray(webp)])
+        imageBefore = bytes(msg.images[0])
 
         rendered = msg.toDict(supportedImageFormats=[_JPEG_MIME])
 
-        # self.image untouched — fallback/primary must re-derive from originals.
-        assert bytes(msg.image) == imageBefore
+        # self.images untouched — fallback/primary must re-derive from originals.
+        assert bytes(msg.images[0]) == imageBefore
 
         content = rendered["content"]
         assert isinstance(content, list)
@@ -249,7 +250,7 @@ class TestModelImageMessageToDict:
             None
         """
         webp = _webpBytes()
-        msg = ModelImageMessage(role="user", content="look", image=bytearray(webp))
+        msg = ModelImagesMessage(role="user", content="look", images=[bytearray(webp)])
 
         rendered = msg.toDict()
 

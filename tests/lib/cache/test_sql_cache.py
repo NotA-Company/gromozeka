@@ -86,7 +86,6 @@ async def multiSourceCacheManager():
 class TestCacheEntry:
     """Tests for cache entry operations with TTL."""
 
-    @pytest.mark.asyncio
     async def test_set_cache_entry(self, cacheManager):
         """Test setting cache entry.
 
@@ -97,7 +96,6 @@ class TestCacheEntry:
         result = await cache.set("key1", "data1")
         assert result is True
 
-    @pytest.mark.asyncio
     async def test_get_cache_entry(self, cacheManager):
         """Test getting cache entry.
 
@@ -113,7 +111,6 @@ class TestCacheEntry:
         entry = await cache.get("key1")
         assert entry == "data1"
 
-    @pytest.mark.asyncio
     async def test_cache_entry_ttl(self, cacheManager):
         """Test cache entry with TTL.
 
@@ -133,7 +130,6 @@ class TestCacheEntry:
         entry = await cache.get("key1", ttl=-1)
         assert entry is None
 
-    @pytest.mark.asyncio
     async def test_cache_entry_different_namespaces(self, cacheManager):
         """Test cache entries with different namespaces.
 
@@ -154,7 +150,6 @@ class TestCacheEntry:
         assert weatherEntry == "data1"
         assert geocodeEntry == "data2"
 
-    @pytest.mark.asyncio
     async def test_clear_cache_by_namespace(self, cacheManager):
         """Test clearing cache by namespace.
 
@@ -183,7 +178,6 @@ class TestCacheEntry:
 class TestCacheDataTypes:
     """Tests for cache data type handling."""
 
-    @pytest.mark.asyncio
     async def test_cache_entry_with_json_data(self, cacheManager):
         """Test cache entry with JSON data.
 
@@ -200,7 +194,6 @@ class TestCacheDataTypes:
         entry = await cache.get("key1")
         assert entry == jsonData
 
-    @pytest.mark.asyncio
     async def test_cache_entry_with_special_characters(self, cacheManager):
         """Test cache entry with special characters.
 
@@ -225,7 +218,6 @@ class TestClearOld:
     aggressive TTL, ttl=0 nukes, recent-entry survival, and the bool return value.
     """
 
-    @pytest.mark.asyncio
     async def test_default_ttl_sweep_all_namespaces(self, cacheManager):
         """Default 365-day sweep purges old entries in this instance's namespace.
 
@@ -252,7 +244,6 @@ class TestClearOld:
         assert await cache.get("oldWeather") is None
         assert await cache.get("recentWeather") == "data2"
 
-    @pytest.mark.asyncio
     async def test_specific_namespace_aggressive_ttl(self, cacheManager):
         """Aggressive per-namespace TTL only touches that namespace instance.
 
@@ -277,7 +268,6 @@ class TestClearOld:
         assert await weatherCache.get("key1") is None
         assert await geocodeCache.get("key2") == "data2"
 
-    @pytest.mark.asyncio
     async def test_ttl_zero_deletes_everything(self, cacheManager):
         """ttl=0 (or None) removes every entry of this namespace.
 
@@ -295,7 +285,6 @@ class TestClearOld:
         assert await cache.get("key1") is None
         assert await cache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_ttl_none_deletes_everything(self, cacheManager):
         """ttl=None removes every entry of this namespace (same as ttl=0).
 
@@ -313,7 +302,6 @@ class TestClearOld:
         assert await cache.get("key1") is None
         assert await cache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_recent_entries_survive_aggressive_ttl(self, cacheManager):
         """Entries younger than the aggressive TTL threshold survive.
 
@@ -337,7 +325,6 @@ class TestClearOld:
         assert result is True
         assert await cache.get("key1") == "data1"
 
-    @pytest.mark.asyncio
     async def test_returns_true_on_success(self, cacheManager):
         """clearOld returns True on a successful no-op sweep.
 
@@ -358,7 +345,6 @@ class TestParity:
     to prevent TTL drift and ensure behavior preservation.
     """
 
-    @pytest.mark.asyncio
     async def test_set_get_round_trip_via_generator_converter(self, cacheManager):
         """set → get round-trip through keyGenerator/valueConverter.
 
@@ -380,7 +366,6 @@ class TestParity:
         retrieved = await cache.get("moscow")
         assert retrieved == value
 
-    @pytest.mark.asyncio
     async def test_ttl_hit_and_expired(self, cacheManager):
         """TTL hit (ttl=3600) / expired (row backdated via UPDATE) → None.
 
@@ -407,7 +392,6 @@ class TestParity:
         entry = await cache.get("key1", ttl=3600)
         assert entry is None
 
-    @pytest.mark.asyncio
     async def test_ttl_zero_returns_none_without_querying(self, cacheManager):
         """ttl=0 → None without querying (impossible future entry early-return).
 
@@ -423,7 +407,6 @@ class TestParity:
         entry = await cache.get("key1", ttl=0)
         assert entry is None
 
-    @pytest.mark.asyncio
     async def test_namespace_isolation(self, cacheManager):
         """Same key in two namespaces returns each namespace's value.
 
@@ -439,7 +422,6 @@ class TestParity:
         assert await weatherCache.get("key1") == "weather_value"
         assert await geocodeCache.get("key1") == "geocode_value"
 
-    @pytest.mark.asyncio
     async def test_clear_namespace_scoped(self, cacheManager):
         """clear() scoped to the instance's own namespace only.
 
@@ -462,7 +444,6 @@ class TestParity:
         assert await geocodeCache.get("key1") == "data3"
         assert await geocodeCache.get("key2") == "data4"
 
-    @pytest.mark.asyncio
     async def test_clearold_instance_semantics(self, cacheManager):
         """clearOld instance semantics: per-namespace sweep deletes only backdated entries.
 
@@ -499,7 +480,6 @@ class TestParity:
         assert await geocodeCache.get("old2") == "data3"
         assert await geocodeCache.get("recent2") == "data4"
 
-    @pytest.mark.asyncio
     async def test_clearold_shorter_aggressive_ttl(self, cacheManager):
         """Shorter (aggressive) TTL on the same namespace.
 
@@ -526,7 +506,6 @@ class TestParity:
         assert await cache.get("old") is None
         assert await cache.get("recent") == "data2"
 
-    @pytest.mark.asyncio
     async def test_clearold_ttl_zero_and_none_delete_all(self, cacheManager):
         """clearOld(None) and clearOld(0) delete every namespace entry.
 
@@ -553,7 +532,6 @@ class TestParity:
         assert await cache.get("key3") is None
         assert await cache.get("key4") is None
 
-    @pytest.mark.asyncio
     async def test_clearold_recent_entries_survive(self, cacheManager):
         """Recent entries survive the sweep.
 
@@ -580,7 +558,6 @@ class TestParity:
         assert await cache.get("old") is None
         assert await cache.get("recent") == "data2"
 
-    @pytest.mark.asyncio
     async def test_clearold_true_on_success_including_noop(self, cacheManager):
         """clearOld returns True on success including no-op.
 
@@ -593,7 +570,6 @@ class TestParity:
         result = await cache.clearOld(ttl=365 * 86400)
         assert result is True
 
-    @pytest.mark.asyncio
     async def test_clearold_false_logged_on_provider_failure(self, cacheManager):
         """clearOld returns False + logged (never raised) on provider failure.
 
@@ -611,7 +587,6 @@ class TestParity:
             result = await cache.clearOld(ttl=365 * 86400)
             assert result is False
 
-    @pytest.mark.asyncio
     async def test_getstats_shape(self, cacheManager):
         """getStats shape: backend="database", namespace as plain str, generator/converter class names.
 
@@ -633,7 +608,6 @@ class TestParity:
         assert stats["keyGenerator"] == "StringKeyGenerator"
         assert stats["valueConverter"] == "JsonValueConverter"
 
-    @pytest.mark.asyncio
     async def test_str_subclass_namespace_acceptance(self, cacheManager):
         """str-subclass namespace acceptance (proves StrEnum compat).
 
@@ -657,7 +631,6 @@ class TestParity:
         entry = await cache.get("key1")
         assert entry == "data1"
 
-    @pytest.mark.asyncio
     async def test_datasource_routing(self, multiSourceCacheManager):
         """Constructor dataSource routing (entries land in the named source).
 
@@ -687,7 +660,6 @@ class TestParity:
         # Entry in second source should NOT be retrievable via defaultCache
         assert await defaultCache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_error_swallow_get_returns_none(self, cacheManager):
         """Error-swallow contract: get → None on provider failure.
 
@@ -705,7 +677,6 @@ class TestParity:
             entry = await cache.get("key1")
             assert entry is None
 
-    @pytest.mark.asyncio
     async def test_error_swallow_set_returns_false(self, cacheManager):
         """Error-swallow contract: set → False on provider failure.
 
@@ -723,7 +694,6 @@ class TestParity:
             result = await cache.set("key1", "data1")
             assert result is False
 
-    @pytest.mark.asyncio
     async def test_json_and_special_char_values(self, cacheManager):
         """JSON and special-character values through the converters.
 
@@ -744,7 +714,6 @@ class TestParity:
         retrieved = await cache.get("special_key")
         assert retrieved == specialValue
 
-    @pytest.mark.asyncio
     async def test_clearold_negative_ttl_deletes_all(self, cacheManager):
         """Negative TTL deletes everything (legacy SQL behavior parity).
 

@@ -16,11 +16,26 @@ Phase 5 additions: the lazy memory-resolution content tests
 ``metadata["memories"]`` are resolved to rendered content via
 ``cache.getMemoriesByIds`` — covering both cohorts, ``excludeMemoryIds``
 filtering, and the stale-ID omission contract.
+
+Native-vision v2 Phase B additions (:class:`TestNativeVisionConstructionAttach`):
+the opt-in, unwired construction-time image attach — ``toModelMessage``
+``nativeImages=`` sequencing (skip/partial/plain paths, ghost rule,
+never-raise boundary), ``formatForLLM`` ``skipMediaDescription=`` (including
+the TEXT-branch pre-populated-attribute trap), and the at-most-once lazy
+description resolver.
+
+TEXT media-description rendering additions
+(:class:`TestFormatForLLMTextMediaTags`): the single-source TEXT-branch
+contract — guard and value both read the LOCAL ``mediaContent`` selection —
+with one ``<media-description>`` tag per media for list-shaped content
+(previously a Python list repr, or nothing at all when the ``mediaContent``
+ATTRIBUTE was None, e.g. every Max media message).
 """
 
 import datetime
 import json
-from unittest.mock import AsyncMock, Mock, patch
+from typing import Dict, Optional
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -32,10 +47,13 @@ from internal.bot.models import (
     MessageSender,
     SingleMemoryDict,
 )
+from internal.bot.models.ensured_message import MediaContent
 from internal.database import Database
 from internal.database.models import MemoryType
 from internal.models import MessageId
-from lib.ai import ModelMessage
+from internal.services.storage.exceptions import StorageConfigError
+from internal.services.storage.service import StorageService
+from lib.ai import ModelImagesMessage, ModelMessage
 from lib.db.utils import DEFAULT_THREAD_ID
 
 
@@ -577,3 +595,700 @@ class TestRandomContextReadSite:
 
         assert len(result) == 1
         assert result[0].content == "MAIN"
+
+
+# ---------------------------------------------------------------------------
+# Native-vision v2: construction-time image attach (Phase B, wired by Phase C)
+# ---------------------------------------------------------------------------
+
+
+def _makeMediaMessage() -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` carrying a two-image album.
+
+    Descriptions are pre-filled via ``addMedia`` (the ``fromDBChatMessage``
+    shape) so renders do not depend on DB fills; ``self.mediaContent`` is
+    deliberately pre-populated ("a red square") — exactly the attribute state
+    that makes the §4.2 TEXT-branch guard a trap on the skip path.
+
+    Returns:
+        A freshly constructed :class:`EnsuredMessage` with two described media.
+    """
+    ensuredMessage = EnsuredMessage(
+        sender=MessageSender(id=7, name="Alice", username="@alice"),
+        recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+        messageId=42,
+        date=datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText="look at these",
+    )
+    ensuredMessage.threadId = DEFAULT_THREAD_ID
+    ensuredMessage.addMedia(mediaId="media-1", mediaContent="a red square", setMediaId=True)
+    ensuredMessage.addMedia(mediaId="media-2", mediaContent="a blue circle", setMediaId=False)
+    return ensuredMessage
+
+
+def _mediaRow(mediaId: str, visionUrl: Optional[str] = None, description: str = "a red square") -> Dict[str, object]:
+    """Build a minimal ``MediaAttachmentDict``-shaped row (DONE status).
+
+    Only keys the production code reads are populated; timestamps are dummy
+    (unused on the DONE fast path of ``_awaitMedia``).
+
+    Args:
+        mediaId: Value for ``file_unique_id``.
+        visionUrl: Value for ``vision_url`` (None = describable-not-attached).
+        description: Value for ``description``.
+
+    Returns:
+        A dict shaped like a ``media_attachments`` row.
+    """
+    return {
+        "file_unique_id": mediaId,
+        "file_id": None,
+        "file_size": 3,
+        "media_type": "photo",
+        "metadata": "{}",
+        "status": "done",
+        "mime_type": "image/jpeg",
+        "local_url": None,
+        "prompt": None,
+        "description": description,
+        "vision_url": visionUrl,
+        "created_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        "updated_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+    }
+
+
+def _makeDb(rows: Dict[str, Dict[str, object]]) -> Mock:
+    """Build a Mock ``db`` whose ``mediaAttachments.getMediaAttachment`` serves the given rows.
+
+    Args:
+        rows: Mapping from media id to row dict; unknown ids return None (ghost).
+
+    Returns:
+        A Mock suitable for the ``db: Database`` parameters.
+    """
+    db = Mock()
+    db.mediaAttachments.getMediaAttachment = AsyncMock(side_effect=lambda mediaId, **kwargs: rows.get(mediaId))
+    return db
+
+
+class TestNativeVisionConstructionAttach:
+    """Construction attach on :meth:`EnsuredMessage.toModelMessage` (§4.3).
+
+    Wired by Phase C: the LLM message handler resolves the per-chat
+    ``NATIVE_VISION`` chat setting and passes it as ``nativeImages`` through
+    ``getThreadByMessageForLLM`` into every ``toModelMessage`` call; these
+    tests drive the flag directly. Covering: the §4.3 skip/partial/plain
+    sequencing (bytes BEFORE render), the ghost rule, the never-raise
+    boundary around the vision attempt, the §4.2 ``skipMediaDescription``
+    render (both branches, incl. the TEXT-branch pre-populated-attribute
+    trap), the §4.4 at-most-once lazy resolver, and the partial-album
+    fallback carrying ALL per-media descriptions.
+    """
+
+    async def testConstructionHappyPathAllBytesAttachSkipDescription(self) -> None:
+        """All bytes load -> ModelImagesMessage, no description rendered, no wait.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.images == [bytearray(b"IMG"), bytearray(b"IMG")]
+        assert result.source is msg
+        # Skip path: the JSON envelope carries NO mediaDescription key.
+        parsed = json.loads(result.content)
+        assert "mediaDescription" not in parsed
+        assert "mediaDescription" not in result.content
+        # The description wait never ran on the skip path...
+        updateMediaContentMock.assert_not_awaited()
+        # ...but the resolver closure exists for the condenser.
+        assert result.descriptionResolver is not None
+        # Storage consulted once per describable media, with the row's url.
+        storage.get.assert_has_calls([call("vision/media-1.jpg"), call("vision/media-2.jpg")])
+        assert storage.get.call_count == 2
+
+    async def testConstructionHappyPathTextFormatNoPrependDespitePopulatedAttribute(self) -> None:
+        """TEXT skip path: no `<media-description>` prepend even with mediaContent populated.
+
+        The §4.2 trap: ``self.mediaContent`` is pre-populated ("a red square");
+        the old attribute-only guard would prepend a description block on the
+        skip path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()),
+        ):
+            result = await msg.toModelMessage(db, format=LLMMessageFormat.TEXT, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.content == "look at these"
+        assert "<media-description>" not in result.content
+
+    async def testFormatForLLMSkipDescriptionJsonOmitsKeyAndSkipsWait(self) -> None:
+        """``skipMediaDescription=True`` drops the JSON key and skips the wait.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = Mock()
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock:
+            skipped = await msg.formatForLLM(db, format=LLMMessageFormat.JSON, skipMediaDescription=True, cache=None)
+            updateMediaContentMock.assert_not_awaited()
+
+            # Control: default render waits and emits the description.
+            default = await msg.formatForLLM(db, format=LLMMessageFormat.JSON, cache=None)
+            updateMediaContentMock.assert_awaited_once()
+
+        assert "mediaDescription" not in json.loads(skipped)
+        assert json.loads(default)["mediaDescription"] == "a red square"
+
+    async def testFormatForLLMSkipDescriptionTextTrapPrePopulatedAttribute(self) -> None:
+        """Direct TEXT render with skip: no prepend despite populated mediaContent.
+
+        Regression for the §4.2 trap at the ``formatForLLM`` level: the guard
+        must not fire on the attribute alone.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()  # self.mediaContent == "a red square"
+        db = Mock()
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            skipped = await msg.formatForLLM(db, format=LLMMessageFormat.TEXT, skipMediaDescription=True, cache=None)
+            control = await msg.formatForLLM(db, format=LLMMessageFormat.TEXT, cache=None)
+
+        assert skipped == "look at these"
+        assert control == "<media-description>a red square</media-description>\n\nlook at these"
+
+    async def testBytesMissFallsBackToPlainMessageWithDescriptionAndWait(self) -> None:
+        """Storage misses every url -> plain ModelMessage WITH description and the wait.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=None)
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(
+                EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))
+            ) as awaitMediaMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # The wait executed (updateMediaContent runs unmocked over the mocked
+        # _awaitMedia: once per mediaList entry + once for self.mediaId).
+        assert awaitMediaMock.await_count == 3
+        # The bytes load was still attempted before falling back.
+        assert storage.get.call_count == 2
+
+    async def testPartialAlbumAttachSubsetWithDescriptionWithoutResolver(self) -> None:
+        """Partially loaded album: subset attached ALONGSIDE ALL descriptions; no resolver.
+
+        Regression (partial-album fallback): the unattached media's
+        description must survive in the render — the primary-only
+        ``useSingleMedia`` selection silently dropped "a blue circle" from
+        model context with no resolver to recover it.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(side_effect=lambda key: b"IMG" if key == "vision/media-1.jpg" else None)
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()),
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            textResult = await msg.toModelMessage(db, format=LLMMessageFormat.TEXT, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.images == [bytearray(b"IMG")]
+        # BOTH descriptions render — not just the attached (primary) media's.
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == ["a red square", "a blue circle"]
+        assert "a blue circle" in result.content
+        # Same contract on the TEXT rendering: one tag per media.
+        assert textResult.content == (
+            "<media-description>a red square</media-description>\n"
+            "<media-description>a blue circle</media-description>\n"
+            "\n"
+            "look at these"
+        )
+        # Envelope already carries the descriptions — no resolver needed.
+        assert result.descriptionResolver is None
+
+    async def testGhostMediaDoesNotBlockSkip(self) -> None:
+        """A row-less (ghost) entry never blocks the skip path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb({"media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg")})  # media-2: ghost
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelImagesMessage
+        assert result.images == [bytearray(b"IMG")]
+        assert "mediaDescription" not in json.loads(result.content)
+        updateMediaContentMock.assert_not_awaited()
+        assert result.descriptionResolver is not None
+
+    async def testNeverRaisesDbFetchFailureFallsBackToDescriptionPath(self) -> None:
+        """A DB fetch exception inside the vision attempt degrades to the description path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        # Call order: _loadNativeVisionImages(media-1) raises, then the real
+        # updateMediaContent serves media-1, media-2, mediaId(media-1).
+        db = Mock()
+        db.mediaAttachments.getMediaAttachment = AsyncMock(
+            side_effect=[
+                RuntimeError("db boom"),
+                _mediaRow("media-1", description="a red square"),
+                _mediaRow("media-2", description="a blue circle"),
+                _mediaRow("media-1", description="a red square"),
+            ]
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with patch.object(StorageService, "getInstance", return_value=storage):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # If the exception had escaped the never-raise boundary, storage.get
+        # would never have been reached; reaching the description path means
+        # the boundary swallowed it.
+        storage.get.assert_not_called()
+
+    async def testNeverRaisesStorageGetFailureFallsBackToDescriptionPath(self) -> None:
+        """A storage.get exception degrades to the description path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(side_effect=RuntimeError("storage boom"))
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))),
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        assert json.loads(result.content)["mediaDescription"] == "a red square"
+
+    async def testNeverRaisesStorageUninitializedFallsBackToDescriptionPath(self) -> None:
+        """An uninitialized StorageService (StorageConfigError) degrades to the description path.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(side_effect=StorageConfigError("StorageService is not initialized"))
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))),
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+
+        assert type(result) is ModelMessage
+        assert json.loads(result.content)["mediaDescription"] == "a red square"
+
+    async def testDefaultFalseNativeImagesAbsentByteIdenticalAndNoLoad(self) -> None:
+        """Default call: today's exact render; the vision load is never attempted.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")  # bytes WOULD be available
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "_awaitMedia", new=AsyncMock(return_value=_mediaRow("media-1"))),
+            patch.object(EnsuredMessage, "_loadNativeVisionImages", new=Mock()) as loadMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None)
+            directRender = await msg.formatForLLM(db, format=LLMMessageFormat.JSON, cache=None)
+
+        loadMock.assert_not_called()
+        storage.get.assert_not_called()
+        assert type(result) is ModelMessage
+        parsed = json.loads(result.content)
+        assert parsed["mediaDescription"] == "a red square"
+        # Byte-identity with the PRE-Phase-B render: a fixed expected string
+        # for this deterministic fixture (independent of today's renderer), so
+        # any drift in the default JSON envelope fails here.
+        expectedRender = (
+            '{"date": "2026-05-05T12:00:00+00:00", "login": "@alice", "mediaDescription": "a red square", '
+            '"messageId": 42, "name": "Alice", "text": "look at these", "type": "unknown"}'
+        )
+        assert result.content == expectedRender
+        assert result.content == directRender
+
+    async def testResolverAtMostOnceJoinsDescriptions(self) -> None:
+        """The resolver joins descriptions, awaits the wait once, and caches.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            assert result.descriptionResolver is not None
+
+            first = await result.descriptionResolver()
+            updateMediaContentMock.assert_awaited_once()
+            assert first == "a red square\na blue circle"
+
+            # Second call: served from the closure cache, no second wait.
+            second = await result.descriptionResolver()
+            updateMediaContentMock.assert_awaited_once()
+            assert second == "a red square\na blue circle"
+
+    async def testResolverEmptyDescriptionsResolvesNone(self) -> None:
+        """The §4.4 empty branch: no descriptions anywhere resolves to None.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        for media in msg.mediaList:
+            media.content = None  # nothing described anywhere
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            assert result.descriptionResolver is not None
+
+            resolved = await result.descriptionResolver()
+
+        assert resolved is None
+        updateMediaContentMock.assert_awaited_once()
+
+    async def testResolverSwallowsUpdateMediaContentException(self) -> None:
+        """The resolver never raises: a failed wait resolves to None.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        db = _makeDb(
+            {
+                "media-1": _mediaRow("media-1", visionUrl="vision/media-1.jpg"),
+                "media-2": _mediaRow("media-2", visionUrl="vision/media-2.jpg"),
+            }
+        )
+        storage = Mock()
+        storage.get = Mock(return_value=b"IMG")
+        with (
+            patch.object(StorageService, "getInstance", return_value=storage),
+            patch.object(
+                EnsuredMessage, "updateMediaContent", new=AsyncMock(side_effect=RuntimeError("boom"))
+            ) as updateMediaContentMock,
+        ):
+            result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            assert result.descriptionResolver is not None
+
+            resolved = await result.descriptionResolver()
+
+        assert resolved is None
+        updateMediaContentMock.assert_awaited_once()
+
+    async def testToModelMessageListForwardsNativeImages(self) -> None:
+        """``toModelMessageList`` forwards ``nativeImages`` 1:1 to the main message.
+
+        Returns:
+            None
+        """
+        msg = _makeMediaMessage()
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            new=AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ) as toModelMessageMock:
+            await msg.toModelMessageList(db=Mock(), cache=None, nativeImages=True)
+            forwardCall = toModelMessageMock.await_args
+            assert forwardCall is not None
+            assert forwardCall.kwargs["nativeImages"] is True
+
+            await msg.toModelMessageList(db=Mock(), cache=None)
+            defaultCall = toModelMessageMock.await_args
+            assert defaultCall is not None
+            assert defaultCall.kwargs["nativeImages"] is False
+
+
+# ---------------------------------------------------------------------------
+# TEXT media-description rendering: single-source guard + tag-per-media
+# ---------------------------------------------------------------------------
+
+
+def _makeDescribedMediaListMessage(*descriptions: str) -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` in the Max-preprocessor media shape.
+
+    Media descriptions are attached as ``mediaList`` entries ONLY —
+    ``mediaId`` and the ``mediaContent`` ATTRIBUTE stay ``None`` (the shape
+    produced by the Max preprocessor's ``addMediaProcessingInfo(...,
+    setMediaId=False)``). Under ``useSingleMedia=False`` (or whenever the
+    attribute is None) the TEXT branch's local selection is therefore a
+    ``List[str]``.
+
+    Args:
+        descriptions: Per-media descriptions, appended to ``mediaList`` in order.
+
+    Returns:
+        A freshly constructed :class:`EnsuredMessage` with described media and
+        a None ``mediaContent`` attribute.
+    """
+    msg = _makeEnsuredMessage()
+    for index, description in enumerate(descriptions, start=1):
+        msg.mediaList.append(MediaContent(id=f"media-{index}", content=description, processingInfo=None))
+    return msg
+
+
+class TestFormatForLLMTextMediaTags:
+    """TEXT branch renders descriptions from the LOCAL selection, tag-per-media.
+
+    Ratified behavior change: the TEXT-branch guard and value both read the
+    LOCAL ``mediaContent`` (previously the guard read the ``mediaContent``
+    ATTRIBUTE while the value interpolated the LOCAL — a list repr leaked
+    into the tag for Telegram ingest, and every Max media message — attribute
+    permanently None — rendered NO descriptions at all). Consequences pinned
+    here: list-shaped locals render ONE tag per media in order; the
+    previously-invisible Max shape (attribute None + described entries) now
+    renders tags; the Telegram ingest shape (attribute populated +
+    ``useSingleMedia=False``) falls through to the list render; the skip path
+    still renders nothing (the local is None); the single-string render keeps
+    today's exact byte layout.
+    """
+
+    async def testMaxShapeIngestTagPerMediaInOrderNoListRepr(self) -> None:
+        """List local + useSingleMedia=False → one tag per media, order preserved.
+
+        The Max ingest shape (attribute None, described entries): previously
+        rendered NOTHING (guard read the None attribute). Now each media gets
+        its own ``<media-description>`` tag in mediaList order, followed by
+        the blank-line separation — and no Python list repr artifacts.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage("a red car", "a black cat")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        expected = (
+            "<media-description>a red car</media-description>\n"
+            "<media-description>a black cat</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+
+    async def testTelegramShapeIngestTagPerMediaInOrderNoListRepr(self) -> None:
+        """Populated attribute + useSingleMedia=False → the list local renders.
+
+        The Telegram ingest shape (attribute populated with the first media's
+        description, further described entries appended to ``mediaList``):
+        under ``useSingleMedia=False`` the selection falls to the list, so the
+        output is one tag per media in mediaList order — previously the
+        attribute guard short-circuited to the populated string while the
+        value interpolated the list, leaking a Python repr into the tag.
+
+        Returns:
+            None
+        """
+        msg = _makeEnsuredMessage()
+        msg.addMedia(mediaId="media-1", mediaContent="a red car", setMediaId=True)
+        msg.addMedia(mediaId="media-2", mediaContent="a black cat", setMediaId=False)
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        expected = (
+            "<media-description>a red car</media-description>\n"
+            "<media-description>a black cat</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+
+    async def testMaxShapeUseSingleMediaTagsRenderWherePreviouslyNothing(self) -> None:
+        """Attribute None + described entries + useSingleMedia=True → tags render.
+
+        The previously-invisible case (e.g. Max assistant-role / partial-path
+        TEXT envelopes): with the attribute None the local selection is the
+        described list even under ``useSingleMedia=True`` — the old
+        attribute-guard rendered nothing here.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage("a red car", "a black cat")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, cache=None)
+
+        expected = (
+            "<media-description>a red car</media-description>\n"
+            "<media-description>a black cat</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+
+    async def testSingleStringAttributeSingleTagByteLayout(self) -> None:
+        """String local → exactly one tag with today's clean ``\\n\\n`` layout.
+
+        The useSingleMedia render with the attribute populated: the local IS
+        the attribute, so the output is byte-identical to the pre-change
+        form (regression pin for the clean shape).
+
+        Returns:
+            None
+        """
+        msg = _makeEnsuredMessage()
+        msg.addMedia(mediaId="media-1", mediaContent="a red square", setMediaId=True)
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, cache=None)
+
+        assert result == "<media-description>a red square</media-description>\n\nhello"
+
+    async def testEmptyListNoTags(self) -> None:
+        """Entries with no descriptions → empty list local → no tags at all.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage()
+        msg.mediaList.append(MediaContent(id="media-1", content=None, processingInfo=None))
+        msg.mediaList.append(MediaContent(id="media-2", content=None, processingInfo=None))
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        assert result == "hello"
+        assert "<media-description>" not in result
+
+    async def testMultilineDescriptionsTagBoundariesUnambiguous(self) -> None:
+        """Multiline descriptions stay inside their own tags — no joined text.
+
+        Each description carries embedded newlines; the tag-per-media render
+        keeps the boundary between the two media machine-findable (a closing
+        tag always separates the descriptions), which the old single-tag
+        list-repr form did not.
+
+        Returns:
+            None
+        """
+        msg = _makeDescribedMediaListMessage("a red car\nwith snow", "a black cat\nsleeping")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()):
+            result = await msg.formatForLLM(Mock(), format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None)
+
+        expected = (
+            "<media-description>a red car\nwith snow</media-description>\n"
+            "<media-description>a black cat\nsleeping</media-description>\n"
+            "\n"
+            "hello"
+        )
+        assert result == expected
+        # The boundary between the two media is an explicit tag pair.
+        assert "with snow</media-description>\n<media-description>a black cat" in result

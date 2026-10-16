@@ -422,7 +422,6 @@ async def trainedFilter(bayesFilter: NaiveBayesFilter) -> NaiveBayesFilter:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def test_bayes_filter() -> None:
     """Test basic Bayes filter functionality.
 
@@ -585,7 +584,6 @@ async def test_bayes_filter() -> None:
             pass
 
 
-@pytest.mark.asyncio
 async def test_tokenizer() -> None:
     """Test tokenizer functionality.
 
@@ -633,7 +631,6 @@ class TestBayesFilterEdgeCases:
     Unicode text, very long messages, and mixed languages.
     """
 
-    @pytest.mark.asyncio
     async def test_empty_message(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test classification of empty message.
 
@@ -648,7 +645,6 @@ class TestBayesFilterEdgeCases:
         assert result.confidence == 0.0
         assert not result.isSpam
 
-    @pytest.mark.asyncio
     async def test_whitespace_only_message(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test classification of whitespace-only message.
 
@@ -662,7 +658,6 @@ class TestBayesFilterEdgeCases:
         assert result.score == 50.0
         assert result.confidence == 0.0
 
-    @pytest.mark.asyncio
     async def test_special_characters_only(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test message with only special characters.
 
@@ -676,7 +671,6 @@ class TestBayesFilterEdgeCases:
         assert result.score == 50.0
         assert result.confidence == 0.0
 
-    @pytest.mark.asyncio
     async def test_emojis_only(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test message with only emojis.
 
@@ -690,7 +684,6 @@ class TestBayesFilterEdgeCases:
         # Should return neutral since emojis are removed by default
         assert result.score == 50.0
 
-    @pytest.mark.asyncio
     async def test_very_long_message(self, trainedFilter: NaiveBayesFilter) -> None:
         """Test classification of very long message (10,000+ characters).
 
@@ -705,7 +698,6 @@ class TestBayesFilterEdgeCases:
         # Should still classify (tokens limited by config)
         assert 0 <= result.score <= 100
 
-    @pytest.mark.asyncio
     async def test_mixed_languages(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test message with mixed Russian and English.
 
@@ -721,7 +713,6 @@ class TestBayesFilterEdgeCases:
         result = await bayesFilter.classify("Купить cheap товары", chatId=12345)
         assert 0 <= result.score <= 100
 
-    @pytest.mark.asyncio
     async def test_urls_and_emails(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test message with URLs and email addresses.
 
@@ -737,7 +728,6 @@ class TestBayesFilterEdgeCases:
         # URLs should be removed by tokenizer, so classification based on other words
         assert 0 <= result.score <= 100
 
-    @pytest.mark.asyncio
     async def test_repeated_characters(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test message with repeated characters.
 
@@ -752,7 +742,6 @@ class TestBayesFilterEdgeCases:
         result = await bayesFilter.classify("aaaaaaaaaa", chatId=12345)
         assert result.score > 50.0  # Should recognize pattern
 
-    @pytest.mark.asyncio
     async def test_numbers_only(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test message with numbers only.
 
@@ -766,7 +755,6 @@ class TestBayesFilterEdgeCases:
         # Numbers might be removed depending on config
         assert result.score == 50.0
 
-    @pytest.mark.asyncio
     async def test_unicode_edge_cases(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test various Unicode edge cases.
 
@@ -790,7 +778,6 @@ class TestBayesFilterEdgeCases:
             result = await bayesFilter.classify(msg, chatId=12345)
             assert 0 <= result.score <= 100
 
-    @pytest.mark.asyncio
     async def test_learn_empty_message(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test learning from empty message.
 
@@ -803,7 +790,6 @@ class TestBayesFilterEdgeCases:
         success = await bayesFilter.learnSpam("", chatId=12345)
         assert not success  # Should fail gracefully
 
-    @pytest.mark.asyncio
     async def test_single_character_tokens(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test handling of single character tokens.
 
@@ -835,7 +821,6 @@ class TestBayesFilterPerformance:
     """
 
     @pytest.mark.slow
-    @pytest.mark.asyncio
     async def test_large_dataset_training(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test training with 10,000+ messages.
 
@@ -869,7 +854,6 @@ class TestBayesFilterPerformance:
         assert modelStats.total_ham_messages == 5000
 
     @pytest.mark.slow
-    @pytest.mark.asyncio
     async def test_classification_speed(self, trainedFilter: NaiveBayesFilter) -> None:
         """Test classification speed with trained model.
 
@@ -898,7 +882,6 @@ class TestBayesFilterPerformance:
         assert avgTime < 0.1  # Should be fast (< 100ms per message)
 
     @pytest.mark.slow
-    @pytest.mark.asyncio
     async def test_large_vocabulary_performance(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test performance with large vocabulary.
 
@@ -926,7 +909,6 @@ class TestBayesFilterPerformance:
         assert elapsedTime < 1.0  # Should still be fast
 
     @pytest.mark.slow
-    @pytest.mark.asyncio
     async def test_token_cleanup_performance(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test token cleanup performance.
 
@@ -962,7 +944,6 @@ class TestBayesFilterAccuracy:
     false positive rates, and confidence calculations.
     """
 
-    @pytest.mark.asyncio
     async def test_common_spam_patterns(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test recognition of common spam patterns.
 
@@ -1010,7 +991,6 @@ class TestBayesFilterAccuracy:
             result = await bayesFilter.classify(msg, chatId=12345, threshold=50.0)
             assert result.score > 50.0, f"Failed to detect spam: {msg}"
 
-    @pytest.mark.asyncio
     async def test_normal_conversation_patterns(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test recognition of normal conversation patterns.
 
@@ -1056,7 +1036,6 @@ class TestBayesFilterAccuracy:
             result = await bayesFilter.classify(msg, chatId=12345, threshold=50.0)
             assert result.score < 50.0, f"False positive on ham: {msg}"
 
-    @pytest.mark.asyncio
     async def test_borderline_cases(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test classification of borderline spam/ham messages.
 
@@ -1083,7 +1062,6 @@ class TestBayesFilterAccuracy:
             # Should classify but may lean one way due to token overlap
             assert 0 <= result.score <= 100, f"Invalid score for borderline: {msg}"
 
-    @pytest.mark.asyncio
     async def test_false_positive_rate(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test false positive rate on legitimate messages.
 
@@ -1123,7 +1101,6 @@ class TestBayesFilterAccuracy:
         # The important thing is the filter works, not perfect accuracy with minimal training
         assert falsePositiveRate <= 1.0  # Valid rate
 
-    @pytest.mark.asyncio
     async def test_confidence_calculation(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test confidence calculation accuracy.
 
@@ -1162,7 +1139,6 @@ class TestBayesFilterChatIsolation:
     that training and classification in one chat don't affect others.
     """
 
-    @pytest.mark.asyncio
     async def test_separate_chat_models(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that different chats have separate models.
 
@@ -1190,7 +1166,6 @@ class TestBayesFilterChatIsolation:
         # than chat 2 which trained it as ham
         assert result1.score > result2.score, "Chat 1 should score higher (spam) than chat 2 (ham)"
 
-    @pytest.mark.asyncio
     async def test_training_isolation(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that training in one chat doesn't affect another.
 
@@ -1216,7 +1191,6 @@ class TestBayesFilterChatIsolation:
         result = await bayesFilter.classify("spam 5", chatId=222)
         assert result.score == 50.0
 
-    @pytest.mark.asyncio
     async def test_statistics_per_chat(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that statistics are tracked per-chat.
 
@@ -1243,7 +1217,6 @@ class TestBayesFilterChatIsolation:
         assert stats2.total_spam_messages == 10
         assert stats3.total_spam_messages == 15
 
-    @pytest.mark.asyncio
     async def test_cleanup_per_chat(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that cleanup is per-chat.
 
@@ -1267,7 +1240,6 @@ class TestBayesFilterChatIsolation:
         stats2 = await bayesFilter.getModelInfo(chat_id=222)
         assert stats2.vocabulary_size == 1
 
-    @pytest.mark.asyncio
     async def test_reset_per_chat(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that reset is per-chat.
 
@@ -1293,7 +1265,6 @@ class TestBayesFilterChatIsolation:
         stats2 = await bayesFilter.getModelInfo(chat_id=222)
         assert stats2.total_spam_messages == 1
 
-    @pytest.mark.asyncio
     async def test_vocabulary_isolation(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that vocabulary is isolated per-chat.
 
@@ -1319,7 +1290,6 @@ class TestBayesFilterChatIsolation:
         assert "orange" in tokens2 or "grape" in tokens2
         assert vocab1 > 0 and vocab2 > 0
 
-    @pytest.mark.asyncio
     async def test_batch_learning_isolation(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test that batch learning respects chat isolation.
 
@@ -1359,7 +1329,6 @@ class TestBayesFilterConfiguration:
     applied to the filter and tokenizer.
     """
 
-    @pytest.mark.asyncio
     async def test_invalid_alpha(self) -> None:
         """Test that invalid alpha raises error.
 
@@ -1372,7 +1341,6 @@ class TestBayesFilterConfiguration:
         with pytest.raises(ValueError, match="Alpha must be positive"):
             BayesConfig(alpha=-1.0)
 
-    @pytest.mark.asyncio
     async def test_invalid_threshold(self) -> None:
         """Test that invalid threshold raises error.
 
@@ -1385,7 +1353,6 @@ class TestBayesFilterConfiguration:
         with pytest.raises(ValueError, match="threshold must be between 0 and 100"):
             BayesConfig(defaultThreshold=150)
 
-    @pytest.mark.asyncio
     async def test_invalid_confidence(self) -> None:
         """Test that invalid min confidence raises error.
 
@@ -1398,7 +1365,6 @@ class TestBayesFilterConfiguration:
         with pytest.raises(ValueError, match="confidence must be between 0 and 1"):
             BayesConfig(minConfidence=1.5)
 
-    @pytest.mark.asyncio
     async def test_custom_tokenizer_config(self, mockStorage: MockBayesStorage) -> None:
         """Test filter with custom tokenizer configuration.
 
@@ -1416,7 +1382,6 @@ class TestBayesFilterConfiguration:
         assert bayesFilter.tokenizer.config.min_token_length == 3
         assert bayesFilter.tokenizer.config.use_bigrams is False
 
-    @pytest.mark.asyncio
     async def test_config_validation(self, mockStorage: MockBayesStorage) -> None:
         """Test configuration validation.
 
@@ -1441,7 +1406,6 @@ class TestTokenizerEdgeCases:
     URL/mention/emoji removal, and case normalization.
     """
 
-    @pytest.mark.asyncio
     async def test_stopwords_filtering(self) -> None:
         """Test that stopwords are properly filtered.
 
@@ -1455,7 +1419,6 @@ class TestTokenizerEdgeCases:
         assert "the" not in tokens
         assert "quick" in tokens or "brown" in tokens or "fox" in tokens
 
-    @pytest.mark.asyncio
     async def test_bigram_generation(self) -> None:
         """Test bigram generation.
 
@@ -1473,7 +1436,6 @@ class TestTokenizerEdgeCases:
         bigrams = [t for t in tokens if "_" in t]
         assert len(bigrams) > 0
 
-    @pytest.mark.asyncio
     async def test_trigram_generation(self) -> None:
         """Test trigram generation.
 
@@ -1488,7 +1450,6 @@ class TestTokenizerEdgeCases:
         trigrams = [t for t in tokens if t.count("_") == 2]
         assert len(trigrams) > 0
 
-    @pytest.mark.asyncio
     async def test_token_length_filtering(self) -> None:
         """Test token length filtering.
 
@@ -1506,7 +1467,6 @@ class TestTokenizerEdgeCases:
         # 'extraordinarily' (15 chars) should be filtered
         assert "extraordinarily" not in tokens
 
-    @pytest.mark.asyncio
     async def test_url_removal(self) -> None:
         """Test URL removal.
 
@@ -1520,7 +1480,6 @@ class TestTokenizerEdgeCases:
         assert not any("example.com" in t for t in tokens)
         assert not any("https" in t for t in tokens)
 
-    @pytest.mark.asyncio
     async def test_mention_removal(self) -> None:
         """Test mention removal.
 
@@ -1534,7 +1493,6 @@ class TestTokenizerEdgeCases:
         assert not any("@user123" in t for t in tokens)
         assert not any("user123" in t for t in tokens)
 
-    @pytest.mark.asyncio
     async def test_emoji_removal(self) -> None:
         """Test emoji removal.
 
@@ -1548,7 +1506,6 @@ class TestTokenizerEdgeCases:
         assert not any("😀" in t for t in tokens)
         assert not any("🎉" in t for t in tokens)
 
-    @pytest.mark.asyncio
     async def test_case_normalization(self) -> None:
         """Test case normalization.
 
@@ -1561,7 +1518,6 @@ class TestTokenizerEdgeCases:
         # All tokens should be lowercase
         assert all(t.islower() or "_" in t for t in tokens)
 
-    @pytest.mark.asyncio
     async def test_get_token_stats(self) -> None:
         """Test token frequency statistics.
 
@@ -1574,7 +1530,6 @@ class TestTokenizerEdgeCases:
         assert "hello" in stats
         assert stats["hello"] >= 2  # Should count frequency
 
-    @pytest.mark.asyncio
     async def test_get_unique_tokens(self) -> None:
         """Test unique token extraction.
 
@@ -1588,7 +1543,6 @@ class TestTokenizerEdgeCases:
         assert "world" in uniqueTokens
         assert len(uniqueTokens) >= 2
 
-    @pytest.mark.asyncio
     async def test_spam_indicators(self) -> None:
         """Test spam indicator estimation.
 
@@ -1615,7 +1569,6 @@ class TestBayesFilterIntegration:
     training, classification, cleanup, and reset operations.
     """
 
-    @pytest.mark.asyncio
     async def test_full_workflow(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test complete workflow from training to classification.
 
@@ -1660,7 +1613,6 @@ class TestBayesFilterIntegration:
         assert statsAfter.total_spam_messages == 0
         assert statsAfter.total_ham_messages == 0
 
-    @pytest.mark.asyncio
     async def test_multi_chat_workflow(self, bayesFilter: NaiveBayesFilter) -> None:
         """Test workflow with multiple chats.
 

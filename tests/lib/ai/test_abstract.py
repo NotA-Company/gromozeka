@@ -8,6 +8,10 @@ Covers:
 - getInfo() includes support_structured_output with the configured value.
 - generateStructured with fallbackModels invokes fallback on error status.
 - generateStructured with fallbackModels sets isFallback=True on the fallback result.
+- image-bearing message sequences are serialized before the generation-gate
+  token estimation, so a valid native-vision request reaches the provider
+  instead of being rejected with "Context too large" (Gate 2 regression);
+  oversized real TEXT input is still rejected by the same guard.
 
 Also covers generateEmbeddings:
 - success path returns the inner vector.
@@ -17,17 +21,34 @@ Also covers generateEmbeddings:
 - empty text raises ValueError.
 - attempts<1 raises ValueError.
 - supportsEmbedding property reads support_embeddings from extraConfig.
+
+Also covers getEstimateTokensCount with raw message OBJECT lists (review
+refactor folding _estimateMessagesTokens into the estimator):
+- image-bearing object lists are serialized to the canonical dict shape
+  first, so their estimate matches the serialized-dict estimate exactly;
+- text-only / mixed object lists keep the EXACT verbatim
+  ``json.dumps(..., default=str)`` estimate (off-path identity pin).
 """
 
 import asyncio
+import io
+import json
+import random
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from PIL import Image
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
-from lib.ai.models import ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
+from lib.ai.models import (
+    ModelImagesMessage,
+    ModelMessage,
+    ModelResultStatus,
+    ModelRunResult,
+    ModelStructuredResult,
+)
 from lib.stats import NullStatsStorage, StatsStorage
 
 # ============================================================================
@@ -720,3 +741,483 @@ class TestGenerateEmbeddings:
         assert modelTrue.supportsEmbedding is True
         modelFalse = _makeEmbeddingModel(supportEmbeddings=False)
         assert modelFalse.supportsEmbedding is False
+
+
+# ============================================================================
+# getEstimateTokensCount — inline base64 data URIs are estimation-invisible
+# (native-vision Phase 2b; design v1 §3.4)
+# ============================================================================
+
+
+class TestEstimateTokensCountImageDataUris:
+    """Pin the estimator's blindness to inline base64 image payloads.
+
+    A multimodal ``image_url`` data URI carries ~0.5MB of base64 per
+    normalized photo while the model bills it as ~1-3k image tokens. The
+    char-based estimator must replace each data URI with a short placeholder
+    (design v1 §3.4: image tokens are invisible to it) so image-bearing
+    requests do not force context condensing on every call.
+
+    Replacement engages only at the trusted input boundary: the whole input
+    must be a serialized message list (every element a role+content message
+    dict — the ``[message.toDict() ...]`` shape message-estimation call
+    sites pass). Message-shaped structures found INSIDE a non-message input
+    (e.g. a JSON Schema ``examples`` entry) never re-arm normalization.
+    Bare schemas, arbitrary structured payloads, image-block shapes in
+    non-message inputs, data URIs inside ordinary text content, non-image
+    MIME types, quoted examples, and plain-string inputs are real sent
+    characters and must keep being counted — otherwise text-only requests
+    or schema data could bypass context sizing.
+    """
+
+    def testImageDataUriCountsAsPlaceholder(self) -> None:
+        """A huge data URI estimates the same as its short placeholder text.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        hugeUri = "data:image/jpeg;base64," + "A" * 500_000
+        withUri = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": hugeUri}}]}]
+        withPlaceholder = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "<image-data>"}}]}]
+
+        assert model.getEstimateTokensCount(withUri) == model.getEstimateTokensCount(withPlaceholder)
+
+    def testEstimateStaysTextDrivenWithImages(self) -> None:
+        """With images neutralized, the estimate matches the text-only baseline.
+
+        Message-shaped input: a multipart user message whose content carries
+        the text part plus a discriminator-less image block (provider
+        payloads sometimes omit ``type``) — the real normalization contract.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        hugeUri = "data:image/png;base64," + "B" * 1_000_000
+        textPart = [{"type": "text", "text": "describe the picture"}]
+        textOnly = [{"role": "user", "content": textPart}]
+        withImage = [{"role": "user", "content": [*textPart, {"image_url": {"url": hugeUri}}]}]
+
+        estimate = model.getEstimateTokensCount(withImage)
+        baseline = model.getEstimateTokensCount(textOnly)
+        assert estimate < baseline + 100
+
+    def testPlainDataUriStringCountedAsText(self) -> None:
+        """A raw string input containing a data URI is counted as text, not neutralized.
+
+        Plain-string inputs pass through untouched: without a surrounding
+        image-block structure there is no evidence the data URI is an image
+        payload, and counting it as a placeholder would let text-only
+        requests bypass context sizing.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        hugeUri = "data:image/webp;base64," + "C" * 500_000
+
+        # ~500k characters / 3.5 * 1.1 coeff ≈ 157k "tokens" — full text counted.
+        assert model.getEstimateTokensCount(f'"url": "{hugeUri}"') > 100_000
+
+    def testDataUriInTextContentCountedAsText(self) -> None:
+        """A data URI inside a message's TEXT content is counted, not stripped.
+
+        The estimator must not pattern-match arbitrary serialized values:
+        this text message really sends every one of those characters to the
+        model, so collapsing it to a placeholder would understate the request
+        size (regression for the over-broad regex estimator).
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        textMessage = [{"role": "user", "content": "data:text/plain;base64," + "A" * 500_000}]
+
+        assert model.getEstimateTokensCount(textMessage) > 100_000
+
+    def testNonImageDataUriInImageBlockCountedAsText(self) -> None:
+        """A non-image MIME data URI inside a message's ``image_url`` block stays counted.
+
+        Only ``data:image/...`` payloads are estimation noise; a
+        ``data:text/plain`` URI carries real text the model will read.
+        Message-shaped input: the MIME check runs at a genuine message
+        image-content position.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        textUri = "data:text/plain;base64," + "B" * 500_000
+        block = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": textUri}}]}]
+
+        assert model.getEstimateTokensCount(block) > 100_000
+
+    def testQuotedDataUriExampleInTextCountedAsText(self) -> None:
+        """A quoted data-URI example inside a text block keeps being counted.
+
+        A text field that merely MENTIONS a data URI (e.g. documentation or a
+        schema example) must not be collapsed: the old regex matched the
+        quoted URI inside the serialized JSON string.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        quotedExample = 'Use the format "data:image/jpeg;base64,' + "D" * 500_000 + '" when embedding images.'
+        textMessage = [{"role": "user", "content": quotedExample}]
+
+        assert model.getEstimateTokensCount(textMessage) > 100_000
+
+    def testSchemaExampleImageBlockCountedVerbatim(self) -> None:
+        """A JSON-schema example shaped like an image block is counted, not neutralized.
+
+        ``generateStructured`` estimates the schema itself in addition to the
+        messages (``tokensCount = ... + self.getEstimateTokensCount(schema)``).
+        A schema example mimicking an image block is schema DATA the request
+        actually carries, not an image attachment — collapsing it would
+        substantially under-count the context-size guard (reviewer
+        counterexample: a 500k-char example must keep being counted).
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        schema = {"type": "object", "examples": [{"image_url": {"url": "data:image/jpeg;base64," + "A" * 500_000}}]}
+
+        assert model.getEstimateTokensCount(schema) > 100_000
+
+    def testMessageShapedSchemaExampleCountedVerbatim(self) -> None:
+        """A message-shaped schema EXAMPLE instance is counted, not normalized.
+
+        Regression for the recursive-discovery undercount: a JSON Schema can
+        carry a message-shaped EXAMPLE INSTANCE under ``examples`` whose
+        ``role`` value is a plain string, satisfying any message-shape
+        predicate found mid-recursion. Normalization is decided once at the
+        trusted input boundary — the schema is a dict, not a message list,
+        so nothing discovered inside it may re-arm image replacement and the
+        full 500k-char payload stays counted (reviewer counterexample).
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        schema = {
+            "type": "object",
+            "properties": {"role": {"type": "string"}, "content": {"type": "array"}},
+            "examples": [
+                {
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 500_000}}],
+                }
+            ],
+        }
+
+        assert model.getEstimateTokensCount(schema) > 100_000
+
+    def testImageBlockOutsideMessageContentCountedAsText(self) -> None:
+        """An image-block shape OUTSIDE a message's content position stays counted.
+
+        Normalization is scoped to message image-content positions: the same
+        dict shape appearing as bare structured data (here: a sibling of the
+        message objects in the request list, i.e. an ordinary JSON payload)
+        is not recognized as an image attachment and is counted verbatim.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        hugeUri = "data:image/jpeg;base64," + "F" * 500_000
+        bareBlock = [{"role": "user", "content": "describe the picture"}, {"image_url": {"url": hugeUri}}]
+
+        assert model.getEstimateTokensCount(bareBlock) > 100_000
+
+    def testEstimationDoesNotMutateInput(self) -> None:
+        """The estimation representation is non-mutating: input data unchanged.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        hugeUri = "data:image/jpeg;base64," + "E" * 10_000
+        block = {"type": "image_url", "image_url": {"url": hugeUri}}
+        data = [{"role": "user", "content": [block]}]
+
+        model.getEstimateTokensCount(data)
+
+        assert data[0]["content"][0]["image_url"]["url"] == hugeUri
+
+
+# ============================================================================
+# getEstimateTokensCount — raw message OBJECT lists (review refactor: the old
+# _estimateMessagesTokens gate-helper folded into the public estimator)
+# ============================================================================
+
+
+class TestEstimateTokensCountMessageObjects:
+    """Image-bearing message OBJECT lists are serialized inside the estimator.
+
+    Review refactor: ``generateText``/``generateStructured`` now call
+    ``getEstimateTokensCount(messages)`` directly, so the estimator itself
+    must convert image-bearing object lists to the canonical
+    ``[message.toDict() ...]`` shape before the trusted boundary
+    (:func:`lib.ai.abstract._isMessageList`) — raw objects would fall
+    through it and have every image's full base64 embedded by
+    ``default=str``. Every input WITHOUT image messages keeps the EXACT
+    verbatim ``json.dumps(..., default=str)`` estimate: the off-path
+    estimation identity is a hard requirement.
+    """
+
+    def testImageObjectListEstimateMatchesSerializedDictEstimate(self) -> None:
+        """A ModelImagesMessage object list estimates exactly like its dict serialization.
+
+        Also pins the underlying regression: the verbatim object
+        serialization (which would embed the base64) must estimate
+        decisively LARGER, i.e. the conversion actually happened.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+        verbatimEstimate = int(
+            len(json.dumps(messages, ensure_ascii=False, default=str)) / 3.5 * model.tokensCountCoeff
+        )
+
+        objectEstimate = model.getEstimateTokensCount(messages)
+
+        assert objectEstimate == model.getEstimateTokensCount([m.toDict() for m in messages])
+        assert objectEstimate < verbatimEstimate
+
+    def testSingleImageObjectListEstimateMatchesSerializedDictEstimate(self) -> None:
+        """A single-image ModelImagesMessage gets the same conversion.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = [
+            ModelMessage(role="user", content="look at this"),
+            ModelImagesMessage(role="user", content="describe", images=[bytearray(_makeLargePngBytes())]),
+        ]
+
+        assert model.getEstimateTokensCount(messages) == model.getEstimateTokensCount([m.toDict() for m in messages])
+
+    def testImageMessageTupleInputEstimateMatchesSerializedDictEstimate(self) -> None:
+        """A tuple of image messages is handled like a list.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = (
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())]),
+        )
+
+        assert model.getEstimateTokensCount(messages) == model.getEstimateTokensCount([m.toDict() for m in messages])
+
+    def testTextOnlyObjectListKeepsVerbatimJsonDumpsEstimate(self) -> None:
+        """Text-only object lists keep the EXACT pre-fold estimate (identity pin).
+
+        The value is pinned to the literal estimator formula over the
+        verbatim ``json.dumps(..., default=str)`` serialization — the
+        off-path estimate must not drift.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = [
+            ModelMessage(role="user", content="hello there"),
+            ModelMessage(role="assistant", content="general greeting"),
+        ]
+        serialized = json.dumps(messages, ensure_ascii=False, default=str)
+        expected = int(len(serialized) / 3.5 * model.tokensCountCoeff)
+
+        assert model.getEstimateTokensCount(messages) == expected
+
+    def testMixedListWithNonMessageElementKeepsVerbatimPath(self) -> None:
+        """A list mixing a message with a non-ModelMessage element stays verbatim.
+
+        The conversion requires EVERY element to be a ModelMessage; a mixed
+        list falls back to the verbatim path (its estimate is pinned to the
+        same formula), so a non-message payload can never slip into the
+        normalized path.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        data: list[ModelMessage | str] = [
+            ModelImagesMessage(role="user", content="describe", images=[bytearray(_makeLargePngBytes())]),
+            "not a message",
+        ]
+        serialized = json.dumps(data, ensure_ascii=False, default=str)
+        expected = int(len(serialized) / 3.5 * model.tokensCountCoeff)
+
+        assert model.getEstimateTokensCount(data) == expected
+
+
+# ============================================================================
+# generateText / generateStructured — image-bearing message OBJECT lists must
+# be serialized before the generation-gate estimation (native-vision Gate 2
+# regression: base64 counted as text at the final context guard)
+# ============================================================================
+
+
+def _makeLargePngBytes(size: int = 128) -> bytes:
+    """Build a genuinely valid, incompressibly large PNG in memory.
+
+    The image is real (libmagic detects ``image/png``, Pillow encodes it) and
+    its noise content keeps it ~``size * size * 3`` bytes, so the base64
+    payload ``toDict()`` embeds is decisively larger than a small context
+    budget.
+
+    Args:
+        size: Square image side length in pixels (default 128).
+
+    Returns:
+        bytes: Valid PNG bytes.
+    """
+    noise = random.Random(42).randbytes(size * size * 3)
+    buf = io.BytesIO()
+    Image.frombytes("RGB", (size, size), noise).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestGenerationGateWithImageMessages:
+    """A valid native-vision request must reach the provider, not the context guard.
+
+    Regression (Gate 2, native-vision): ``generateText``/``generateStructured``
+    passed raw ``ModelMessage`` OBJECTS to ``getEstimateTokensCount``. The
+    estimator's trusted boundary (:func:`lib.ai.abstract._isMessageList`)
+    recognizes only serialized dicts, so an object list fell through to
+    ``json.dumps(..., default=str)`` and ``ModelImagesMessage.__str__`` ->
+    ``toDict()`` embedded the FULL base64 payload of every attached image —
+    the estimate inflated past ``contextSize * 2`` and the request was
+    rejected with "Context too large" WITHOUT calling the provider, even
+    though the identical request serialized as dicts (the condensation
+    path's ``[v.toDict() ...]`` shape) estimates correctly.
+
+    The guard itself must keep rejecting genuinely oversized TEXT requests —
+    only the image-payload miscount is fixed.
+    """
+
+    async def testGenerateTextReachesProviderWithLargeNativeVisionImage(self) -> None:
+        """ModelImagesMessage objects pass the gate and reach _generateText.
+
+        Returns:
+            None
+        """
+        model = _makeStructuredModel(contextSize=100)
+        model._generateText = AsyncMock(
+            return_value=ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL, resultText="vision ok")
+        )
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+
+        result = await model.generateText(messages)
+
+        assert result.status is ModelResultStatus.FINAL
+        assert result.resultText == "vision ok"
+        model._generateText.assert_awaited_once()
+
+    async def testGenerateTextFallbackAttemptReachesProviderWithImage(self) -> None:
+        """The fallback wrapper's per-model gate also lets image requests through.
+
+        Returns:
+            None
+        """
+        primary = _makeStructuredModel(contextSize=100)
+        fallback = _makeStructuredModel(contextSize=100)
+        primary._generateText = AsyncMock(
+            return_value=ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL, resultText="primary ok")
+        )
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+
+        result = await primary.generateText(messages, fallbackModels=[fallback])
+
+        assert result.status is ModelResultStatus.FINAL
+        assert result.resultText == "primary ok"
+        assert result.isFallback is False
+        primary._generateText.assert_awaited_once()
+
+    async def testGenerateTextPrimaryFailsFallbackReachesProviderWithImage(self) -> None:
+        """A primary failure hands the image request to the fallback's own gate.
+
+        The Gate 2 fix must hold on the fallback path too: the wrapper
+        re-enters the PUBLIC ``generateText`` on the fallback model, whose
+        context gate re-estimates the same image-bearing objects. A base64
+        miscount would short-circuit THAT attempt with "Context too large"
+        before the fallback provider was ever awaited.
+
+        Returns:
+            None
+        """
+        primary = _makeStructuredModel(contextSize=100)
+        fallback = _makeStructuredModel(contextSize=100)
+        primary._generateText = AsyncMock(side_effect=RuntimeError("primary provider down"))
+        fallback._generateText = AsyncMock(
+            return_value=ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL, resultText="fallback vision ok")
+        )
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+
+        result = await primary.generateText(messages, fallbackModels=[fallback])
+
+        assert result.status is ModelResultStatus.FINAL
+        assert result.isFallback is True
+        assert result.resultText == "fallback vision ok"
+        assert result.error is None
+        primary._generateText.assert_awaited_once()
+        fallback._generateText.assert_awaited_once()
+        awaitedCall = fallback._generateText.await_args
+        assert awaitedCall is not None
+        awaitedMessages = awaitedCall.kwargs["messages"]
+        assert isinstance(awaitedMessages[0], ModelImagesMessage)
+
+    async def testGenerateStructuredReachesProviderWithImage(self) -> None:
+        """generateStructured's equivalent estimate also serializes image messages.
+
+        Returns:
+            None
+        """
+        model = _makeStructuredModel(contextSize=100)
+        model._generateStructured = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelStructuredResult(rawResult=None, status=ModelResultStatus.FINAL, data={"ok": True})
+        )
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+        schema: Dict[str, Any] = {"type": "object"}
+
+        result = await model.generateStructured(messages, schema)
+
+        assert result.status is ModelResultStatus.FINAL
+        assert result.data == {"ok": True}
+        model._generateStructured.assert_awaited_once()
+
+    async def testGenerateTextStillRejectsOversizedText(self) -> None:
+        """Genuinely oversized TEXT input is still rejected without calling the provider.
+
+        Returns:
+            None
+        """
+        model = _makeStructuredModel(contextSize=100)
+        model._generateText = AsyncMock(
+            return_value=ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL, resultText="should not run")
+        )
+        messages = [ModelMessage(role="user", content="word " * 500)]  # ~2500 chars ≈ 785 tokens
+
+        result = await model.generateText(messages)
+
+        assert result.status is ModelResultStatus.ERROR
+        assert result.error is not None
+        assert "Context too large" in str(result.error)
+        model._generateText.assert_not_awaited()

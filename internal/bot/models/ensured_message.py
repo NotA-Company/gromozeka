@@ -34,7 +34,8 @@ import lib.utils as utils
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.models import MessageId, MessageType
-from lib.ai.models import ModelMessage
+from internal.services.storage import StorageScope, StorageService
+from lib.ai.models import ModelImagesMessage, ModelMessage, ModelMessageDescriptionResolver
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
@@ -1061,6 +1062,98 @@ class EnsuredMessage:
         logger.error(f"Media#{mediaId} processing timed out")
         return mediaAttachment
 
+    async def _loadNativeVisionImages(self, db: Database) -> Tuple[List[bytearray], bool]:
+        """
+        Load native-vision image bytes for this message's media list (album order).
+
+        For every ``mediaList`` entry the ``media_attachments`` row is fetched:
+        rows without a ``vision_url`` are "describable-not-attached", rows with
+        a ``vision_url`` contribute their stored bytes when storage loads them
+        ("attached"), and missing rows are "ghosts" — they can never carry a
+        description (``_awaitMedia`` returns None immediately on a missing row),
+        so they never block the attach decision. Never raises: any failure
+        (storage unconfigured, DB error, ...) degrades to "no images" so the
+        caller falls back to the description path.
+
+        Args:
+            db: Database wrapper instance for accessing media attachments
+
+        Returns:
+            Tuple of (attachedImages, allDescribableAttached) where
+            ``attachedImages`` is the ordered list of loaded image bytearrays
+            and ``allDescribableAttached`` is True only when at least one image
+            loaded AND every non-ghost entry loaded.
+        """
+        try:
+            storage = StorageService.getInstance(StorageScope.VISION)
+            attachedImages: List[bytearray] = []
+            describableCount = 0
+            for media in self.mediaList:
+                row = await db.mediaAttachments.getMediaAttachment(media.id)
+                if row is None:
+                    # Ghost: no row -> no description can ever exist for this
+                    # entry, so it is excluded from the attach decision entirely.
+                    continue
+                describableCount += 1
+                visionUrl = row["vision_url"]
+                if not visionUrl:
+                    continue
+                data = storage.get(visionUrl)
+                if data:
+                    attachedImages.append(bytearray(data))
+            allAttached = bool(attachedImages) and len(attachedImages) == describableCount
+            return (attachedImages, allAttached)
+        except Exception as e:
+            logger.debug(f"Native vision image load failed: {type(e).__name__}: {e}")
+            return ([], False)
+
+    def _makeDescriptionResolver(self, db: Database) -> ModelMessageDescriptionResolver:
+        """
+        Build an at-most-once lazy description resolver for this message.
+
+        The returned closure resolves this message's media descriptions on first
+        invocation (performing the same waits :meth:`formatForLLM` would have
+        performed via :meth:`updateMediaContent`) and caches the result; later
+        invocations return the cached value without touching the database again.
+        Aggregates the non-empty per-media descriptions joined with newlines
+        (the album-aware superset of the ``useSingleMedia`` selection). Never
+        raises: a failed resolution resolves to None.
+
+        Args:
+            db: Database wrapper instance for accessing media attachments
+
+        Returns:
+            An async callable returning the joined media description text, or
+            None when nothing resolves or resolution failed.
+        """
+        resolved: Optional[str] = None
+        resolvedOnce: bool = False
+
+        async def resolve() -> Optional[str]:
+            """Resolve (once) and return the joined media description.
+
+            Returns:
+                The non-empty per-media descriptions joined with newlines, or
+                None when nothing resolves, already resolved to nothing, or
+                the resolution failed.
+            """
+            nonlocal resolved, resolvedOnce
+            if resolvedOnce:
+                return resolved
+            # Set BEFORE awaiting: a concurrent/re-entrant call sees the flag
+            # and returns the in-flight (still None) value instead of waiting.
+            resolvedOnce = True
+            try:
+                await self.updateMediaContent(db)  # waits INSIDE, up to MAX_MEDIA_AWAIT_SECS per pending media
+                descriptions = [v.content for v in self.mediaList if v.content]
+                resolved = "\n".join(descriptions) if descriptions else None
+            except Exception as e:
+                logger.debug(f"Native vision description resolution failed: {type(e).__name__}: {e}")
+                resolved = None
+            return resolved
+
+        return resolve
+
     async def formatForLLM(
         self,
         db: Database,
@@ -1070,6 +1163,7 @@ class EnsuredMessage:
         stripAtsign: bool = False,
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         useSingleMedia: bool = True,
+        skipMediaDescription: bool = False,
         cache: Optional["CacheService"],
         excludeMemoryIds: Optional[Set[str]] = None,
     ) -> str:
@@ -1094,6 +1188,17 @@ class EnsuredMessage:
             stripAtsign: Whether to strip @ from usernames, default is False
             outputFormat: Output format for message text parsing (default: MARKDOWN)
             useSingleMedia: Whether to use single media content or media list (default: True)
+            skipMediaDescription: When True, render WITHOUT the media description and
+                skip the ``updateMediaContent`` wait entirely (native-vision v2 §4.2
+                construction-attach skip path: the envelope already carries the real
+                image bytes). In the JSON branch the ``mediaDescription`` key is
+                omitted; in the TEXT branch the ``<media-description>`` prepend is
+                suppressed even when the ``mediaContent`` attribute is already
+                populated. Default False preserves the historical wait behavior
+                and the JSON render byte-for-byte; the TEXT render follows the
+                single-source tag-per-media contract (list-shaped content renders
+                one tag per media; Max-shaped messages with a None attribute now
+                render their descriptions).
             cache: CacheService singleton for resolving compact memory IDs to content
                 in the JSON branch. ``None`` (non-chat / TEXT path) omits the
                 ``userMemories`` key — no resolution is attempted.
@@ -1108,10 +1213,22 @@ class EnsuredMessage:
         """
         if excludeMemoryIds is None:
             excludeMemoryIds = set()
-        await self.updateMediaContent(db)
-        mediaContent = self.mediaContent
-        if not useSingleMedia or self.mediaContent is None:
-            mediaContent = [v.content for v in self.mediaList if v.content]
+        if skipMediaDescription:
+            # Native-vision skip path (§4.2): the envelope carries the real image
+            # bytes, so no description is rendered and the processing wait is
+            # skipped entirely (both processingInfo.awaitResult() and _awaitMedia
+            # polling). Forcing the local selection to None makes the JSON
+            # branch's `if v` filter drop the `mediaDescription` key; the TEXT
+            # branch's guard reads the same local, so the prepend is
+            # suppressed too (self.mediaContent can be pre-populated — e.g.
+            # fromDBChatMessage, addMedia — so the attribute alone must not
+            # drive either render).
+            mediaContent = None
+        else:
+            await self.updateMediaContent(db)
+            mediaContent = self.mediaContent
+            if not useSingleMedia or self.mediaContent is None:
+                mediaContent = [v.content for v in self.mediaList if v.content]
 
         messageText = self.formatMessageText(outputFormat) if replaceMessageText is None else replaceMessageText
         userName = self.sender.username
@@ -1193,8 +1310,21 @@ class EnsuredMessage:
 
             case LLMMessageFormat.TEXT:
                 ret = messageText
-                if self.mediaContent:
-                    ret = f"<media-description>{mediaContent}</media-description>\n\n{ret}"
+                # Single-source contract: BOTH the guard and the value read the
+                # LOCAL `mediaContent` selection. On the skip path
+                # (skipMediaDescription=True) the local is None, so nothing
+                # renders even when the `mediaContent` attribute is
+                # pre-populated (fromDBChatMessage, addMedia) — the attribute
+                # alone must not drive the render. The local is a str (the
+                # primary description under useSingleMedia) or a List[str]
+                # (per-media descriptions); multi-media renders ONE tag per
+                # media so boundaries survive multiline descriptions.
+                if mediaContent:
+                    if isinstance(mediaContent, str):
+                        ret = f"<media-description>{mediaContent}</media-description>\n\n{ret}"
+                    else:
+                        mediaTags = "".join(f"<media-description>{v}</media-description>\n" for v in mediaContent)
+                        ret = f"{mediaTags}\n{ret}"
                 if self.isQuote and self.quoteText:
                     ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
                 return ret
@@ -1214,6 +1344,7 @@ class EnsuredMessage:
         role: str = "user",
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         useSingleMedia: bool = True,
+        nativeImages: bool = False,
         cache: Optional["CacheService"],
         excludeMemoryIds: Optional[Set[str]] = None,
     ) -> List[ModelMessage]:
@@ -1231,6 +1362,9 @@ class EnsuredMessage:
             role: The role for the model message (e.g., "user", "assistant"), default is "user"
             outputFormat: Output format for message text parsing (default: MARKDOWN)
             useSingleMedia: Whether to use single media content or media list (default: True)
+            nativeImages: Forwarded 1:1 to the main-message :meth:`toModelMessage` call
+                (native-vision v2 §4.3 construction attach). Default False keeps
+                today's description-only rendering.
             cache: CacheService singleton forwarded to :meth:`formatForLLM` for
                 on-demand memory resolution. ``None`` omits memories.
             excludeMemoryIds: Memory IDs to drop from the rendered cohorts
@@ -1270,6 +1404,7 @@ class EnsuredMessage:
                 role=role,
                 outputFormat=outputFormat,
                 useSingleMedia=useSingleMedia,
+                nativeImages=nativeImages,
                 cache=cache,
                 excludeMemoryIds=excludeMemoryIds,
             )
@@ -1286,6 +1421,7 @@ class EnsuredMessage:
         role: str = "user",
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         useSingleMedia: bool = True,
+        nativeImages: bool = False,
         cache: Optional["CacheService"],
         excludeMemoryIds: Optional[Set[str]] = None,
     ) -> ModelMessage:
@@ -1297,6 +1433,16 @@ class EnsuredMessage:
         Supports SMART format which automatically chooses JSON for user messages
         and TEXT for other roles.
 
+        With ``nativeImages=True`` the message's stored vision bytes are loaded
+        BEFORE rendering (native-vision v2 §4.3): when every describable media
+        entry attached, the description is skipped entirely and the returned
+        :class:`ModelImagesMessage` carries a lazy description resolver for the
+        condenser; when only part of the album loaded, the loaded subset is
+        attached alongside an envelope rendering ALL per-media descriptions
+        (the caller's ``useSingleMedia`` selection is overridden so the
+        unattached media's description survives; no resolver); when nothing
+        loaded, today's plain ``ModelMessage`` is returned.
+
         Args:
             db: Database wrapper for accessing media content
             format: Output format (JSON, TEXT, or SMART), default is JSON
@@ -1305,6 +1451,8 @@ class EnsuredMessage:
             role: The role for the model message (e.g., "user", "assistant"), default is "user"
             outputFormat: Output format for message text parsing (default: MARKDOWN)
             useSingleMedia: Whether to use single media content or media list (default: True)
+            nativeImages: Opt-in construction-time image attach (native-vision v2
+                §4.3). Default False keeps today's description-only rendering.
             cache: CacheService singleton forwarded to :meth:`formatForLLM` for
                 on-demand memory resolution. ``None`` omits memories.
             excludeMemoryIds: Memory IDs to drop from the rendered cohorts
@@ -1321,20 +1469,60 @@ class EnsuredMessage:
             else:
                 format = LLMMessageFormat.JSON
 
-        return ModelMessage(
-            role=role,
-            content=await self.formatForLLM(
-                db=db,
-                format=format,
-                replaceMessageText=replaceMessageText,
-                stripAtsign=stripAtsign,
-                outputFormat=outputFormat,
-                useSingleMedia=useSingleMedia,
-                cache=cache,
-                excludeMemoryIds=excludeMemoryIds,
-            ),
-            source=self,
+        # Native-vision v2 §4.3: load bytes BEFORE rendering, so the description
+        # fallback stays safe. ``_loadNativeVisionImages`` never raises; the
+        # never-raise boundary wraps ONLY the vision attempt — formatForLLM and
+        # the return construction below keep today's error contract.
+        images: List[bytearray] = []
+        allAttached = False
+        if nativeImages and self.mediaList:
+            images, allAttached = await self._loadNativeVisionImages(db)
+
+        if images and allAttached:
+            # SKIP PATH — every describable media entry is attached: render
+            # without the description (no updateMediaContent wait) and hand the
+            # condenser an at-most-once lazy resolver for later strips.
+            return ModelImagesMessage(
+                role=role,
+                content=await self.formatForLLM(
+                    db=db,
+                    format=format,
+                    replaceMessageText=replaceMessageText,
+                    stripAtsign=stripAtsign,
+                    outputFormat=outputFormat,
+                    useSingleMedia=useSingleMedia,
+                    skipMediaDescription=True,
+                    cache=cache,
+                    excludeMemoryIds=excludeMemoryIds,
+                ),
+                images=images,
+                source=self,
+                descriptionResolver=self._makeDescriptionResolver(db),
+            )
+
+        # Default path — the description wait happens HERE if media is pending.
+        # A nonempty ``images`` at this point means the PARTIAL case (the
+        # full-attach case returned above): the caller's primary-only
+        # ``useSingleMedia`` selection is overridden to per-media, because it
+        # would render only the attached (primary) media's description and
+        # silently drop the unattached media's description from model context.
+        content = await self.formatForLLM(
+            db=db,
+            format=format,
+            replaceMessageText=replaceMessageText,
+            stripAtsign=stripAtsign,
+            outputFormat=outputFormat,
+            useSingleMedia=useSingleMedia and not images,
+            cache=cache,
+            excludeMemoryIds=excludeMemoryIds,
         )
+        if images:
+            # PARTIAL — attach the loaded subset ALONGSIDE the description-bearing
+            # envelope (dropping the description would silently lose the
+            # unattached media). No resolver: the content already carries ALL
+            # the descriptions, so the condenser's lazy gate needs nothing.
+            return ModelImagesMessage(role=role, content=content, images=images, source=self)
+        return ModelMessage(role=role, content=content, source=self)
 
     def __str__(self) -> str:
         """

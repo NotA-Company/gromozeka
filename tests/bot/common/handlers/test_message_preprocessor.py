@@ -264,8 +264,9 @@ def _realEnsuredMessageForEmbedding(
     A real instance (not a spec-mock) is needed because the embedding guard in
     :meth:`newMessageHandler` operates on the return value of
     ``formatForLLM(TEXT, useSingleMedia=False)``, and that method's TEXT branch
-    prepends a ``<media-description>...</media-description>`` block when
-    ``self.mediaContent`` is truthy. Using a real EnsuredMessage exercises that
+    prepends a ``<media-description>...</media-description>`` block when the
+    local media-content selection is non-empty. Using a real EnsuredMessage
+    exercises that
     code path faithfully; a ``Mock(spec=EnsuredMessage)`` returns a truthy Mock
     from ``formatForLLM``, which defeats the guard entirely.
 
@@ -434,7 +435,7 @@ class TestNewMessageHandlerDispatchGates:
         which pre-populates ``mediaContent`` and ``mediaList`` so
         ``formatForLLM(TEXT, useSingleMedia=False)`` returns::
 
-            <media-description>['A photo of a cat']</media-description>\\n\\n
+            <media-description>A photo of a cat</media-description>\\n\\n
 
         which is non-empty after ``.strip()``.
 

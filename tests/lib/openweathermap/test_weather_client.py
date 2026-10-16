@@ -112,7 +112,6 @@ class TestOpenWeatherMapClient:
             ],
         }
 
-    @pytest.mark.asyncio
     async def test_get_coordinates_success(
         self, client: OpenWeatherMapClient, sample_geocoding_response: list[dict]
     ) -> None:
@@ -137,7 +136,6 @@ class TestOpenWeatherMapClient:
         assert result["country"] == "RU"
         assert result["local_names"]["ru"] == "Москва"
 
-    @pytest.mark.asyncio
     async def test_get_coordinates_not_found(self, client: OpenWeatherMapClient) -> None:
         """Test geocoding when city not found.
 
@@ -152,7 +150,6 @@ class TestOpenWeatherMapClient:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_get_weather_success(self, client: OpenWeatherMapClient, sample_weather_response: dict) -> None:
         """Test successful weather fetch.
 
@@ -176,7 +173,6 @@ class TestOpenWeatherMapClient:
         assert result["current"]["weather_description"] == "scattered clouds"
         assert len(result["daily"]) == 1
 
-    @pytest.mark.asyncio
     async def test_get_weather_by_city_success(
         self, client: OpenWeatherMapClient, sample_geocoding_response: list[dict], sample_weather_response: dict
     ) -> None:
@@ -206,7 +202,6 @@ class TestOpenWeatherMapClient:
         # Verify both API calls were made
         assert mock_request.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_get_weather_by_city_geocoding_fails(self, client: OpenWeatherMapClient) -> None:
         """Test combined operation when geocoding fails.
 
@@ -221,7 +216,6 @@ class TestOpenWeatherMapClient:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_api_error_handling(self, client: OpenWeatherMapClient) -> None:
         """Test API error handling.
 
@@ -246,7 +240,6 @@ class TestIntegration:
     the client's API interaction logic.
     """
 
-    @pytest.mark.asyncio
     async def test_full_workflow_with_real_cache(self) -> None:
         """Test full workflow with real cache implementation.
 
@@ -327,7 +320,6 @@ class TestWeatherClientErrorHandling:
             defaultLanguage="ru",
         )
 
-    @pytest.mark.asyncio
     async def test_network_timeout_error(self, client: OpenWeatherMapClient) -> None:
         """Test handling of network timeout errors.
 
@@ -342,7 +334,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_network_connection_error(self, client: OpenWeatherMapClient) -> None:
         """Test handling of network connection errors.
 
@@ -357,7 +348,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_http_500_error(self, client: OpenWeatherMapClient) -> None:
         """Test handling of HTTP 500 Internal Server Error.
 
@@ -376,7 +366,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_http_503_error(self, client: OpenWeatherMapClient) -> None:
         """Test handling of HTTP 503 Service Unavailable.
 
@@ -395,7 +384,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_http_401_unauthorized(self, client: OpenWeatherMapClient) -> None:
         """Test handling of HTTP 401 Unauthorized (invalid API key).
 
@@ -414,7 +402,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_http_403_forbidden(self, client: OpenWeatherMapClient) -> None:
         """Test handling of HTTP 403 Forbidden.
 
@@ -433,7 +420,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_http_404_not_found(self, client: OpenWeatherMapClient) -> None:
         """Test handling of HTTP 404 Not Found.
 
@@ -452,7 +438,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_http_429_rate_limit(self, client: OpenWeatherMapClient) -> None:
         """Test handling of HTTP 429 Rate Limit Exceeded.
 
@@ -471,7 +456,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_malformed_json_response(self, client: OpenWeatherMapClient) -> None:
         """Test handling of malformed JSON responses.
 
@@ -490,7 +474,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_empty_geocoding_response(self, client: OpenWeatherMapClient) -> None:
         """Test handling of empty geocoding response.
 
@@ -505,7 +488,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_null_weather_response(self, client: OpenWeatherMapClient) -> None:
         """Test handling of null weather response.
 
@@ -520,7 +502,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_invalid_coordinates_out_of_range(self, client: OpenWeatherMapClient) -> None:
         """Test handling of invalid coordinates (out of range).
 
@@ -541,7 +522,6 @@ class TestWeatherClientErrorHandling:
             result = await client.getWeather(55.7558, 200.0)
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_empty_city_name(self, client: OpenWeatherMapClient) -> None:
         """Test handling of empty city name.
 
@@ -556,7 +536,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_special_characters_in_city_name(self, client: OpenWeatherMapClient) -> None:
         """Test handling of special characters in city name.
 
@@ -583,7 +562,6 @@ class TestWeatherClientErrorHandling:
         assert result is not None
         assert result["name"] == "São Paulo"
 
-    @pytest.mark.asyncio
     async def test_dns_resolution_error(self, client: OpenWeatherMapClient) -> None:
         """Test handling of DNS resolution errors.
 
@@ -598,7 +576,6 @@ class TestWeatherClientErrorHandling:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_unexpected_exception(self, client: OpenWeatherMapClient) -> None:
         """Test handling of unexpected exceptions.
 
@@ -643,7 +620,6 @@ class TestWeatherClientRateLimiting:
             defaultLanguage="ru",
         )
 
-    @pytest.mark.asyncio
     async def test_rate_limit_response_handling(self, client: OpenWeatherMapClient) -> None:
         """Test handling of rate limit response (429).
 
@@ -662,7 +638,6 @@ class TestWeatherClientRateLimiting:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_rate_limit_with_retry_after_header(self, client: OpenWeatherMapClient) -> None:
         """Test rate limit response with Retry-After header.
 
@@ -683,7 +658,6 @@ class TestWeatherClientRateLimiting:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_concurrent_requests_handling(self, client: OpenWeatherMapClient) -> None:
         """Test handling of concurrent requests.
 
@@ -740,7 +714,6 @@ class TestWeatherClientDataValidation:
             defaultLanguage="ru",
         )
 
-    @pytest.mark.asyncio
     async def test_validate_geocoding_structure(self, client: OpenWeatherMapClient) -> None:
         """Test validation of geocoding data structure.
 
@@ -773,7 +746,6 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["lat"], float)
             assert isinstance(result["lon"], float)
 
-    @pytest.mark.asyncio
     async def test_validate_weather_structure(self, client: OpenWeatherMapClient) -> None:
         """Test validation of weather data structure.
 
@@ -814,7 +786,6 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["current"]["temp"], float)
             assert isinstance(result["current"]["humidity"], int)
 
-    @pytest.mark.asyncio
     async def test_handle_missing_optional_fields(self, client: OpenWeatherMapClient) -> None:
         """Test handling of missing optional fields in API response.
 
@@ -834,7 +805,6 @@ class TestWeatherClientDataValidation:
             assert result is not None
             assert result["state"] == ""
 
-    @pytest.mark.asyncio
     async def test_handle_missing_weather_fields(self, client: OpenWeatherMapClient) -> None:
         """Test handling of missing fields in weather response.
 
@@ -862,7 +832,6 @@ class TestWeatherClientDataValidation:
             assert result["current"]["feels_like"] == 0.0
             assert result["current"]["pressure"] == 0
 
-    @pytest.mark.asyncio
     async def test_validate_temperature_units(self, client: OpenWeatherMapClient) -> None:
         """Test that temperature is in metric units (Celsius).
 
@@ -887,7 +856,6 @@ class TestWeatherClientDataValidation:
             call_args = mock_request.call_args
             assert call_args[0][1]["units"] == "metric"
 
-    @pytest.mark.asyncio
     async def test_validate_coordinate_ranges(self, client: OpenWeatherMapClient) -> None:
         """Test coordinate range validation.
 
@@ -907,7 +875,6 @@ class TestWeatherClientDataValidation:
             assert -90 <= result["lat"] <= 90
             assert -180 <= result["lon"] <= 180
 
-    @pytest.mark.asyncio
     async def test_validate_timestamp_formats(self, client: OpenWeatherMapClient) -> None:
         """Test timestamp format validation.
 
@@ -940,7 +907,6 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["current"]["sunrise"], int)
             assert isinstance(result["current"]["sunset"], int)
 
-    @pytest.mark.asyncio
     async def test_handle_unexpected_data_types(self, client: OpenWeatherMapClient) -> None:
         """Test handling of unexpected data types in response.
 
@@ -968,7 +934,6 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["current"]["temp"], float)
             assert result["current"]["temp"] == 15.5
 
-    @pytest.mark.asyncio
     async def test_validate_daily_forecast_structure(self, client: OpenWeatherMapClient) -> None:
         """Test validation of daily forecast structure.
 
@@ -1005,7 +970,6 @@ class TestWeatherClientDataValidation:
             assert "temp_max" in daily
             assert isinstance(daily["temp_day"], float)
 
-    @pytest.mark.asyncio
     async def test_handle_empty_weather_array(self, client: OpenWeatherMapClient) -> None:
         """Test handling of empty weather array in response.
 

@@ -84,6 +84,9 @@ save-attachments = false
 # Prefix for saved attachments
 save-prefix = "media-"
 
+# Send images directly to vision-capable chat models (requires a configured storage backend; normalized images are stored on disk, EXIF is stripped)
+native-vision = false
+
 # Allow tools commands (/draw, /analyze, etc...)
 allow-tools-commands = true
 # Enable sandbox code execution for this chat

@@ -14,8 +14,6 @@ import asyncio
 import time
 from typing import Any, Dict, List
 
-import pytest
-
 from lib.cache.dict_cache import DictCache
 from lib.cache.key_generator import HashKeyGenerator, JsonKeyGenerator, StringKeyGenerator
 
@@ -59,7 +57,6 @@ class TestDictCacheBasic:
         assert cache._defaultTtl == 600
         assert cache._maxSize == 500
 
-    @pytest.mark.asyncio
     async def test_basic_set_and_get(self) -> None:
         """Test basic set and get operations.
 
@@ -85,7 +82,6 @@ class TestDictCacheBasic:
         value = await cache.get("key1")
         assert value == "value1"
 
-    @pytest.mark.asyncio
     async def test_get_nonexistent_key(self) -> None:
         """Test getting a non-existent key returns None.
 
@@ -106,7 +102,6 @@ class TestDictCacheBasic:
         value = await cache.get("nonexistent")
         assert value is None
 
-    @pytest.mark.asyncio
     async def test_clear_cache(self) -> None:
         """Test clearing the cache.
 
@@ -139,7 +134,6 @@ class TestDictCacheBasic:
         assert await cache.get("key1") is None
         assert await cache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_get_stats(self) -> None:
         """Test cache statistics.
 
@@ -179,7 +173,6 @@ class TestDictCacheTTL:
     their TTL settings, including default TTL and custom TTL overrides.
     """
 
-    @pytest.mark.asyncio
     async def test_ttl_expiration(self, fakeClock: List[float]) -> None:
         """Test that entries expire after TTL.
 
@@ -212,7 +205,6 @@ class TestDictCacheTTL:
         value = await cache.get("key1")
         assert value is None
 
-    @pytest.mark.asyncio
     async def test_custom_ttl_per_get(self, fakeClock: List[float]) -> None:
         """Test custom TTL per get operation.
 
@@ -248,7 +240,6 @@ class TestDictCacheTTL:
         value = await cache.get("key1", ttl=int(0.1))
         assert value is None
 
-    @pytest.mark.asyncio
     async def test_ttl_zero_means_immediate_expiration(self) -> None:
         """Test that TTL=0 means immediate expiration.
 
@@ -296,7 +287,6 @@ class TestDictCacheSize:
     and evicts entries when the limit is exceeded.
     """
 
-    @pytest.mark.asyncio
     async def test_size_limit_enforcement(self) -> None:
         """Test that cache respects size limits.
 
@@ -333,7 +323,6 @@ class TestDictCacheSize:
         assert await cache.get("key3") == "value3"
         assert await cache.get("key4") == "value4"
 
-    @pytest.mark.asyncio
     async def test_lru_eviction(self, fakeClock: List[float]) -> None:
         """Test LRU-like eviction behavior (oldest entries are evicted first).
 
@@ -373,7 +362,6 @@ class TestDictCacheKeyGenerators:
     work correctly with the cache and handle various key types appropriately.
     """
 
-    @pytest.mark.asyncio
     async def test_string_key_generator(self) -> None:
         """Test StringKeyGenerator.
 
@@ -395,7 +383,6 @@ class TestDictCacheKeyGenerators:
         value = await cache.get("test_key")
         assert value == "test_value"
 
-    @pytest.mark.asyncio
     async def test_hash_key_generator(self) -> None:
         """Test HashKeyGenerator.
 
@@ -417,7 +404,6 @@ class TestDictCacheKeyGenerators:
         value = await cache.get("test_key")
         assert value == "test_value"
 
-    @pytest.mark.asyncio
     async def test_json_key_generator(self) -> None:
         """Test JsonKeyGenerator with complex keys.
 
@@ -440,7 +426,6 @@ class TestDictCacheKeyGenerators:
         value = await cache.get(complex_key)
         assert value == "test_value"
 
-    @pytest.mark.asyncio
     async def test_json_key_generator_equivalent_keys(self) -> None:
         """Test that JsonKeyGenerator treats equivalent keys as same.
 
@@ -473,7 +458,6 @@ class TestDictCacheThreadSafety:
     from multiple coroutines without data corruption or race conditions.
     """
 
-    @pytest.mark.asyncio
     async def test_concurrent_access(self) -> None:
         """Test concurrent access to cache.
 
@@ -508,7 +492,6 @@ class TestDictCacheThreadSafety:
                 value = await cache.get(key)
                 assert value == worker_id * 100 + i
 
-    @pytest.mark.asyncio
     async def test_clear_thread_safety(self) -> None:
         """Test that clear operation is thread-safe.
 
@@ -549,7 +532,6 @@ class TestDictCacheErrorHandling:
     including key generator failures and invalid TTL values.
     """
 
-    @pytest.mark.asyncio
     async def test_key_generator_exception_handling(self) -> None:
         """Test handling of key generator exceptions.
 
@@ -581,7 +563,6 @@ class TestDictCacheErrorHandling:
         value = await cache.get("key")
         assert value is None
 
-    @pytest.mark.asyncio
     async def test_invalid_ttl_handling(self) -> None:
         """Test handling of invalid TTL values.
 
@@ -619,7 +600,6 @@ class TestDictCachePerformance:
     large numbers of entries and cleanup operations.
     """
 
-    @pytest.mark.asyncio
     async def test_large_cache_operations(self) -> None:
         """Test operations with large cache.
 
@@ -654,7 +634,6 @@ class TestDictCachePerformance:
         assert set_time < 5.0  # Should complete in under 5 seconds
         assert get_time < 2.0  # Should complete in under 2 seconds
 
-    @pytest.mark.asyncio
     async def test_cleanup_performance(self, fakeClock: List[float]) -> None:
         """Test cleanup performance with many expired entries.
 
@@ -698,7 +677,6 @@ class TestDictCacheClearOld:
     recent-entry survival, bool return, and negative-ttl parity with SQL.
     """
 
-    @pytest.mark.asyncio
     async def test_clearold_deletes_old_entries(self, fakeClock: List[float]) -> None:
         """clearOld deletes entries older than the TTL threshold.
 
@@ -725,7 +703,6 @@ class TestDictCacheClearOld:
         assert await cache.get("old") is None
         assert await cache.get("recent") == "recent_value"
 
-    @pytest.mark.asyncio
     async def test_clearold_none_normalizes_to_zero(self, fakeClock: List[float]) -> None:
         """clearOld(None) normalizes to 0 and deletes all entries.
 
@@ -750,7 +727,6 @@ class TestDictCacheClearOld:
         assert await cache.get("key1") is None
         assert await cache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_clearold_zero_deletes_all(self, fakeClock: List[float]) -> None:
         """clearOld(0) deletes all entries.
 
@@ -775,7 +751,6 @@ class TestDictCacheClearOld:
         assert await cache.get("key1") is None
         assert await cache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_clearold_recent_entries_survive(self, fakeClock: List[float]) -> None:
         """Recent entries (younger than TTL) survive the sweep.
 
@@ -801,7 +776,6 @@ class TestDictCacheClearOld:
         assert await cache.get("key1") == "value1"
         assert await cache.get("key2") == "value2"
 
-    @pytest.mark.asyncio
     async def test_clearold_returns_true_on_noop(self, fakeClock: List[float]) -> None:
         """clearOld returns True on successful no-op (empty cache).
 
@@ -820,7 +794,6 @@ class TestDictCacheClearOld:
         result = await cache.clearOld(ttl=365 * 86400)
         assert result is True
 
-    @pytest.mark.asyncio
     async def test_clearold_negative_ttl_deletes_all(self, fakeClock: List[float]) -> None:
         """Negative TTL deletes everything (legacy SQL behavior parity).
 
@@ -845,7 +818,6 @@ class TestDictCacheClearOld:
         assert await cache.get("key1") is None
         assert await cache.get("key2") is None
 
-    @pytest.mark.asyncio
     async def test_clearold_strict_age_comparison(self, fakeClock: List[float]) -> None:
         """Age comparison is strict: age > TTL deletes, age <= TTL survives.
 

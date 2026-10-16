@@ -55,6 +55,7 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.services.llm import TOOLS_DEFAULT_DICT_KEY, ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -122,6 +123,51 @@ class LLMMessageHandler(BaseBotHandler):
         super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
+
+    ###
+    # Native vision (design v2 §4.7): the attach itself happens at CONSTRUCTION
+    # time inside EnsuredMessage.toModelMessage (nativeImages= flag); the
+    # handler resolves per-request eligibility ONCE at each trigger entry and
+    # threads the resulting flag through message assembly.
+    ###
+
+    def _nativeVisionEnabled(self, chatSettings: ChatSettingsDict) -> bool:
+        """NATIVE_VISION on AND both chat models vision-capable (fail-soft).
+
+        One assembled message list is serialized for both the primary and the
+        fallback attempt (see ``_generateTextViaLLM``), so a text-only fallback
+        would hard-error on ``image_url`` parts. Both models must therefore
+        declare ``support_image_input`` (native-vision design v1 §3.4 rule,
+        preserved verbatim). Any resolution failure fails soft to "not
+        eligible" — the description-only status quo is always a safe answer.
+
+        Args:
+            chatSettings (ChatSettingsDict): Chat-specific settings; the
+                ``NATIVE_VISION`` flag and both model keys are read from here.
+
+        Returns:
+            True when stored image bytes may be attached at construction
+            time for this request.
+        """
+        if not chatSettings[ChatSettingsKey.NATIVE_VISION].toBool():
+            return False
+
+        try:
+            primaryModel = self.llmService.resolveModel(
+                ChatSettingsKey.CHAT_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL
+            )
+            fallbackModel = self.llmService.resolveModel(
+                ChatSettingsKey.FALLBACK_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
+            )
+            primarySupportsImageInput = bool(primaryModel.getInfo().get("support_image_input", False))
+            fallbackSupportsImageInput = bool(fallbackModel.getInfo().get("support_image_input", False))
+        except Exception as e:
+            logger.warning(f"Native vision eligibility check failed, using descriptions only: {type(e).__name__}#{e}")
+            return False
+        if not (primarySupportsImageInput and fallbackSupportsImageInput):
+            logger.debug("Native vision is on, but chat models are not image-capable; using descriptions only")
+            return False
+        return True
 
     ###
     # Some LLM helpers
@@ -270,13 +316,23 @@ class LLMMessageHandler(BaseBotHandler):
                 notification has already been logged/emitted by this method).
         """
         # For logging purposes
-        messageHistoryStr = ""
-        for msg in messagesHistory:
-            messageHistoryStr += f"\t{repr(msg)}\n"
-        logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
-
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+
+        # Build the request dump ONLY when DEBUG logging is enabled:
+        # image-bearing messages embed full base64 payloads, and repr()
+        # (-> __str__ -> toDict()) would materialize every data URI even
+        # with logging disabled. For them use the truncated log view;
+        # plain messages keep the existing repr() format.
+        if logger.isEnabledFor(logging.DEBUG):
+            messageHistoryStr = ""
+            for msg in messagesHistory:
+                if isinstance(msg, ModelImagesMessage):
+                    messageHistoryStr += f"\t{msg.toLogMessage()}\n"
+                else:
+                    messageHistoryStr += f"\t{repr(msg)}\n"
+            logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
+
         mlRet: Optional[ModelRunResult] = None
 
         try:
@@ -576,6 +632,10 @@ class LLMMessageHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
+        # Native vision (v2 §4.7): eligibility resolved once per request, then
+        # threaded through every message construction below.
+        nativeVision = self._nativeVisionEnabled(chatSettings)
+
         isReplyToMyMessage = False
         eRepliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
         if eRepliedMessage is not None and eRepliedMessage.sender.id == await self.getBotId():
@@ -586,13 +646,17 @@ class LLMMessageHandler(BaseBotHandler):
 
         logger.debug("It is reply to our message, processing reply...")
         async with await self.startTyping(ensuredMessage) as typingManager:
-            # As it's resporse to our message, we need to wait for media to be processed if any
-            await ensuredMessage.updateMediaContent(self.db)
+            # As it's resporse to our message, we need to wait for media to be processed if any.
+            # Native vision (v2 §4.8): skipped when the flag is on — the wait is
+            # DEFERRED to construction, not lost: formatForLLM still performs it
+            # on the description path (only the bytes-attached skip path omits it).
+            if not nativeVision:
+                await ensuredMessage.updateMediaContent(self.db)
 
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
             injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
-            reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
+            reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage, nativeImages=nativeVision)
 
             if not reqMessages:
                 logger.error("Failed to get parent message")
@@ -614,12 +678,14 @@ class LLMMessageHandler(BaseBotHandler):
                         format=llmMessageFormat,
                         role="assistant",
                         cache=self.cache if injectMemories else None,
+                        nativeImages=nativeVision,
                     ),
                     await ensuredMessage.toModelMessage(
                         self.db,
                         format=llmMessageFormat,
                         role="user",
                         cache=self.cache if injectMemories else None,
+                        nativeImages=nativeVision,
                     ),
                 ]
 
@@ -668,6 +734,10 @@ class LLMMessageHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
+
+        # Native vision (v2 §4.7): eligibility resolved once per request, then
+        # threaded through every message construction below.
+        nativeVision = self._nativeVisionEnabled(chatSettings)
 
         mentionedMe = await self.checkEMMentionsMe(ensuredMessage)
         if mentionedMe.byName is None and mentionedMe.byNick is None:
@@ -753,6 +823,7 @@ class LLMMessageHandler(BaseBotHandler):
                                 format=llmMessageFormat,
                                 role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
                                 cache=self.cache if injectMemories else None,
+                                nativeImages=nativeVision,
                             ),
                         )
                     else:
@@ -774,6 +845,7 @@ class LLMMessageHandler(BaseBotHandler):
                                     format=llmMessageFormat,
                                     role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
                                     cache=self.cache if injectMemories else None,
+                                    nativeImages=nativeVision,
                                 ),
                             )
 
@@ -784,6 +856,7 @@ class LLMMessageHandler(BaseBotHandler):
                     format=llmMessageFormat,
                     role="user",
                     cache=self.cache if injectMemories else None,
+                    nativeImages=nativeVision,
                 ),
             )
 
@@ -831,6 +904,12 @@ class LLMMessageHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
+
+        # Native vision (v2 §4.7): eligibility resolved once per request, then
+        # threaded through every message construction below (both the request
+        # list and the direct-condense path).
+        nativeVision = self._nativeVisionEnabled(chatSettings)
+
         if answerProbability <= 0.0:
             # logger.debug(
             #    f"answerProbability is {answerProbability} "
@@ -864,7 +943,9 @@ class LLMMessageHandler(BaseBotHandler):
             maxTokensCoeff: float = 0.8
 
             if parentId is not None:
-                storedMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
+                storedMessages = await self.getThreadByMessageForLLM(
+                    ensuredMessage=ensuredMessage, nativeImages=nativeVision
+                )
                 # In case of condensing, keep message, last message is answer to
                 keepLastMessagesN += 1
                 # Append the random-answer context fragment to the leading system message.
@@ -917,6 +998,7 @@ class LLMMessageHandler(BaseBotHandler):
                         role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
                         cache=self.cache if injectMemories else None,
                         excludeMemoryIds=excludedMemoryIds,
+                        nativeImages=nativeVision,
                     )
                     contextMessages.extendleft(reversed(emittedMessages))
                     # Tag every emitted ModelMessage with its source row so the
@@ -967,6 +1049,7 @@ class LLMMessageHandler(BaseBotHandler):
                         format=llmMessageFormat,
                         cache=self.cache if injectMemories else None,
                         excludeMemoryIds=set(),
+                        nativeImages=nativeVision,
                     )
                 )
 

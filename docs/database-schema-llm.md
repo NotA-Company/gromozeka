@@ -5,15 +5,13 @@ category: reference
 # Database Schema Reference for LLMs
 
 ## Quick Reference
-
 **Database**: SQLite with multi-source support
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 29 (up to `migration_029`)
+**Migrations**: 31 (up to `migration_031`)
 
 ---
-
 ## Table Definitions
 
 ### chat_messages
@@ -188,6 +186,7 @@ CREATE TABLE media_attachments (
     status TEXT NOT NULL DEFAULT 'pending',
     mime_type TEXT,
     local_url TEXT,
+    vision_url TEXT,                     -- migration_030; StorageService key of normalized vision bytes
     prompt TEXT,
     description TEXT,
     created_at TIMESTAMP NOT NULL,
@@ -195,14 +194,15 @@ CREATE TABLE media_attachments (
 )
 ```
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262) — includes `vision_url: Optional[str]` (the key is present on every read: a present nullable column whose SQL NULL reads back as `None` until the native-vision store step writes it — not an optional/missing dict key).
 
 **STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **Note on `metadata`:** `migration_013` declares `metadata TEXT NOT NULL` (no `DEFAULT ''`) for cross-RDBMS portability — application code always supplies the value.
 
----
+**Note on `vision_url`:** Added by `migration_030` (nullable TEXT, no default) for the native-vision feature — the **bare** content key `{sha512}.{ext}` (sha512 over the normalized bytes; no app-layer prefix) of the content-deduplicated NORMALIZED image bytes in the **vision-scoped** StorageService instance (configured from the `[storage.storages.vision]` table — absent table = null backend, feature off; ADR-029), written at receipt time by `BaseBotHandler._storeVisionImage` when the chat's `native-vision` setting is on, read at construction time by `EnsuredMessage.toModelMessage(nativeImages=True)` (native-vision v2, ADR-028 — the v1 chat-time reader `LLMMessageHandler._applyNativeVision` was deleted). Distinct from `local_url` (ORIGINAL bytes via the default-scope store, e.g. resender). NULL = no vision bytes → the chat-time path degrades to the text `description` — that includes pre-split rows holding legacy `vision/{sha512}.{ext}` keys, unreadable at chat time by design (no migration, no dual-read — the scoped store uses bare keys and the old objects live in the old default store; a re-receipt with `native-vision` on self-heals such rows via the store-only DONE backfill, overwriting the stale key with a fresh bare one). Retention is enforced by the hourly vision TTL-GC (`HandlersManager._visionGcCronJob`; `bot.vision.ttl-days`, default 30, `0` disables — see [`llm/handlers.md`](llm/handlers.md) §9.7): rows with `vision_url IS NOT NULL AND updated_at` older than the cutoff get their stored file deleted (only when no live row still references the same content key — dedup hot-set guard) and `vision_url` cleared (`clearVisionUrl`); the reuse path's bare `updated_at` touch keeps actively re-received media alive, and cleared rows degrade to the description fallback and self-heal on re-receipt. See ADR-027 + ADR-028 + ADR-029 in [`llm/architecture.md`](llm/architecture.md) and the specs [`docs/design/native-vision-v2-construction-attach.md`](design/native-vision-v2-construction-attach.md) / [`docs/design/native-vision-design-v1.md`](design/native-vision-design-v1.md) / [`docs/design/scoped-storage-design-v1.md`](design/scoped-storage-design-v1.md) (scoped store).
 
+---
 ### user_data (DROPPED)
 
 Dropped in `migration_022` (superseded by [`user_memories`](#user_memories)). Historical rows were backfilled into `user_memories` by `migration_020`.
@@ -1012,7 +1012,6 @@ db.common.getSettings(
 ---
 
 ### Media Operations
-
 **Add Media Attachment**
 ```python
 db.mediaAttachments.addMediaAttachment(
@@ -1029,7 +1028,7 @@ db.mediaAttachments.addMediaAttachment(
     description: Optional[str] = None
 ) -> bool
 ```
-Note: **all parameters are keyword-only**, the default `status` is `MediaStatus.NEW` (not `PENDING`), and `fileId` is **required** (no default).
+Note: **all parameters are keyword-only**, the default `status` is `MediaStatus.NEW` (not `PENDING`), and `fileId` is **required** (no default). There is no `visionUrl` parameter — the vision key is written later, only by the native-vision receipt-time store.
 
 **Update Media Attachment (unified partial update)**
 ```python
@@ -1041,11 +1040,12 @@ db.mediaAttachments.updateMediaAttachment(
     metadata: Optional[str | Dict[str, Any]] = None,
     mimeType: Optional[str] = None,
     localUrl: Optional[str] = None,
+    visionUrl: Optional[str] = None,
     description: Optional[str] = None,
     prompt: Optional[str] = None
 ) -> bool
 ```
-Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist.
+Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist. The `visionUrl` kwarg writes `media_attachments.vision_url` (migration_030) — the StorageService key of the normalized image bytes, set only by the native-vision receipt-time store (`BaseBotHandler._storeVisionImage`); there is deliberately no way to clear it back to NULL from this method — the hourly vision TTL-GC owns clearing via the dedicated `clearVisionUrl` (below). A bare call with no fields (`updateMediaAttachment(mediaId=…)`) performs only the ride-along `updated_at` refresh — the reuse-path LRU touch that keeps actively re-received media alive for the TTL-GC (see [`llm/handlers.md`](llm/handlers.md) §9.7).
 
 **Get Media Attachment**
 ```python
@@ -1085,8 +1085,36 @@ db.mediaAttachments.ensureMediaInGroup(
 ```
 Idempotent upsert into `media_groups` (`ON CONFLICT DO NOTHING`).
 
----
+**Get Expired Vision Attachments With Retention (vision TTL-GC sweep input)**
+```python
+db.mediaAttachments.getExpiredVisionAttachmentsWithRetention(
+    cutoff: datetime.datetime,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[Tuple[List[MediaAttachmentDict], Set[str]]]
+```
+ONE combined snapshot statement — the expired rows AND their retention decisions from a single database evaluation point:
+```sql
+SELECT e.*, EXISTS(
+    SELECT 1 FROM media_attachments l
+    WHERE l.vision_url = e.vision_url AND l.updated_at >= :cutoff
+) AS retained
+FROM media_attachments e
+WHERE e.vision_url IS NOT NULL AND e.updated_at < :cutoff
+```
+Each expired row (`vision_url IS NOT NULL AND updated_at < cutoff`) is selected together with a per-row `retained` flag (does any live row, `updated_at >= cutoff`, share its key?); the repository strips the synthetic flag and returns `(expiredRows, retainedKeys)`. Content-addressed keys are shared across rows, so the GC may delete a stored file only when its key is absent from *retainedKeys*. **Three-valued contract**: populated tuple / `([], set())` (the query succeeded, genuinely nothing expired) / `None` (the query FAILED — the caller must abort the sweep; the sanctioned exception to this repository's empty-sentinel-on-error convention, because the only caller is a destructive garbage collector). **Snapshot consistency is the point of the single-statement shape**: expired-ness and retention are decided together in one consistent statement at a single evaluation point, so a mid-sweep re-receipt cannot strip a live row's shared-key protection. The destructive expired-side race existed only in an intermediate, never-shipped two-query refinement of this method (expired rows snapshot, then a separate retained-keys self-join — a concurrent lock-blind `updateMediaAttachment` refresh landing BETWEEN the queries could flip an expired row to live and drop a shared key's protection mid-sweep); the committed baseline fetched ALL live keys, which was immune to that race at the cost of scanning every live row. Served by the migration-031 index `idx_media_attachments_vision_url_updated_at (vision_url, updated_at)`.
 
+**Clear Vision URL (vision TTL-GC)**
+```python
+db.mediaAttachments.clearVisionUrl(
+    mediaId: str,
+    *,
+    dataSource: Optional[str] = None
+) -> bool
+```
+Sets `vision_url = NULL` with a ride-along `updated_at` refresh in one UPDATE — used by the hourly vision TTL-GC after the stored file is deleted (`HandlersManager._visionGcCronJob`; see [`llm/handlers.md`](llm/handlers.md) §9.7). Writes to the routed source with `readonly=False` (default source when no *dataSource* is given); a `mediaId` matching no row is not an error (`True`).
+
+---
 ### Spam Detection Operations
 
 `db.spam` (`SpamRepository`) only owns the **message-log** side of spam/ham training (rows in `spam_messages` / `ham_messages`). The Bayes-model statistics live in `bayes_tokens` / `bayes_classes` and are exposed through a **separate** class, `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) — see [Bayes Statistics Operations](#bayes-statistics-operations) below.

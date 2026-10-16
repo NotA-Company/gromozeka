@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-import pytest
-
 from internal.services.proxy.service import ProxyService
 from lib.proxy import ProxyConfig, ProxyConfigDict
 
@@ -117,7 +115,6 @@ class TestProxyService:
         svc.resolveProxy(serviceConfig, "test-svc")
         assert len(svc._activeLifecycles) == 1
 
-    @pytest.mark.asyncio
     async def test_dtCronJobDelegates(self):
         """_dtCronJob delegates to each lifecycle's onCronTick()."""
         svc = ProxyService.getInstance()
@@ -136,7 +133,6 @@ class TestProxyService:
         mockLifecycle1.onCronTick.assert_called_once()
         mockLifecycle2.onCronTick.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_dtCronJobStartsDeferred(self):
         """On first tick, deferred lifecycles get started."""
         svc = ProxyService.getInstance()
@@ -152,7 +148,6 @@ class TestProxyService:
 
         mockLifecycle.start.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_dtOnExitDelegates(self):
         """_dtOnExit delegates to each lifecycle's onExit() and clears registry."""
         svc = ProxyService.getInstance()

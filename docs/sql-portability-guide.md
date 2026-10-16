@@ -1031,6 +1031,14 @@ CREATE UNIQUE INDEX idx_table_column ON table(column)
 
 ---
 
+#### KNOWN LIMITATION: migration_031 index DDL is not executable on stock MySQL
+
+Migration 031 (`idx_media_attachments_vision_url_updated_at` on `media_attachments (vision_url, updated_at)`, backing the vision TTL-GC retention query) emits `CREATE INDEX IF NOT EXISTS` in `up()` and a standalone `DROP INDEX IF EXISTS` in `down()` (the migration_028 house precedent). **Neither form is valid on stock MySQL** — MySQL has no `CREATE INDEX IF NOT EXISTS`, and its `DROP INDEX` requires the table name (`DROP INDEX idx ON media_attachments`) with no `IF EXISTS` clause. Additionally, `vision_url` is a TEXT column, and MySQL refuses to index an unbounded TEXT column without a prefix length (e.g. `vision_url (191)`).
+
+This is accepted for now: SQLite (the only wired provider) executes both forms today. It **must be resolved before the MySQL provider is enabled**.
+
+**Resolution direction:** add provider-level index creation/removal hooks to `BaseSQLProvider` (the same pattern as `applyPagination` / `upsert`), implemented per dialect — SQLite keeps the current `IF [NOT] EXISTS` forms, MySQL gets an existence-probed create plus `DROP INDEX ... ON <table>` with a TEXT prefix length, PostgreSQL uses its native `IF [NOT] EXISTS`. A prefix index is safe here: the repository's retention probe matches full keys (`WHERE l.vision_url = e.vision_url`), so a truncated index prefix can only degrade lookup performance, never correctness.
+
 ### Issue #11: Transaction Isolation Levels
 
 **Severity**: Medium  

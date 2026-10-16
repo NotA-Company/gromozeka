@@ -361,7 +361,6 @@ def testOpenrouterModelGetModelId(openrouterModel: OpenrouterModel) -> None:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextSuccess(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -400,7 +399,6 @@ async def testOpenrouterGenerateTextSuccess(
     assert result.resultText == "The capital of France is Paris."
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextWithExtraHeaders(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -442,7 +440,6 @@ async def testOpenrouterGenerateTextWithExtraHeaders(
     assert "X-Title" in headers
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextRequestParameters(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -483,7 +480,6 @@ async def testOpenrouterGenerateTextRequestParameters(
     assert len(callKwargs["messages"]) == 2
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextWithDifferentModels(
     openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock
 ) -> None:
@@ -553,7 +549,6 @@ async def testOpenrouterGenerateTextWithDifferentModels(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextWithTools(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -614,7 +609,6 @@ async def testOpenrouterGenerateTextWithTools(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextApiError(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -634,7 +628,6 @@ async def testOpenrouterGenerateTextApiError(
         await openrouterModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextRateLimitError(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -660,7 +653,6 @@ async def testOpenrouterGenerateTextRateLimitError(
         await openrouterModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextAuthenticationError(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -691,7 +683,6 @@ async def testOpenrouterGenerateTextAuthenticationError(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testOpenrouterFullWorkflow(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
     """Test full workflow with OpenRouter provider.
 
@@ -861,7 +852,6 @@ def testOpenrouterModelWithCustomExtraConfig(openrouterProvider: OpenrouterProvi
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextEmptyResponse(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -898,7 +888,6 @@ async def testOpenrouterGenerateTextEmptyResponse(
     assert result.resultText == ""
 
 
-@pytest.mark.asyncio
 async def testOpenrouterGenerateTextNullContent(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -974,7 +963,6 @@ _OPENROUTER_SAMPLE_SCHEMA: Dict[str, Any] = {
 }
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredHappyPath(
     openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
