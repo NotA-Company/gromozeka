@@ -11,6 +11,7 @@ The module integrates with LLM services to provide AI-powered media
 generation and analysis capabilities with fallback support.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Union
 
@@ -530,11 +531,16 @@ class MediaHandler(BaseBotHandler):
             # (normalizeVisionImage) — best-effort here: on any normalization failure the original bytes are
             # sent (the vision STORE uses the strict fail-closed variant; this one-shot command must never
             # block analysis). Nothing is stored and no vision_url is written.
-            normalizedBytes, _normalizedMime = normalizeVisionImage(
+            # CPU-bound decode/resize/encode runs in a worker thread (``asyncio.to_thread`` — the
+            # repo-standard offload) so a large image/album cannot stall unrelated chats between
+            # per-item LLM calls.
+            normalizedBytes, _normalizedMime = await asyncio.to_thread(
+                normalizeVisionImage,
                 bytes(mediaData),
                 maxDimension=self._visionMaxImageDimension,
                 outputFormat=self._visionImageFormat,
                 quality=self._visionImageQuality,
+                alphaBackground=self._visionAlphaBackground,
             )
 
             reqMessages = [

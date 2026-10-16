@@ -189,6 +189,7 @@ visionStorage.injectConfig(configManager, scope=StorageScope.VISION)  # vision s
 ```
 
 **Raises:**
+- ValueError: If the scope passed to injectConfig does not match the scope this instance was constructed for (production code path) — raised before any state change, so the backend is never silently redirected to another scope's storage
 - StorageConfigError: If configuration is invalid or backend creation fails (an absent NAMED table does not raise — it resolves to the null backend)
 
 #### store(key: str, data: bytes) -> None

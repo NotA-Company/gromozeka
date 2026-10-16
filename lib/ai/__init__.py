@@ -50,10 +50,11 @@ Exports:
     ModelRunResult: Model for model run results
     ModelStructuredResult: Model for structured-output model run results
     VisionOutputImageFormat: Enum of normalized vision output formats (JPEG/PNG)
+    AlphaBackground: Enum of alpha-flattening backgrounds (adaptive/white/black)
 """
 
 from .abstract import AbstractLLMProvider, AbstractModel
-from .imaging import VisionOutputImageFormat
+from .imaging import AlphaBackground, VisionOutputImageFormat
 from .manager import LLMManager
 from .models import (
     LLMAbstractTool,
@@ -86,4 +87,5 @@ __all__ = [
     "ModelRunResult",
     "ModelStructuredResult",
     "VisionOutputImageFormat",
+    "AlphaBackground",
 ]

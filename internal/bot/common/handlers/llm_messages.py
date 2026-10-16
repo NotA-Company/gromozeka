@@ -146,8 +146,8 @@ class LLMMessageHandler(BaseBotHandler):
                 ``NATIVE_VISION`` flag and both model keys are read from here.
 
         Returns:
-            bool: True when stored image bytes may be attached at construction
-                time for this request.
+            True when stored image bytes may be attached at construction
+            time for this request.
         """
         if not chatSettings[ChatSettingsKey.NATIVE_VISION].toBool():
             return False

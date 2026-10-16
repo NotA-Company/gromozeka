@@ -598,7 +598,7 @@ class TestRandomContextReadSite:
 
 
 # ---------------------------------------------------------------------------
-# Native-vision v2 Phase B: construction-time image attach (opt-in, unwired)
+# Native-vision v2: construction-time image attach (Phase B, wired by Phase C)
 # ---------------------------------------------------------------------------
 
 
@@ -672,17 +672,20 @@ def _makeDb(rows: Dict[str, Dict[str, object]]) -> Mock:
 
 
 class TestNativeVisionConstructionAttach:
-    """Phase B: opt-in construction attach on :meth:`EnsuredMessage.toModelMessage`.
+    """Construction attach on :meth:`EnsuredMessage.toModelMessage` (§4.3).
 
-    Nothing in production passes ``nativeImages=True`` yet (Phase C owns the
-    wiring); these tests drive the flag directly. Covering: the §4.3
-    skip/partial/plain sequencing (bytes BEFORE render), the ghost rule, the
-    never-raise boundary around the vision attempt, the §4.2
-    ``skipMediaDescription`` render (both branches, incl. the TEXT-branch
-    pre-populated-attribute trap), and the §4.4 at-most-once lazy resolver.
+    Wired by Phase C: the LLM message handler resolves the per-chat
+    ``NATIVE_VISION`` chat setting and passes it as ``nativeImages`` through
+    ``getThreadByMessageForLLM`` into every ``toModelMessage`` call; these
+    tests drive the flag directly. Covering: the §4.3 skip/partial/plain
+    sequencing (bytes BEFORE render), the ghost rule, the never-raise
+    boundary around the vision attempt, the §4.2 ``skipMediaDescription``
+    render (both branches, incl. the TEXT-branch pre-populated-attribute
+    trap), the §4.4 at-most-once lazy resolver, and the partial-album
+    fallback carrying ALL per-media descriptions.
     """
 
-    async def test_constructionHappyPath_allBytesAttach_skipDescription(self) -> None:
+    async def testConstructionHappyPathAllBytesAttachSkipDescription(self) -> None:
         """All bytes load -> ModelImagesMessage, no description rendered, no wait.
 
         Returns:
@@ -718,7 +721,7 @@ class TestNativeVisionConstructionAttach:
         storage.get.assert_has_calls([call("vision/media-1.jpg"), call("vision/media-2.jpg")])
         assert storage.get.call_count == 2
 
-    async def test_constructionHappyPath_textFormat_noPrependDespitePopulatedAttribute(self) -> None:
+    async def testConstructionHappyPathTextFormatNoPrependDespitePopulatedAttribute(self) -> None:
         """TEXT skip path: no `<media-description>` prepend even with mediaContent populated.
 
         The §4.2 trap: ``self.mediaContent`` is pre-populated ("a red square");
@@ -747,7 +750,7 @@ class TestNativeVisionConstructionAttach:
         assert result.content == "look at these"
         assert "<media-description>" not in result.content
 
-    async def test_formatForLLMSkipDescription_jsonOmitsKeyAndSkipsWait(self) -> None:
+    async def testFormatForLLMSkipDescriptionJsonOmitsKeyAndSkipsWait(self) -> None:
         """``skipMediaDescription=True`` drops the JSON key and skips the wait.
 
         Returns:
@@ -766,7 +769,7 @@ class TestNativeVisionConstructionAttach:
         assert "mediaDescription" not in json.loads(skipped)
         assert json.loads(default)["mediaDescription"] == "a red square"
 
-    async def test_formatForLLMSkipDescription_textTrap_prePopulatedAttribute(self) -> None:
+    async def testFormatForLLMSkipDescriptionTextTrapPrePopulatedAttribute(self) -> None:
         """Direct TEXT render with skip: no prepend despite populated mediaContent.
 
         Regression for the §4.2 trap at the ``formatForLLM`` level: the guard
@@ -784,7 +787,7 @@ class TestNativeVisionConstructionAttach:
         assert skipped == "look at these"
         assert control == "<media-description>a red square</media-description>\n\nlook at these"
 
-    async def test_bytesMiss_fallsBackToPlainMessageWithDescriptionAndWait(self) -> None:
+    async def testBytesMissFallsBackToPlainMessageWithDescriptionAndWait(self) -> None:
         """Storage misses every url -> plain ModelMessage WITH description and the wait.
 
         Returns:
@@ -816,8 +819,13 @@ class TestNativeVisionConstructionAttach:
         # The bytes load was still attempted before falling back.
         assert storage.get.call_count == 2
 
-    async def test_partialAlbum_attachSubsetWithDescription_noResolver(self) -> None:
-        """Partially loaded album: subset attached ALONGSIDE the description; no resolver.
+    async def testPartialAlbumAttachSubsetWithDescriptionWithoutResolver(self) -> None:
+        """Partially loaded album: subset attached ALONGSIDE ALL descriptions; no resolver.
+
+        Regression (partial-album fallback): the unattached media's
+        description must survive in the render — the primary-only
+        ``useSingleMedia`` selection silently dropped "a blue circle" from
+        model context with no resolver to recover it.
 
         Returns:
             None
@@ -836,15 +844,25 @@ class TestNativeVisionConstructionAttach:
             patch.object(EnsuredMessage, "updateMediaContent", new=AsyncMock()),
         ):
             result = await msg.toModelMessage(db, cache=None, nativeImages=True)
+            textResult = await msg.toModelMessage(db, format=LLMMessageFormat.TEXT, cache=None, nativeImages=True)
 
         assert type(result) is ModelImagesMessage
         assert result.images == [bytearray(b"IMG")]
+        # BOTH descriptions render — not just the attached (primary) media's.
         parsed = json.loads(result.content)
-        assert parsed["mediaDescription"] == "a red square"
+        assert parsed["mediaDescription"] == ["a red square", "a blue circle"]
+        assert "a blue circle" in result.content
+        # Same contract on the TEXT rendering: one tag per media.
+        assert textResult.content == (
+            "<media-description>a red square</media-description>\n"
+            "<media-description>a blue circle</media-description>\n"
+            "\n"
+            "look at these"
+        )
         # Envelope already carries the descriptions — no resolver needed.
         assert result.descriptionResolver is None
 
-    async def test_ghostMedia_doesNotBlockSkip(self) -> None:
+    async def testGhostMediaDoesNotBlockSkip(self) -> None:
         """A row-less (ghost) entry never blocks the skip path.
 
         Returns:
@@ -866,7 +884,7 @@ class TestNativeVisionConstructionAttach:
         updateMediaContentMock.assert_not_awaited()
         assert result.descriptionResolver is not None
 
-    async def test_neverRaises_dbFetchFailure_fallsBackToDescriptionPath(self) -> None:
+    async def testNeverRaisesDbFetchFailureFallsBackToDescriptionPath(self) -> None:
         """A DB fetch exception inside the vision attempt degrades to the description path.
 
         Returns:
@@ -897,7 +915,7 @@ class TestNativeVisionConstructionAttach:
         # the boundary swallowed it.
         storage.get.assert_not_called()
 
-    async def test_neverRaises_storageGetFailure_fallsBackToDescriptionPath(self) -> None:
+    async def testNeverRaisesStorageGetFailureFallsBackToDescriptionPath(self) -> None:
         """A storage.get exception degrades to the description path.
 
         Returns:
@@ -921,7 +939,7 @@ class TestNativeVisionConstructionAttach:
         assert type(result) is ModelMessage
         assert json.loads(result.content)["mediaDescription"] == "a red square"
 
-    async def test_neverRaises_storageUninitialized_fallsBackToDescriptionPath(self) -> None:
+    async def testNeverRaisesStorageUninitializedFallsBackToDescriptionPath(self) -> None:
         """An uninitialized StorageService (StorageConfigError) degrades to the description path.
 
         Returns:
@@ -945,7 +963,7 @@ class TestNativeVisionConstructionAttach:
         assert type(result) is ModelMessage
         assert json.loads(result.content)["mediaDescription"] == "a red square"
 
-    async def test_defaultFalse_nativeImagesAbsent_byteIdenticalAndNoLoad(self) -> None:
+    async def testDefaultFalseNativeImagesAbsentByteIdenticalAndNoLoad(self) -> None:
         """Default call: today's exact render; the vision load is never attempted.
 
         Returns:
@@ -983,7 +1001,7 @@ class TestNativeVisionConstructionAttach:
         assert result.content == expectedRender
         assert result.content == directRender
 
-    async def test_resolver_atMostOnce_joinsDescriptions(self) -> None:
+    async def testResolverAtMostOnceJoinsDescriptions(self) -> None:
         """The resolver joins descriptions, awaits the wait once, and caches.
 
         Returns:
@@ -1014,7 +1032,7 @@ class TestNativeVisionConstructionAttach:
             updateMediaContentMock.assert_awaited_once()
             assert second == "a red square\na blue circle"
 
-    async def test_resolver_emptyDescriptions_resolvesNone(self) -> None:
+    async def testResolverEmptyDescriptionsResolvesNone(self) -> None:
         """The §4.4 empty branch: no descriptions anywhere resolves to None.
 
         Returns:
@@ -1043,7 +1061,7 @@ class TestNativeVisionConstructionAttach:
         assert resolved is None
         updateMediaContentMock.assert_awaited_once()
 
-    async def test_resolver_swallowsUpdateMediaContentException(self) -> None:
+    async def testResolverSwallowsUpdateMediaContentException(self) -> None:
         """The resolver never raises: a failed wait resolves to None.
 
         Returns:
@@ -1072,7 +1090,7 @@ class TestNativeVisionConstructionAttach:
         assert resolved is None
         updateMediaContentMock.assert_awaited_once()
 
-    async def test_toModelMessageList_forwardsNativeImages(self) -> None:
+    async def testToModelMessageListForwardsNativeImages(self) -> None:
         """``toModelMessageList`` forwards ``nativeImages`` 1:1 to the main message.
 
         Returns:
@@ -1139,7 +1157,7 @@ class TestFormatForLLMTextMediaTags:
     today's exact byte layout.
     """
 
-    async def test_maxShapeIngest_tagPerMediaInOrder_noListRepr(self) -> None:
+    async def testMaxShapeIngestTagPerMediaInOrderNoListRepr(self) -> None:
         """List local + useSingleMedia=False → one tag per media, order preserved.
 
         The Max ingest shape (attribute None, described entries): previously
@@ -1163,7 +1181,7 @@ class TestFormatForLLMTextMediaTags:
         )
         assert result == expected
 
-    async def test_telegramShapeIngest_tagPerMediaInOrder_noListRepr(self) -> None:
+    async def testTelegramShapeIngestTagPerMediaInOrderNoListRepr(self) -> None:
         """Populated attribute + useSingleMedia=False → the list local renders.
 
         The Telegram ingest shape (attribute populated with the first media's
@@ -1191,7 +1209,7 @@ class TestFormatForLLMTextMediaTags:
         )
         assert result == expected
 
-    async def test_maxShapeUseSingleMedia_tagsRenderWherePreviouslyNothing(self) -> None:
+    async def testMaxShapeUseSingleMediaTagsRenderWherePreviouslyNothing(self) -> None:
         """Attribute None + described entries + useSingleMedia=True → tags render.
 
         The previously-invisible case (e.g. Max assistant-role / partial-path
@@ -1215,7 +1233,7 @@ class TestFormatForLLMTextMediaTags:
         )
         assert result == expected
 
-    async def test_singleStringAttribute_singleTagByteLayout(self) -> None:
+    async def testSingleStringAttributeSingleTagByteLayout(self) -> None:
         """String local → exactly one tag with today's clean ``\\n\\n`` layout.
 
         The useSingleMedia render with the attribute populated: the local IS
@@ -1233,7 +1251,7 @@ class TestFormatForLLMTextMediaTags:
 
         assert result == "<media-description>a red square</media-description>\n\nhello"
 
-    async def test_emptyList_noTags(self) -> None:
+    async def testEmptyListNoTags(self) -> None:
         """Entries with no descriptions → empty list local → no tags at all.
 
         Returns:
@@ -1249,7 +1267,7 @@ class TestFormatForLLMTextMediaTags:
         assert result == "hello"
         assert "<media-description>" not in result
 
-    async def test_multilineDescriptions_tagBoundariesUnambiguous(self) -> None:
+    async def testMultilineDescriptionsTagBoundariesUnambiguous(self) -> None:
         """Multiline descriptions stay inside their own tags — no joined text.
 
         Each description carries embedded newlines; the tag-per-media render

@@ -112,7 +112,10 @@ def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
     for message in messages:
         if message.source is None:
             messageCount += 1
-            logger.warning(f"Message {message} has no source, skipping")
+            # toLogMessage() instead of str(): str() chains to toDict(),
+            # which materializes full base64 image payloads for
+            # ModelImagesMessage — at WARNING, visible with DEBUG disabled.
+            logger.warning(f"Message {message.toLogMessage()} has no source, skipping")
         elif isinstance(message.source, EnsuredMessage):
             messageCount += 1
             messageIdList.append(message.source.messageId)
@@ -133,7 +136,10 @@ def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
             else:
                 messageCount += 1
         else:
-            logger.warning(f"Message {message} has unknown source type: {type(message.source)}, skipping")
+            # Same payload-safety treatment as the no-source warning above.
+            logger.warning(
+                f"Message {message.toLogMessage()} has unknown source type: {type(message.source)}, skipping"
+            )
             messageCount += 1
 
     if messageIdList:
@@ -176,7 +182,7 @@ def _contentCarriesMediaDescription(content: str) -> bool:
         content: The message text as serialized for the LLM.
 
     Returns:
-        bool: True when a media description marker is present in the text.
+        True when a media description marker is present in the text.
     """
     return '"mediaDescription"' in content or "<media-description>" in content
 
@@ -213,10 +219,10 @@ async def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
         message: The body message crossing into the condensing model.
 
     Returns:
-        ModelMessage: The same instance for plain messages, or a new plain
-            :class:`ModelMessage` carrying the same envelope (plus the
-            resolved media description, or the omission marker when nothing
-            resolves) without images and without a resolver.
+        The same instance for plain messages, or a new plain
+        :class:`ModelMessage` carrying the same envelope (plus the
+        resolved media description, or the omission marker when nothing
+        resolves) without images and without a resolver.
     """
     if not isinstance(message, ModelImagesMessage):
         return message
@@ -248,6 +254,34 @@ async def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
         weight=message.weight,
         source=message.source,
     )
+
+
+def _messagesToLogString(messages: Sequence[ModelMessage]) -> str:
+    """Render messages as a multi-line, payload-safe string for logging.
+
+    Image-bearing messages embed full base64 payloads and their ``repr()``
+    chain (``__repr__`` → ``__str__`` → ``toDict()``) would materialize
+    every data URI; those use the truncated
+    :meth:`ModelMessage.toLogMessage` view instead (image URLs collapsed to
+    a short preview plus byte count). Plain messages keep the existing
+    ``repr()`` format. Call sites must guard invocation with
+    ``logger.isEnabledFor(logging.DEBUG)`` so the rendering cost is paid
+    only when the dump can actually be emitted.
+
+    Args:
+        messages: The messages to render.
+
+    Returns:
+        A multi-line string with one tab-indented entry per message; every
+        image payload is replaced by a truncated preview.
+    """
+    lines = ""
+    for msg in messages:
+        if isinstance(msg, ModelImagesMessage):
+            lines += f"\t{msg.toLogMessage()}\n"
+        else:
+            lines += f"\t{repr(msg)}\n"
+    return lines
 
 
 class LLMService:
@@ -1317,11 +1351,17 @@ class LLMService:
         if not force and (retHTokens + retTTokens + bodyTokens < maxTokens):
             return (messages, coverage)
 
-        logger.debug(
-            f"Condensing context for {messages} to {maxTokens} tokens "
-            f"(current: {retHTokens} + {bodyTokens} + {retTTokens} = "
-            f"{retHTokens + bodyTokens + retTTokens})"
-        )
+        # Image-bearing messages embed full base64 payloads and repr()
+        # (-> __str__ -> toDict()) would materialize every data URI even
+        # with logging disabled — build the dump ONLY when DEBUG logging is
+        # enabled, and use the truncated log view for image-bearing entries.
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Condensing context for List[\n{_messagesToLogString(messages)}] "
+                f"({messagesCount} messages) to {maxTokens} tokens "
+                f"(current: {retHTokens} + {bodyTokens} + {retTTokens} = "
+                f"{retHTokens + bodyTokens + retTTokens})"
+            )
 
         if condensingModel is None:
             # No condensing model provided, just truncate beginning of body
@@ -1335,7 +1375,8 @@ class LLMService:
             ret.extend(body)
             ret.extend(retTail)
 
-            logger.debug(f"Condensed context: {ret}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Condensed context: List[\n{_messagesToLogString(ret)}]")
             return (ret, coverage)
 
         # Image-bearing body messages cross into the condenser as-is ONLY
@@ -1409,7 +1450,11 @@ class LLMService:
             tokensCount = condensingModel.getEstimateTokensCount([v.toDict() for v in reqMessages])
             if tokensCount > summaryMaxTokens:
                 if currentBatchLen == 1:
-                    logger.error(f"Error while running LLM for message {body[startPos]}")
+                    # The message alone overflows the condenser context; log
+                    # identifying info plus a truncated preview only —
+                    # repr()/str() would emit the full base64 payload of an
+                    # image message at production log levels.
+                    logger.error(f"Error while running LLM for message {body[startPos].toLogMessage()}")
                     startPos += 1
                     continue
                 currentBatchLen = int(currentBatchLen // (tokensCount / summaryMaxTokens))
@@ -1420,7 +1465,8 @@ class LLMService:
 
             mlRet: Optional[ModelRunResult] = None
             try:
-                logger.debug(f"LLM Request messages: {reqMessages}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"LLM Request messages: List[\n{_messagesToLogString(reqMessages)}]")
                 mlRet = await condensingModel.generateText(reqMessages, consumerId=consumerId, sessionId=sessionId)
                 logger.debug(f"LLM Response: {mlRet}")
             except Exception as e:
@@ -1442,7 +1488,8 @@ class LLMService:
         ret.extend(retHead)
         ret.extend(newBody)
         ret.extend(retTail)
-        logger.debug(f"Condensed context: {ret}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Condensed context: List[\n{_messagesToLogString(ret)}]")
         return (ret, coverage)
 
     async def generateText(

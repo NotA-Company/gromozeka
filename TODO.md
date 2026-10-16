@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Vision storage: offload blocking network I/O off the asyncio event loop (user decision: big work, later). `StorageService` backends make synchronous boto3 calls (`exists`/`store`/`get`/`delete`) reached from async code at `EnsuredMessage._loadNativeVisionImages` (chat-time `get`), `BaseBotHandler._storeVisionImage` (receipt-time `exists`/`store`), and `HandlersManager._visionGcCronJob` (hourly `delete` + existence probes, repeated under the shared lock). Direction: `asyncio.to_thread` offload (the repo-standard mechanism per docs/llm/tasks.md §3 — image normalization already offloaded this way) or an async storage adapter; MUST preserve `visionStorageLock` coordination, store-before-publish ordering, and fail-soft boundaries; needs slow-backend responsiveness regressions (an independent event-loop task keeps progressing during storage ops). CPU-bound normalization is already offloaded — this item is the network-I/O remainder.
 - [ ] just like `VisionConfigDict` - add typed-dicts for other configs
 - [ ] send-sticker tool: semantic-search by description
 - [ ] llm-call: retry on timeout (up to X times, do not reject just cal again)

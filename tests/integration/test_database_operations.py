@@ -108,7 +108,6 @@ async def populatedDb(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testTransactionCommitOnSuccess(inMemoryDb):
     """Test transaction commits on success"""
     db = inMemoryDb
@@ -127,7 +126,6 @@ async def testTransactionCommitOnSuccess(inMemoryDb):
     assert user["username"] == "test"
 
 
-@pytest.mark.asyncio
 async def testTransactionRollbackOnError(inMemoryDb):
     """Test transaction rollback on error"""
     db = inMemoryDb
@@ -149,7 +147,6 @@ async def testTransactionRollbackOnError(inMemoryDb):
     assert chatInfo["title"] == "Test"
 
 
-@pytest.mark.asyncio
 async def testNestedTransactions(inMemoryDb):
     """Test nested transaction handling"""
     db = inMemoryDb
@@ -169,7 +166,6 @@ async def testNestedTransactions(inMemoryDb):
     assert setting == "gpt-4"
 
 
-@pytest.mark.asyncio
 async def testConcurrentTransactions(inMemoryDb):
     """Test concurrent transaction handling"""
     db = inMemoryDb
@@ -206,7 +202,6 @@ async def testConcurrentTransactions(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testForeignKeyConstraints(inMemoryDb):
     """Test foreign key constraints"""
     db = inMemoryDb
@@ -227,7 +222,6 @@ async def testForeignKeyConstraints(inMemoryDb):
     assert success is False or await db.chatMessages.getChatMessageByMessageId(123, 1) is None
 
 
-@pytest.mark.asyncio
 async def testUniqueConstraints(inMemoryDb):
     """Test unique constraints"""
     db = inMemoryDb
@@ -247,7 +241,6 @@ async def testUniqueConstraints(inMemoryDb):
     assert chatInfo["title"] == "Updated"
 
 
-@pytest.mark.asyncio
 async def testNotNullConstraints(inMemoryDb):
     """Test NOT NULL constraints"""
     db = inMemoryDb
@@ -261,7 +254,6 @@ async def testNotNullConstraints(inMemoryDb):
         pass  # Expected error
 
 
-@pytest.mark.asyncio
 async def testDataValidation(inMemoryDb):
     """Test data validation in wrapper methods"""
     db = inMemoryDb
@@ -295,7 +287,6 @@ async def testDataValidation(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testMultipleReaders(threadSafeDb):
     """Test multiple concurrent read operations
 
@@ -323,7 +314,6 @@ async def testMultipleReaders(threadSafeDb):
     assert all(r["chat_id"] == 123 for r in results)
 
 
-@pytest.mark.asyncio
 async def testMultipleWriters(threadSafeDb):
     """Test multiple concurrent write operations
 
@@ -360,7 +350,6 @@ async def testMultipleWriters(threadSafeDb):
     assert len(users) == 10
 
 
-@pytest.mark.asyncio
 async def testReadWriteConflicts(threadSafeDb):
     """Test read-write conflict handling
 
@@ -397,7 +386,6 @@ async def testReadWriteConflicts(threadSafeDb):
     assert all(w is True for w in writeResults)
 
 
-@pytest.mark.asyncio
 async def testDeadlockHandling(inMemoryDb):
     """Test deadlock handling"""
     db = inMemoryDb
@@ -428,7 +416,6 @@ async def testDeadlockHandling(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testSchemaCreation(inMemoryDb):
     """Test schema creation through migrations"""
     db = inMemoryDb
@@ -462,7 +449,6 @@ async def testSchemaCreation(inMemoryDb):
         assert table in tables, f"Table {table} not found"
 
 
-@pytest.mark.asyncio
 async def testSchemaUpdates(inMemoryDb):
     """Test schema updates through migrations"""
     db = inMemoryDb
@@ -483,7 +469,6 @@ async def testSchemaUpdates(inMemoryDb):
     # Note: is_spammer column was removed in migration 009
 
 
-@pytest.mark.asyncio
 async def testDataMigration(inMemoryDb):
     """Test data migration scenarios"""
     db = inMemoryDb
@@ -506,7 +491,6 @@ async def testDataMigration(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testJoinsAcrossTables(populatedDb):
     """Test joins across multiple tables"""
     db = populatedDb
@@ -524,7 +508,6 @@ async def testJoinsAcrossTables(populatedDb):
     assert messages[0]["full_name"] in ["User One", "User Two"]
 
 
-@pytest.mark.asyncio
 async def testAggregations(populatedDb):
     """Test aggregation queries"""
     db = populatedDb
@@ -546,7 +529,6 @@ async def testAggregations(populatedDb):
     assert user["messages_count"] == 10
 
 
-@pytest.mark.asyncio
 async def testFilteringAndSorting(populatedDb):
     """Test filtering and sorting in queries"""
     db = populatedDb
@@ -584,7 +566,6 @@ async def testFilteringAndSorting(populatedDb):
     assert userMessages[1]["message_id"].asInt() == 1
 
 
-@pytest.mark.asyncio
 async def testPagination(populatedDb):
     """Test pagination in queries"""
     db = populatedDb
@@ -619,7 +600,6 @@ async def testPagination(populatedDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testChatMessagesCrud(populatedDb):
     """Test CRUD operations for chat messages"""
     db = populatedDb
@@ -660,7 +640,6 @@ async def testChatMessagesCrud(populatedDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testChatUsersCrud(inMemoryDb):
     """Test CRUD operations for chat users"""
     db = inMemoryDb
@@ -706,7 +685,6 @@ async def testChatUsersCrud(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testChatSettingsCrud(inMemoryDb):
     """Test CRUD operations for chat settings"""
     db = inMemoryDb
@@ -761,7 +739,6 @@ async def testChatSettingsCrud(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testDelayedTasksCrud(inMemoryDb):
     """Test CRUD operations for delayed tasks"""
     db = inMemoryDb
@@ -796,7 +773,6 @@ async def testDelayedTasksCrud(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testSpamHamMessagesCrud(inMemoryDb):
     """Test CRUD operations for spam/ham messages"""
     db = inMemoryDb
@@ -852,7 +828,6 @@ async def testSpamHamMessagesCrud(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testCacheOperationsCrud(inMemoryDb):
     """Test CRUD operations for cache using GenericDatabaseCache."""
     db = inMemoryDb
@@ -907,7 +882,6 @@ async def testCacheOperationsCrud(inMemoryDb):
     assert await cache.get("key2") is not None
 
 
-@pytest.mark.asyncio
 async def testCacheStorageOperations(inMemoryDb):
     """Test cache storage operations"""
     db = inMemoryDb
@@ -942,7 +916,6 @@ async def testCacheStorageOperations(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testCompleteMessageWorkflow(populatedDb):
     """Test complete message workflow with all related operations"""
     db = populatedDb
@@ -984,7 +957,6 @@ async def testCompleteMessageWorkflow(populatedDb):
     assert user["messages_count"] >= 1
 
 
-@pytest.mark.asyncio
 async def testConversationThreadWorkflow(populatedDb):
     """Test conversation thread workflow"""
     db = populatedDb
@@ -1027,7 +999,6 @@ async def testConversationThreadWorkflow(populatedDb):
     assert thread[1]["message_id"].asInt() == 3
 
 
-@pytest.mark.asyncio
 async def testSummarizationCacheWorkflow(populatedDb):
     """Test summarization cache workflow"""
     db = populatedDb
@@ -1071,7 +1042,6 @@ async def testSummarizationCacheWorkflow(populatedDb):
     assert cached["summary"] == newSummary
 
 
-@pytest.mark.asyncio
 async def testChatTopicsWorkflow(inMemoryDb):
     """Test chat topics workflow"""
     db = inMemoryDb
@@ -1098,7 +1068,6 @@ async def testChatTopicsWorkflow(inMemoryDb):
     assert topic["icon_color"] == 0x0000FF
 
 
-@pytest.mark.asyncio
 async def testGlobalSettingsWorkflow(inMemoryDb):
     """Test global settings workflow"""
     db = inMemoryDb
@@ -1126,7 +1095,6 @@ async def testGlobalSettingsWorkflow(inMemoryDb):
     assert value == "default_value"
 
 
-@pytest.mark.asyncio
 async def testUserChatRelationships(populatedDb):
     """Test user-chat relationship queries"""
     db = populatedDb
@@ -1155,7 +1123,6 @@ async def testUserChatRelationships(populatedDb):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testErrorHandlingInvalidData(inMemoryDb):
     """Test error handling with invalid data"""
     db = inMemoryDb
@@ -1177,7 +1144,6 @@ async def testErrorHandlingInvalidData(inMemoryDb):
     assert setting is None
 
 
-@pytest.mark.asyncio
 async def testRecoveryAfterError(inMemoryDb):
     """Test database recovery after error"""
     db = inMemoryDb
@@ -1201,7 +1167,6 @@ async def testRecoveryAfterError(inMemoryDb):
     assert success is True
 
 
-@pytest.mark.asyncio
 async def testEmptyResultHandling(populatedDb):
     """Test handling of empty results"""
     db = populatedDb

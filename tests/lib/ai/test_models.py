@@ -17,6 +17,10 @@ Covers:
   text block + one image_url block per image in list order, empty content
   omitting the text part, per-image format conversion, self.images never
   mutated, and identical consecutive serialisations.
+- ModelImagesMessage.toDict (alpha compositing): ``alphaBackground`` threads
+  through to ``convertImageIfNeeded`` — pure parameter threading (lib/ stays
+  free of bot deps; config-aware internal callers pass it in a later phase,
+  lib-internal callers keep the ADAPTIVE default).
 
 Image-manipulation coverage (convertImageIfNeeded, normalizeVisionImage,
 normalizeVisionImageStrict, VisionOutputImageFormat, _stripJpegExif) lives in
@@ -30,6 +34,7 @@ from typing import Optional, Tuple
 import pytest
 from PIL import Image
 
+from lib.ai.imaging import AlphaBackground
 from lib.ai.models import (
     ModelImagesMessage,
     ModelMessage,
@@ -676,6 +681,58 @@ class TestModelImagesMessage:
         assert first == second
 
 
+class TestModelImagesMessageImagesDefaultIsolation:
+    """Regression: ``images`` must never be a shared mutable default.
+
+    The constructor used to declare ``images: List[bytearray] = []`` — a
+    single list object created once at function-definition time and aliased
+    by EVERY message constructed without an explicit ``images``. Appending
+    an image to one such message silently made every other one serialize it
+    too (potential cross-conversation image disclosure).
+    """
+
+    def testDefaultConstructedMessagesDoNotShareImagesList(self) -> None:
+        """Two messages built without ``images`` each own a fresh empty list.
+
+        Must fail for an implementation whose default is a shared
+        function-definition-time list: independent messages would alias one
+        list, so appending to one leaks into the other's serialization.
+
+        Returns:
+            None
+        """
+        first = ModelImagesMessage(role="user", content="first")
+        second = ModelImagesMessage(role="user", content="second")
+
+        assert first.images == []
+        assert second.images == []
+        assert first.images is not second.images
+
+        first.images.append(bytearray(b"FIRST-ONLY-IMAGE"))
+
+        assert second.images == []
+        assert [bytes(image) for image in first.images] == [b"FIRST-ONLY-IMAGE"]
+
+    def testExplicitImagesListIsCopiedNotAliased(self) -> None:
+        """A caller-passed list is copied; later caller mutation is invisible.
+
+        The message owns its list: post-construction mutation of the
+        caller's list must not change what the message serializes.
+
+        Returns:
+            None
+        """
+        callerList = [bytearray(b"KEEP")]
+        message = ModelImagesMessage(role="user", content="snapshot", images=callerList)
+
+        assert message.images == callerList
+        assert message.images is not callerList
+
+        callerList.append(bytearray(b"APPENDED-AFTER-CONSTRUCTION"))
+
+        assert [bytes(image) for image in message.images] == [b"KEEP"]
+
+
 async def _resolveDescription() -> Optional[str]:
     """Fixed-description async resolver stub for descriptionResolver tests.
 
@@ -800,3 +857,76 @@ class TestModelMessageDescriptionResolver:
         assert message.source is source
         assert message.descriptionResolver is resolver
         assert message.images == [bytearray(b"1"), bytearray(b"2")]
+
+
+# ============================================================================
+# ModelImagesMessage.toDict — alphaBackground threading (alpha compositing)
+# ============================================================================
+
+
+def _whiteContentOnTransparentPngBytes() -> bytes:
+    """Return a 32x32 RGBA PNG: white content square on fully transparent margins.
+
+    The RGB under the transparent margins is white too — the shape real
+    white-on-transparent stickers have — so the old alpha-DISCARD convert
+    rendered the whole image white/garbage instead of compositing.
+
+    Returns:
+        bytes of an RGBA PNG-encoded image.
+    """
+    img = Image.new("RGBA", (32, 32), (255, 255, 255, 0))
+    content = Image.new("RGBA", (12, 12), (255, 255, 255, 255))
+    img.paste(content, (10, 10))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestModelImagesMessageAlphaBackground:
+    """``toDict`` forwards ``alphaBackground`` into ``convertImageIfNeeded``.
+
+    Pure parameter threading (lib/ must stay free of bot deps): config-aware
+    internal callers pass the value in (a later phase); lib-internal callers
+    keep the ADAPTIVE default. Two OPPOSITE forced backgrounds over one
+    fixture prove the parameter really reaches the converter — dropping the
+    kwarg would render both serialisations identically.
+    """
+
+    def testToDictForwardsAlphaBackgroundToImageConversion(self) -> None:
+        """Forced BLACK vs forced WHITE produce contrasting composite backgrounds.
+
+        White content on transparent margins, JPEG-only model (conversion
+        mandatory): with BLACK the margins must composite to black and the
+        content stay visible-white; with WHITE everything must be white
+        (the documented forced-background trade-off).
+
+        Returns:
+            None
+        """
+        png = _whiteContentOnTransparentPngBytes()
+        msg = ModelImagesMessage(role="user", content="look", images=[bytearray(png)])
+
+        renderedBlack = msg.toDict(supportedImageFormats=[_JPEG_MIME], alphaBackground=AlphaBackground.BLACK)
+        renderedWhite = msg.toDict(supportedImageFormats=[_JPEG_MIME], alphaBackground=AlphaBackground.WHITE)
+
+        for rendered, marginIsLight in ((renderedBlack, False), (renderedWhite, True)):
+            content = rendered["content"]
+            assert isinstance(content, list)
+            imageBlock = next(block for block in content if block.get("type") == "image_url")
+            url = imageBlock["image_url"]["url"]
+            assert url.startswith(f"data:{_JPEG_MIME};base64,")
+            rgb = Image.open(BytesIO(base64.b64decode(url.split(",", 1)[1]))).convert("RGB")
+            for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+                channels = _pixelRgb(rgb, *corner)
+                if marginIsLight:
+                    assert all(
+                        channel > 200 for channel in channels
+                    ), f"expected white margin at {corner}, got {channels}"
+                else:
+                    assert all(
+                        channel < 60 for channel in channels
+                    ), f"expected black margin at {corner}, got {channels}"
+            contentChannels = _pixelRgb(rgb, 15, 15)
+            assert all(
+                channel > 200 for channel in contentChannels
+            ), f"expected visible white content, got {contentChannels}"

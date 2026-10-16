@@ -76,7 +76,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
-from lib.ai.imaging import VisionOutputImageFormat, normalizeVisionImageStrict
+from lib.ai.imaging import AlphaBackground, VisionOutputImageFormat, normalizeVisionImageStrict
 from lib.ai.session import buildSessionId
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -233,9 +233,10 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # Native-vision receipt-time settings — read once at init (same
         # "cached config flags" pattern as _sttEnabled above); require restart
-        # to take effect. The raw ``image-format`` string is converted to the
-        # VisionOutputImageFormat enum exactly once here; an out-of-contract
-        # value falls back to JPEG with a warning.
+        # to take effect. The raw ``image-format`` / ``alpha-background``
+        # strings are converted to their enums exactly once here; an
+        # out-of-contract value falls back to the documented default with a
+        # warning.
         visionConfig = self.configManager.getVisionConfig()
         self._visionMaxImageDimension: int = visionConfig.get("max-image-dimension", 2048)
         self._visionImageFormat: VisionOutputImageFormat
@@ -248,6 +249,15 @@ class BaseBotHandler(CommandHandlerMixin):
             )
             self._visionImageFormat = VisionOutputImageFormat.JPEG
         self._visionImageQuality: int = visionConfig.get("image-quality", 85)
+        self._visionAlphaBackground: AlphaBackground
+        try:
+            self._visionAlphaBackground = AlphaBackground(str(visionConfig.get("alpha-background", "adaptive")))
+        except ValueError:
+            logger.warning(
+                f"Invalid bot.vision alpha-background {visionConfig.get('alpha-background')!r}, "
+                f"falling back to {AlphaBackground.ADAPTIVE}"
+            )
+            self._visionAlphaBackground = AlphaBackground.ADAPTIVE
         # Vision-scoped storage instance (scoped-storage design v1 §4.4):
         # normalized images land in the vision store under bare keys. The
         # HandlersManager injects this scope before the handler pipeline is
@@ -2350,12 +2360,17 @@ class BaseBotHandler(CommandHandlerMixin):
           lock's docstring for the protocol and why serializing them
           closes the receipt/GC races). The download and normalization
           stay OUTSIDE the lock so network/encoder I/O never serializes
-          against the GC.
+          against the GC; the CPU-bound normalization additionally runs
+          OFF the event loop via ``asyncio.to_thread`` so a large image
+          cannot delay unrelated chats (the await stays inline —
+          construction-time attachment depends on normalization
+          completing).
 
-        Normalization parameters (dimension, output format, quality) come
-        from the vision settings cached in ``__init__``
+        Normalization parameters (dimension, output format, quality, alpha
+        background) come from the vision settings cached in ``__init__``
         (``_visionMaxImageDimension`` / ``_visionImageFormat`` /
-        ``_visionImageQuality``) — no per-call config reads. The object is
+        ``_visionImageQuality`` / ``_visionAlphaBackground``) — no per-call
+        config reads. The object is
         written to the vision-scoped store (``visionStorage``, configured
         from ``[storage.storages.vision]``) under the BARE content key
         ``{sha512}.{ext}`` — there is no app-layer prefix; separation from
@@ -2435,11 +2450,19 @@ class BaseBotHandler(CommandHandlerMixin):
                 # reuse them instead of re-downloading.
                 return (None, mediaData)
 
-            normalized = normalizeVisionImageStrict(
+            # CPU-bound decode/resize/encode runs in a worker thread
+            # (``asyncio.to_thread`` — the repo-standard offload) so a large
+            # image cannot stall unrelated chats, typing updates, or cron
+            # work. The await stays INLINE (construction-time attachment
+            # depends on normalization completing) and OUTSIDE
+            # ``visionStorageLock`` (the ordering contract above).
+            normalized = await asyncio.to_thread(
+                normalizeVisionImageStrict,
                 imageBytes=mediaData,
                 maxDimension=self._visionMaxImageDimension,
                 outputFormat=self._visionImageFormat,
                 quality=self._visionImageQuality,
+                alphaBackground=self._visionAlphaBackground,
             )
             if normalized is None:
                 # Strict normalization failed (50MP guard, undecodable

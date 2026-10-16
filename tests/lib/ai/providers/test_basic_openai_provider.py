@@ -514,7 +514,6 @@ def testModelGetExtraParams(testModel: BasicOpenAIModel) -> None:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateTextSuccess(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -554,7 +553,6 @@ async def testGenerateTextSuccess(
     assert len(result.toolCalls) == 0
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithoutClient(testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]) -> None:
     """Test text generation fails without client.
 
@@ -571,7 +569,6 @@ async def testGenerateTextWithoutClient(testModel: BasicOpenAIModel, sampleMessa
         await testModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testGenerateTextNotSupported(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -591,7 +588,6 @@ async def testGenerateTextNotSupported(
         await testModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testGenerateTextTruncated(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -628,7 +624,6 @@ async def testGenerateTextTruncated(
     assert result.resultText == "Truncated response..."
 
 
-@pytest.mark.asyncio
 async def testGenerateTextContentFilter(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -665,7 +660,6 @@ async def testGenerateTextContentFilter(
     assert result.resultText == ""
 
 
-@pytest.mark.asyncio
 async def testGenerateTextUnknownFinishReason(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -701,7 +695,6 @@ async def testGenerateTextUnknownFinishReason(
     assert result.status == ModelResultStatus.UNKNOWN
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithNullContent(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -742,7 +735,6 @@ async def testGenerateTextWithNullContent(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithTools(
     testModel: BasicOpenAIModel,
     mockAsyncOpenAI: Mock,
@@ -796,7 +788,6 @@ async def testGenerateTextWithTools(
     assert result.toolCalls[0].parameters == {"location": "Tokyo"}
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithMultipleToolCalls(
     testModel: BasicOpenAIModel,
     mockAsyncOpenAI: Mock,
@@ -856,7 +847,6 @@ async def testGenerateTextWithMultipleToolCalls(
     assert "tools" in callKwargs
 
 
-@pytest.mark.asyncio
 async def testGenerateTextToolsNotSupported(
     testModel: BasicOpenAIModel,
     mockAsyncOpenAI: Mock,
@@ -900,7 +890,6 @@ async def testGenerateTextToolsNotSupported(
     assert "tools" not in callKwargs
 
 
-@pytest.mark.asyncio
 async def testGenerateTextToolsPassedToApi(
     testModel: BasicOpenAIModel,
     mockAsyncOpenAI: Mock,
@@ -950,7 +939,6 @@ async def testGenerateTextToolsPassedToApi(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testRequestParametersFormatting(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -991,7 +979,6 @@ async def testRequestParametersFormatting(
     assert len(callKwargs["messages"]) == 2
 
 
-@pytest.mark.asyncio
 async def testMessagesConversion(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1038,7 +1025,6 @@ async def testMessagesConversion(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testProviderThreadingConvertsImagePerConfig(testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock) -> None:
     """End-to-end: config ``input_image_format`` threads through to a converted data URL.
 
@@ -1103,7 +1089,6 @@ async def testProviderThreadingConvertsImagePerConfig(testModel: BasicOpenAIMode
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateTextApiError(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1123,7 +1108,6 @@ async def testGenerateTextApiError(
         await testModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testGenerateTextInvalidToolCallJson(
     testModel: BasicOpenAIModel,
     mockAsyncOpenAI: Mock,
@@ -1176,7 +1160,6 @@ async def testGenerateTextInvalidToolCallJson(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateImageNotSupported(testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]) -> None:
     """Test image generation fails when not supported.
 
@@ -1191,7 +1174,6 @@ async def testGenerateImageNotSupported(testModel: BasicOpenAIModel, sampleMessa
         await testModel.generateImage(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testGenerateImageSuccess(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1239,7 +1221,6 @@ async def testGenerateImageSuccess(
     assert result.mediaData == imageData
 
 
-@pytest.mark.asyncio
 async def testGenerateImageWithoutClient(testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]) -> None:
     """Test image generation fails without client.
 
@@ -1262,7 +1243,6 @@ async def testGenerateImageWithoutClient(testModel: BasicOpenAIModel, sampleMess
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testFullWorkflowAddModelAndGenerate(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
     """Test full workflow: add model and generate text.
 
@@ -1446,7 +1426,6 @@ def _makeImagesResponse(
     return mockResponse
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredSuccess(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1477,7 +1456,6 @@ async def testGenerateStructuredSuccess(
     assert result.totalTokens == 15
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredTruncatedValidJson(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1505,7 +1483,6 @@ async def testGenerateStructuredTruncatedValidJson(
     assert result.error is None
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredTruncatedInvalidJson(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1533,7 +1510,6 @@ async def testGenerateStructuredTruncatedInvalidJson(
     assert result.resultText == truncatedJson
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredNonObjectJson(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1560,7 +1536,6 @@ async def testGenerateStructuredNonObjectJson(
     assert result.resultText == "[1, 2, 3]"
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredContentFilter(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1584,7 +1559,6 @@ async def testGenerateStructuredContentFilter(
     assert result.data is None
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredBadRequest(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1614,7 +1588,6 @@ async def testGenerateStructuredBadRequest(
     assert result.error is badReqError
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredCapabilityFlagFalse(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1640,7 +1613,6 @@ async def testGenerateStructuredCapabilityFlagFalse(
     mockAsyncOpenAI.chat.completions.create.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredResponseFormatPayload(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1674,7 +1646,6 @@ async def testGenerateStructuredResponseFormatPayload(
     }
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredEmptyResponse(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1712,7 +1683,6 @@ async def testGenerateStructuredEmptyResponse(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testExecuteChatCompletionHappyPath(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1749,7 +1719,6 @@ async def testExecuteChatCompletionHappyPath(
     assert outcome.response is not None
 
 
-@pytest.mark.asyncio
 async def testExecuteChatCompletionBadRequestErrorReturnsOutcome(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1789,7 +1758,6 @@ async def testExecuteChatCompletionBadRequestErrorReturnsOutcome(
     assert outcome.retMessage is None
 
 
-@pytest.mark.asyncio
 async def testExecuteChatCompletionOtherExceptionRaises(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1818,7 +1786,6 @@ async def testExecuteChatCompletionOtherExceptionRaises(
         await testModel._executeChatCompletion(params)
 
 
-@pytest.mark.asyncio
 async def testExecuteChatCompletionUnknownFinishReason(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1848,7 +1815,6 @@ async def testExecuteChatCompletionUnknownFinishReason(
     assert outcome.error is None
 
 
-@pytest.mark.asyncio
 async def testExecuteChatCompletionTokenDetailsAndCost(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1892,7 +1858,6 @@ async def testExecuteChatCompletionTokenDetailsAndCost(
     assert outcome.cost == pytest.approx(0.00055)
 
 
-@pytest.mark.asyncio
 async def testExecuteChatCompletionTokenDetailsAbsent(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1923,7 +1888,6 @@ async def testExecuteChatCompletionTokenDetailsAbsent(
     assert outcome.cost is None
 
 
-@pytest.mark.asyncio
 async def testGenerateTextCarriesTokenDetailsAndCost(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1963,7 +1927,6 @@ async def testGenerateTextCarriesTokenDetailsAndCost(
 # =======
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiNotSupported(
     testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1982,7 +1945,6 @@ async def testGenerateImageViaImagesApiNotSupported(
         await testModel._generateImageViaImagesApi(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiNoClient(
     testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2002,7 +1964,6 @@ async def testGenerateImageViaImagesApiNoClient(
         await testModel._generateImageViaImagesApi(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiSuccessB64Json(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2032,7 +1993,6 @@ async def testGenerateImageViaImagesApiSuccessB64Json(
     assert result.mediaMimeType == "image/png"
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiEmptyResponse(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2058,7 +2018,6 @@ async def testGenerateImageViaImagesApiEmptyResponse(
     assert result.status == ModelResultStatus.ERROR
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiWithUsage(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2089,7 +2048,6 @@ async def testGenerateImageViaImagesApiWithUsage(
     assert result.totalTokens == 150
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiWithImageOptions(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2123,7 +2081,6 @@ async def testGenerateImageViaImagesApiWithImageOptions(
     assert result.mediaMimeType == "image/jpeg"
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiMultipleImages(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2154,7 +2111,6 @@ async def testGenerateImageViaImagesApiMultipleImages(
     assert result.mediaData == b"img1"
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiRevisedPrompt(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2182,7 +2138,6 @@ async def testGenerateImageViaImagesApiRevisedPrompt(
     assert result.resultText == "A cat in a hat"
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiUnknownFormat(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2264,7 +2219,6 @@ def testExtractImagePromptMultimodal() -> None:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiUrlDownload(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2305,7 +2259,6 @@ async def testGenerateImageViaImagesApiUrlDownload(
     assert result.mediaMimeType == "image/png"
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiUrlDownloadError(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2341,7 +2294,6 @@ async def testGenerateImageViaImagesApiUrlDownloadError(
     assert "Connection failed" in str(result.error)
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiNeitherField(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2369,7 +2321,6 @@ async def testGenerateImageViaImagesApiNeitherField(
     assert "neither" in str(result.error).lower()
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiBadRequestError(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2441,7 +2392,6 @@ def testGetImageModelIdDefault(testModel: BasicOpenAIModel) -> None:
     assert testModel._getImageModelId() == testModel._getModelId()
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiModelAndPrompt(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -2471,7 +2421,6 @@ async def testGenerateImageViaImagesApiModelAndPrompt(
     assert callKwargs["prompt"] == "You are a helpful assistant\n\nHello, how are you?"
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiResponseDataNone(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:

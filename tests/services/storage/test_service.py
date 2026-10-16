@@ -5,6 +5,7 @@ This module tests the StorageService singleton to ensure proper
 initialization, configuration, and operation delegation to backends.
 """
 
+import threading
 from unittest.mock import Mock, patch
 
 import pytest
@@ -661,6 +662,128 @@ class TestStorageServiceScopedInstances:
         assert default.backend is defaultBackendAfterDefaultReinject  # identity: same object
         assert isinstance(vision.backend, NullStorageBackend)
         assert isinstance(default.backend, NullStorageBackend)
+
+
+class TestStorageServiceScopeBinding:
+    """Test that injectConfig is bound to the instance's construction scope"""
+
+    def testConstructionScopeIsRetained(self):
+        """Test that each instance retains the scope it was created for"""
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        assert default.scope == StorageScope.DEFAULT
+        assert vision.scope == StorageScope.VISION
+
+    def testInjectConfigScopeMismatchRaisesAndLeavesBackendUntouched(self, mockConfigManager):
+        """Test that a scope-mismatched injectConfig raises ValueError BEFORE touching the backend
+
+        Regression (review-large finding): getInstance(StorageScope.VISION) followed
+        by an arg-less injectConfig(configManager) used to silently configure the
+        vision instance with the DEFAULT attachments config. The call must raise
+        and the vision instance's backend must stay un-redirected.
+        """
+        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+
+        with pytest.raises(ValueError, match="scope mismatch"):
+            vision.injectConfig(mockConfigManager)  # defaults to DEFAULT scope on the vision instance
+
+        assert vision.backend is None
+        assert vision.initialized is False
+        assert vision.backendType is None
+
+    def testInjectConfigScopeMismatchSymmetricRaises(self, mockConfigManager, tmp_path):
+        """Test the symmetric mismatch: DEFAULT instance configured with scope=VISION raises"""
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "fs",
+            "fs": {"base-dir": str(tmp_path)},
+        }
+
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+
+        with pytest.raises(ValueError, match="scope mismatch"):
+            default.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert default.backend is None
+        assert default.initialized is False
+
+    def testMatchingScopeInjectStillConfigures(self, mockConfigManager):
+        """Test that scope-matched injection still works on both instances"""
+        mockConfigManager.getStorageConfig.return_value = {
+            "type": "null",
+            "storages": {"vision": {"type": "null"}},
+        }
+
+        default = StorageService.getInstance(StorageScope.DEFAULT)
+        vision = StorageService.getInstance(StorageScope.VISION)
+        default.injectConfig(mockConfigManager, scope=StorageScope.DEFAULT)
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+
+        assert default.initialized is True
+        assert isinstance(default.backend, NullStorageBackend)
+        assert vision.initialized is True
+        assert isinstance(vision.backend, NullStorageBackend)
+
+
+class TestStorageServiceInitializationConcurrency:
+    """Test that first-time initialization is atomic under concurrent getInstance calls"""
+
+    def testConcurrentFirstGetInstanceInitializesExactlyOnce(self):
+        """Test N simultaneous first-time getInstance calls initialize exactly once
+
+        Controlled concurrency: a barrier releases all threads at once on a fresh
+        class state (cleared by the autouse fixture). Exactly one guard-body
+        execution is counted via the module logger's "created, awaiting
+        configuration" line; every thread must observe the same instance with
+        its construction scope retained.
+        """
+        threadCount = 16
+        barrier = threading.Barrier(threadCount, timeout=10)
+        results: list[StorageService] = []
+
+        with patch("internal.services.storage.service.logger") as mockLogger:
+
+            def worker():
+                barrier.wait()
+                results.append(StorageService.getInstance(StorageScope.VISION))
+
+            threads = [threading.Thread(target=worker) for _ in range(threadCount)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        initLogs = [
+            callArgs
+            for callArgs in mockLogger.info.call_args_list
+            if "created, awaiting configuration" in str(callArgs)
+        ]
+
+        assert len(initLogs) == 1  # exactly one initialization, not one per thread
+        assert len(results) == threadCount
+        assert all(result is results[0] for result in results)
+        assert results[0].scope == StorageScope.VISION
+
+    def testDelayedInitializerDoesNotResetConfiguredBackend(self, mockConfigManager):
+        """Test a delayed __init__ cannot reset the backend of a configured instance
+
+        Models the inherited race: a slow first-time caller reaching the
+        initializer after another thread already injected config. Re-running
+        __init__ (directly, as the interpreter would on a late getInstance)
+        must leave backend and initialized untouched.
+        """
+        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
+
+        vision = StorageService.getInstance(StorageScope.VISION)
+        vision.injectConfig(mockConfigManager, scope=StorageScope.VISION)
+        backendBefore = vision.backend
+
+        StorageService.__init__(vision, StorageScope.VISION)  # simulated delayed initializer
+
+        assert vision.backend is backendBefore
+        assert vision.initialized is True
 
 
 class TestBuildBackend:

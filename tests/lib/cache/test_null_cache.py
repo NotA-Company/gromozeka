@@ -30,7 +30,6 @@ class TestNullCache:
         """
         self.cache: NullCache[str, Any] = NullCache[str, Any]()
 
-    @pytest.mark.asyncio
     async def test_get_always_returns_none(self) -> None:
         """Test that get() always returns None.
 
@@ -57,7 +56,6 @@ class TestNullCache:
         assert await self.cache.get("test_key", ttl=0) is None
         assert await self.cache.get("test_key", ttl=None) is None
 
-    @pytest.mark.asyncio
     async def test_set_always_returns_true(self) -> None:
         """Test that set() always returns True.
 
@@ -80,7 +78,6 @@ class TestNullCache:
         assert await self.cache.set("key4", [1, 2, 3]) is True
         assert await self.cache.set("key5", None) is True
 
-    @pytest.mark.asyncio
     async def test_set_get_combination(self) -> None:
         """Test that set() followed by get() still returns None.
 
@@ -104,7 +101,6 @@ class TestNullCache:
         retrieved = await self.cache.get("test_key")
         assert retrieved is None
 
-    @pytest.mark.asyncio
     async def test_clear_does_nothing(self) -> None:
         """Test that clear() does nothing without errors.
 
@@ -127,7 +123,6 @@ class TestNullCache:
         await self.cache.clear()
         await self.cache.clear()
 
-    @pytest.mark.asyncio
     async def test_clearold_returns_true(self) -> None:
         """Test that clearOld() returns True (no-op).
 
@@ -156,7 +151,6 @@ class TestNullCache:
         result = await self.cache.clearOld(ttl=-1)
         assert result is True
 
-    @pytest.mark.asyncio
     async def test_clearold_stores_nothing(self) -> None:
         """Test that clearOld() doesn't store anything.
 
@@ -234,7 +228,6 @@ class TestNullCache:
         complex_cache = NullCache[tuple, list]()
         assert isinstance(complex_cache, NullCache)
 
-    @pytest.mark.asyncio
     async def test_no_internal_state(self) -> None:
         """Test that NullCache maintains no internal state.
 
@@ -268,7 +261,6 @@ class TestNullCache:
         # Stats should be identical
         assert cache1.getStats() == cache2.getStats()
 
-    @pytest.mark.asyncio
     async def test_edge_cases(self) -> None:
         """Test edge cases and unusual inputs.
 

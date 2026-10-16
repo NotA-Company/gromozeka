@@ -27,7 +27,6 @@ async def sqliteProvider():
 class TestConnectionManagement:
     """Tests for connection management."""
 
-    @pytest.mark.asyncio
     async def test_connect_and_disconnect(self):
         """Test connecting and disconnecting from database."""
         provider = SQLite3Provider(":memory:")
@@ -39,7 +38,6 @@ class TestConnectionManagement:
         await provider.disconnect()
         assert provider._connection is None
 
-    @pytest.mark.asyncio
     async def test_connect_already_connected(self):
         """Test that connecting when already connected is a no-op."""
         provider = SQLite3Provider(":memory:")
@@ -52,14 +50,12 @@ class TestConnectionManagement:
 
         await provider.disconnect()
 
-    @pytest.mark.asyncio
     async def test_context_manager(self):
         """Test using provider as async context manager."""
         async with SQLite3Provider(":memory:") as provider:
             assert provider._connection is not None  # type: ignore
         assert provider._connection is None  # type: ignore
 
-    @pytest.mark.asyncio
     async def test_is_readonly(self):
         """Test isReadOnly method."""
         provider = SQLite3Provider(":memory:", readOnly=True)
@@ -72,13 +68,11 @@ class TestConnectionManagement:
 class TestQueryExecution:
     """Tests for query execution."""
 
-    @pytest.mark.asyncio
     async def test_execute_no_fetch(self, sqliteProvider):
         """Test execute with NO_FETCH."""
         result = await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_execute_fetch_one(self, sqliteProvider):
         """Test execute with FETCH_ONE."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -89,7 +83,6 @@ class TestQueryExecution:
         assert result["id"] == 1
         assert result["name"] == "test"
 
-    @pytest.mark.asyncio
     async def test_execute_fetch_all(self, sqliteProvider):
         """Test execute with FETCH_ALL."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -101,7 +94,6 @@ class TestQueryExecution:
         assert result[0]["id"] == 1
         assert result[1]["id"] == 2
 
-    @pytest.mark.asyncio
     async def test_execute_with_params(self, sqliteProvider):
         """Test execute with named parameters."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -111,7 +103,6 @@ class TestQueryExecution:
         assert result is not None
         assert result["name"] == "test"
 
-    @pytest.mark.asyncio
     async def test_execute_fetch_one_convenience(self, sqliteProvider):
         """Test executeFetchOne convenience method."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -121,7 +112,6 @@ class TestQueryExecution:
         assert result is not None
         assert result["id"] == 1
 
-    @pytest.mark.asyncio
     async def test_execute_fetch_all_convenience(self, sqliteProvider):
         """Test executeFetchAll convenience method."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -131,7 +121,6 @@ class TestQueryExecution:
         result = await sqliteProvider.executeFetchAll("SELECT * FROM test")
         assert len(result) == 2
 
-    @pytest.mark.asyncio
     async def test_execute_with_parametrized_query(self, sqliteProvider):
         """Test execute with ParametrizedQuery object."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -147,7 +136,6 @@ class TestQueryExecution:
 class TestUpsert:
     """Tests for upsert operations."""
 
-    @pytest.mark.asyncio
     async def test_upsert_insert(self, sqliteProvider):
         """Test upsert for insert (new record)."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -162,7 +150,6 @@ class TestUpsert:
         assert row["name"] == "test"
         assert row["value"] == 100
 
-    @pytest.mark.asyncio
     async def test_upsert_update(self, sqliteProvider):
         """Test upsert for update (existing record)."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -182,7 +169,6 @@ class TestUpsert:
         assert row["name"] == "updated"
         assert row["value"] == 200
 
-    @pytest.mark.asyncio
     async def test_upsert_with_excluded_value(self, sqliteProvider):
         """Test upsert with ExcludedValue."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -205,7 +191,6 @@ class TestUpsert:
         assert row["name"] == "updated"
         assert row["value"] == 101  # 100 + 1
 
-    @pytest.mark.asyncio
     async def test_upsert_with_custom_excluded_column(self, sqliteProvider):
         """Test upsert with ExcludedValue specifying column name."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -228,7 +213,6 @@ class TestUpsert:
         assert row["name"] == "updated"
         assert row["value"] == 200
 
-    @pytest.mark.asyncio
     async def test_upsert_multiple_conflict_columns(self, sqliteProvider):
         """Test upsert with multiple conflict columns."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER, name TEXT, value INTEGER, PRIMARY KEY (id, name))")
@@ -247,7 +231,6 @@ class TestUpsert:
         assert row is not None
         assert row["value"] == 200
 
-    @pytest.mark.asyncio
     async def test_upsert_without_update_expressions(self, sqliteProvider):
         """Test upsert without updateExpressions (default behavior)."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -271,7 +254,6 @@ class TestUpsert:
 class TestBatchExecute:
     """Tests for batch operations."""
 
-    @pytest.mark.asyncio
     async def test_batch_execute(self, sqliteProvider):
         """Test batch execute with multiple queries."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -288,7 +270,6 @@ class TestBatchExecute:
         rows = await sqliteProvider.executeFetchAll("SELECT * FROM test")
         assert len(rows) == 3
 
-    @pytest.mark.asyncio
     async def test_batch_execute_with_params(self, sqliteProvider):
         """Test batch execute with parameters."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -304,7 +285,6 @@ class TestBatchExecute:
         rows = await sqliteProvider.executeFetchAll("SELECT * FROM test")
         assert len(rows) == 2
 
-    @pytest.mark.asyncio
     async def test_batch_execute_rollback_on_error(self, sqliteProvider):
         """Test that batch execute rolls back on error."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -326,26 +306,22 @@ class TestBatchExecute:
 class TestHelperMethods:
     """Tests for provider helper methods."""
 
-    @pytest.mark.asyncio
     async def test_get_case_insensitive_comparison(self, sqliteProvider):
         """Test getCaseInsensitiveComparison returns SQLite expression."""
         comparison = sqliteProvider.getCaseInsensitiveComparison("username", "username")
         assert comparison == "LOWER(username) = LOWER(:username)"
 
-    @pytest.mark.asyncio
     async def test_get_like_comparison(self, sqliteProvider):
         """Test getLikeComparison returns SQLite expression."""
         comparison = sqliteProvider.getLikeComparison("username", "username")
         assert comparison == "LOWER(username) LIKE LOWER(:username)"
 
-    @pytest.mark.asyncio
     async def test_apply_pagination(self, sqliteProvider):
         """Test applyPagination adds LIMIT and OFFSET."""
         query = "SELECT * FROM test"
         paginated = sqliteProvider.applyPagination(query, limit=10, offset=5)
         assert paginated == "SELECT * FROM test LIMIT 10 OFFSET 5"
 
-    @pytest.mark.asyncio
     async def test_get_text_type(self, sqliteProvider):
         """Test getTextType returns TEXT for SQLite."""
         textType = sqliteProvider.getTextType()
@@ -355,7 +331,6 @@ class TestHelperMethods:
 class TestParameterBinding:
     """Tests for parameter binding."""
 
-    @pytest.mark.asyncio
     async def test_named_parameters(self, sqliteProvider):
         """Test named parameter binding."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -370,7 +345,6 @@ class TestParameterBinding:
         assert result is not None
         assert result["value"] == 100
 
-    @pytest.mark.asyncio
     async def test_parameter_with_special_characters(self, sqliteProvider):
         """Test parameter binding with special characters."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -384,7 +358,6 @@ class TestParameterBinding:
         assert result is not None
         assert "quotes" in result["name"]
 
-    @pytest.mark.asyncio
     async def test_parameter_with_null(self, sqliteProvider):
         """Test parameter binding with NULL value."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -399,7 +372,6 @@ class TestParameterBinding:
 class TestLikeComparison:
     """Tests for case-insensitive LIKE comparison."""
 
-    @pytest.mark.asyncio
     async def test_like_comparison_case_insensitive(self, sqliteProvider):
         """Test LIKE comparison is case-insensitive."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -418,7 +390,6 @@ class TestLikeComparison:
         assert result is not None
         assert result["name"] == "Hello World"
 
-    @pytest.mark.asyncio
     async def test_like_comparison_with_middle_wildcard(self, sqliteProvider):
         """Test LIKE comparison with wildcard in the middle."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -431,7 +402,6 @@ class TestLikeComparison:
         assert result is not None
         assert result["name"] == "HelloWorld"
 
-    @pytest.mark.asyncio
     async def test_like_comparison_multiple_matches(self, sqliteProvider):
         """Test LIKE comparison with multiple potential matches."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -446,7 +416,6 @@ class TestLikeComparison:
         results = await sqliteProvider.executeFetchAll(query, {"pattern": "hello%"})
         assert len(results) == 3  # All three "hello" variants should match
 
-    @pytest.mark.asyncio
     async def test_like_comparison_no_match(self, sqliteProvider):
         """Test LIKE comparison with no matching results."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -458,7 +427,6 @@ class TestLikeComparison:
         result = await sqliteProvider.executeFetchOne(query, {"pattern": "goodbye%"})
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_like_comparison_with_special_characters(self, sqliteProvider):
         """Test LIKE comparison with special characters in data."""
         await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")

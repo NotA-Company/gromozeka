@@ -21,6 +21,7 @@ Test Organization:
 """
 
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Iterator
 
@@ -1065,6 +1066,51 @@ max-image-dimension = 1024
         visionConfig = manager2.getVisionConfig()
         # .get() because TypedDict keys are non-required (total=False).
         assert visionConfig.get("max-image-dimension") == 1024
+
+    def testGetVisionConfigAlphaBackgroundValues(self, tempDir: Path) -> None:
+        """Test that ``alpha-background`` values parse through getVisionConfig.
+
+        "white" and "black" (and the default "adaptive") are plain strings at
+        this layer — the getter does no validation; enum conversion and the
+        invalid-value fallback live at the consumer
+        (``BaseBotHandler.__init__``). Also checks the hierarchical merge: a
+        later config dir overrides the earlier value.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
+        config = """
+[bot]
+token = "test_token"
+
+[bot.vision]
+alpha-background = "white"
+"""
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+        assert manager.getVisionConfig().get("alpha-background") == "white"
+
+        # A later config dir overrides the value (hierarchical merge).
+        override = """
+[bot.vision]
+alpha-background = "black"
+"""
+        configDir = createConfigDir(tempDir, "configs", {"alpha-override.toml": override})
+        manager2 = ConfigManager(str(configPath), configDirs=[str(configDir)])
+        assert manager2.getVisionConfig().get("alpha-background") == "black"
+
+    def testShippedDefaultVisionAlphaBackgroundIsAdaptive(self) -> None:
+        """The shipped ``configs/00-defaults/vision.toml`` default is "adaptive".
+
+        Pins the user-facing default in the shipped config file itself: the
+        bot-side consumers also fall back to ADAPTIVE when the key is absent,
+        but the shipped file must carry the ratified default explicitly.
+        """
+        visionTomlPath = Path(__file__).resolve().parents[2] / "configs" / "00-defaults" / "vision.toml"
+        assert visionTomlPath.exists(), f"Shipped vision config not found: {visionTomlPath}"
+        with visionTomlPath.open("rb") as f:
+            visionToml = tomllib.load(f)
+        assert visionToml.get("bot", {}).get("vision", {}).get("alpha-background") == "adaptive"
 
 
 # ============================================================================

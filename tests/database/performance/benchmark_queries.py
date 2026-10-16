@@ -44,7 +44,6 @@ async def db():
 class TestCachePerformance:
     """Performance tests for cache operations."""
 
-    @pytest.mark.asyncio
     async def test_cache_performance(self, db):
         """Test cache query performance."""
         cache = GenericDatabaseCache(db.manager, namespace=CacheType.WEATHER)
@@ -65,7 +64,6 @@ class TestCachePerformance:
         assert insertTime < 10.0  # Should complete in under 10 seconds
         assert queryTime < 5.0  # Should complete in under 5 seconds
 
-    @pytest.mark.asyncio
     async def test_cache_storage_performance(self, db):
         """Test cache storage performance."""
         repo = db.cache
@@ -86,7 +84,6 @@ class TestCachePerformance:
         assert insertTime < 10.0
         assert queryTime < 5.0
 
-    @pytest.mark.asyncio
     async def test_cache_clear_performance(self, db):
         """Test cache clear performance."""
         cache = GenericDatabaseCache(db.manager, namespace=CacheType.WEATHER)
@@ -111,7 +108,6 @@ class TestCachePerformance:
 class TestChatMessagePerformance:
     """Performance tests for chat message operations."""
 
-    @pytest.mark.asyncio
     async def test_chat_message_insert_performance(self, db):
         """Test chat message insert performance."""
         repo = db.chatMessages
@@ -131,7 +127,6 @@ class TestChatMessagePerformance:
         print(f"Chat Message Insert: {insertTime:.3f}s")
         assert insertTime < 10.0
 
-    @pytest.mark.asyncio
     async def test_chat_message_query_performance(self, db):
         """Test chat message query performance."""
         repo = db.chatMessages
@@ -155,7 +150,6 @@ class TestChatMessagePerformance:
         assert len(messages) == 1000
         assert queryTime < 5.0
 
-    @pytest.mark.asyncio
     async def test_chat_message_pagination_performance(self, db):
         """Test chat message pagination performance."""
         repo = db.chatMessages
@@ -183,7 +177,6 @@ class TestChatMessagePerformance:
 class TestChatUserPerformance:
     """Performance tests for chat user operations."""
 
-    @pytest.mark.asyncio
     async def test_chat_user_upsert_performance(self, db):
         """Test chat user upsert performance."""
         repo = db.chatUsers
@@ -202,7 +195,6 @@ class TestChatUserPerformance:
         print(f"Chat User Upsert: {upsertTime:.3f}s")
         assert upsertTime < 10.0
 
-    @pytest.mark.asyncio
     async def test_chat_user_query_performance(self, db):
         """Test chat user query performance."""
         repo = db.chatUsers
@@ -229,7 +221,6 @@ class TestChatUserPerformance:
 class TestUpsertPerformance:
     """Performance tests for upsert operations."""
 
-    @pytest.mark.asyncio
     async def test_upsert_insert_performance(self, db):
         """Test upsert insert performance."""
         provider = await db.manager.getProvider(readonly=False)
@@ -250,7 +241,6 @@ class TestUpsertPerformance:
         print(f"Upsert Insert: {insertTime:.3f}s")
         assert insertTime < 10.0
 
-    @pytest.mark.asyncio
     async def test_upsert_update_performance(self, db):
         """Test upsert update performance."""
         provider = await db.manager.getProvider(readonly=False)
@@ -283,7 +273,6 @@ class TestUpsertPerformance:
 class TestBatchPerformance:
     """Performance tests for batch operations."""
 
-    @pytest.mark.asyncio
     async def test_batch_insert_performance(self, db):
         """Test batch insert performance."""
         provider = await db.manager.getProvider(readonly=False)
@@ -307,7 +296,6 @@ class TestBatchPerformance:
         print(f"Batch Insert: {batchTime:.3f}s")
         assert batchTime < 10.0
 
-    @pytest.mark.asyncio
     async def test_batch_vs_individual_performance(self, db):
         """Compare batch vs individual insert performance."""
         provider = await db.manager.getProvider(readonly=False)
@@ -346,7 +334,6 @@ class TestBatchPerformance:
 class TestComplexQueryPerformance:
     """Performance tests for complex queries."""
 
-    @pytest.mark.asyncio
     async def test_join_query_performance(self, db):
         """Test join query performance."""
         # Insert test data
@@ -376,7 +363,6 @@ class TestComplexQueryPerformance:
         assert len(messages) == 100
         assert queryTime < 5.0
 
-    @pytest.mark.asyncio
     async def test_aggregation_query_performance(self, db):
         """Test aggregation query performance."""
         # Insert test data

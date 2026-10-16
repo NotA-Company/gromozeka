@@ -246,7 +246,6 @@ async def _ensureAlpineImage():
 class TestDockerBackendIntegration:
     """Integration tests that require a running Docker daemon."""
 
-    @pytest.mark.asyncio
     async def testHealthcheckOk(self) -> None:
         """Verify healthcheck returns ok=True when Docker is available.
 
@@ -259,7 +258,6 @@ class TestDockerBackendIntegration:
         assert result.ok is True
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testHealthcheckBackendInfo(self) -> None:
         """Verify healthcheck returns successful result when Docker is available.
 
@@ -271,7 +269,6 @@ class TestDockerBackendIntegration:
         assert result.ok is True
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testListManagedContainersEmpty(self) -> None:
         """Verify listManagedContainers returns a list (may be empty).
 
@@ -283,7 +280,6 @@ class TestDockerBackendIntegration:
         assert isinstance(containers, list)
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testRunOneshotEcho(self, _ensureAlpineImage) -> None:
         """Verify runOneshot can run a simple echo command.
 
@@ -306,7 +302,6 @@ class TestDockerBackendIntegration:
         await backend.removeContainer(outcome.containerId, force=True)
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testInspectContainer(self, _ensureAlpineImage) -> None:
         """Verify inspectContainer returns container details.
 
@@ -328,7 +323,6 @@ class TestDockerBackendIntegration:
         await backend.removeContainer(outcome.containerId, force=True)
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testKillContainer(self, _ensureAlpineImage) -> None:
         """Verify killContainer can kill a running container.
 
@@ -350,7 +344,6 @@ class TestDockerBackendIntegration:
         await backend.removeContainer(outcome.containerId, force=True)
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testRemoveContainer(self, _ensureAlpineImage) -> None:
         """Verify removeContainer cleans up a stopped container.
 
@@ -375,7 +368,6 @@ class TestDockerBackendIntegration:
 
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testListManagedContainersAfterCreate(self, _ensureAlpineImage) -> None:
         """Verify listManagedContainers finds containers with sandbox.managed=true.
 
@@ -403,7 +395,6 @@ class TestDockerBackendIntegration:
         await backend.removeContainer(outcome.containerId, force=True)
         await backend.close()
 
-    @pytest.mark.asyncio
     async def testCloseIdempotent(self) -> None:
         """Verify close() can be called multiple times safely.
 
@@ -415,7 +406,6 @@ class TestDockerBackendIntegration:
         await backend.close()
         await backend.close()  # Second call should be a no-op
 
-    @pytest.mark.asyncio
     async def testGetClientReconnectsAfterFailure(self) -> None:
         """Verify _getClient raises DockerUnavailable when daemon is unreachable.
 
@@ -452,7 +442,6 @@ class TestGetClientClientSessionLeak:
     environments without Docker) leaked a session.
     """
 
-    @pytest.mark.asyncio
     async def testFailedGetClientClosesPartiallyConstructedClient(self) -> None:
         """Forcing version() to fail must still close the constructed Docker client.
 
@@ -500,7 +489,6 @@ class TestRunOneshotContainerCleanup:
     removed before re-raising so it is not orphaned.
     """
 
-    @pytest.mark.asyncio
     async def testCleanupOnStartFailure(self) -> None:
         """Container is removed when start() raises after create().
 
@@ -529,7 +517,6 @@ class TestRunOneshotContainerCleanup:
 
         assert removeContainerCalls == ["fake-container-id"]
 
-    @pytest.mark.asyncio
     async def testCleanupOnWaitFailure(self) -> None:
         """Container is removed when wait() raises after start().
 
@@ -559,7 +546,6 @@ class TestRunOneshotContainerCleanup:
 
         assert removeContainerCalls == ["fake-container-id"]
 
-    @pytest.mark.asyncio
     async def testCleanupOnShowFailure(self) -> None:
         """Container is removed when show() raises after successful wait().
 
@@ -590,7 +576,6 @@ class TestRunOneshotContainerCleanup:
 
         assert removeContainerCalls == ["fake-container-id"]
 
-    @pytest.mark.asyncio
     async def testNoCleanupWhenCreateFails(self) -> None:
         """No removeContainer call when create() itself raises.
 
@@ -617,7 +602,6 @@ class TestRunOneshotContainerCleanup:
 
         assert removeContainerCalls == []
 
-    @pytest.mark.asyncio
     async def testCleanupSuppressedOnRemoveError(self) -> None:
         """Container cleanup error is suppressed; original exception re-raised.
 
@@ -645,7 +629,6 @@ class TestRunOneshotContainerCleanup:
                 with pytest.raises(RuntimeError, match="start failed"):
                     await backend.runOneshot(spec=spec)
 
-    @pytest.mark.asyncio
     async def testNoCleanupOnSuccess(self) -> None:
         """removeContainer is NOT called on the success path.
 

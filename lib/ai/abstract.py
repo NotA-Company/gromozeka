@@ -71,7 +71,7 @@ def _isImageDataUrl(url: object) -> bool:
             serialized JSON scalar; narrowed by isinstance).
 
     Returns:
-        bool: True only for ``data:image/...;base64,...`` strings.
+        True only for ``data:image/...;base64,...`` strings.
     """
     return isinstance(url, str) and url.startswith(_IMAGE_DATA_URI_PREFIX) and ";base64," in url
 
@@ -94,7 +94,7 @@ def _isMessageDict(value: object) -> bool:
         value: Arbitrary JSON-like value.
 
     Returns:
-        bool: True for ``{"role": "...", "content": ...}`` dicts.
+        True for ``{"role": "...", "content": ...}`` dicts.
     """
     return isinstance(value, dict) and isinstance(value.get("role"), str) and "content" in value
 
@@ -116,7 +116,7 @@ def _isMessageList(value: object) -> bool:
         value: The top-level estimator input.
 
     Returns:
-        bool: True only for a list of message-shaped dicts.
+        True only for a list of message-shaped dicts.
     """
     return isinstance(value, list) and all(_isMessageDict(v) for v in value)
 
@@ -152,9 +152,9 @@ def _estimateTokenView(value: object, inMessageContent: bool = False) -> object:
             the walk (internal recursion state).
 
     Returns:
-        object: A copy of the structure with image payloads replaced by
-            :data:`_IMAGE_DATA_PLACEHOLDER` at armed positions; scalars are
-            returned as-is and no input container is mutated.
+        A copy of the structure with image payloads replaced by
+        :data:`_IMAGE_DATA_PLACEHOLDER` at armed positions; scalars are
+        returned as-is and no input container is mutated.
     """
     if isinstance(value, dict):
         imageUrl = value.get("image_url")

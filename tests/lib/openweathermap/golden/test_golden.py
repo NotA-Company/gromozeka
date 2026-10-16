@@ -20,7 +20,6 @@ def owmGoldenDataProvider() -> GoldenDataProvider:
     return baseGoldenDataProvider(GOLDEN_DATA_PATH)
 
 
-@pytest.mark.asyncio
 async def testOpenweathermapClientInitialization():
     """Test that OpenWeatherMapClient can be initialized."""
     client = OpenWeatherMapClient(apiKey="test-key")

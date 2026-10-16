@@ -3,16 +3,19 @@
 This migration adds a nullable ``vision_url`` column to the
 ``media_attachments`` table. The column stores the StorageService key of the
 NORMALIZED image bytes (long-edge capped, re-encoded, EXIF-stripped — see
-``lib.ai.imaging.normalizeVisionImage``) used by the native-vision feature to
-attach raw images to chat LLM requests, distinct from ``local_url`` which
-keeps serving the ORIGINAL bytes (e.g. to resender).
+``lib.ai.imaging.normalizeVisionImageStrict``) used by the native-vision
+feature to attach raw images to chat LLM requests, distinct from
+``local_url`` which keeps serving the ORIGINAL bytes (e.g. to resender).
 
 Migration Details:
 - Version: 30
 - Table: media_attachments
 - Column: vision_url (TEXT, nullable, no default)
 - Purpose: Metadata pointer to the content-addressed normalized image
-  (``vision/{sha512}.{ext}``); NULL until the native-vision store step runs.
+  (bare content key ``{sha512}.{ext}`` in the vision-scoped store — there
+  is no app-layer prefix; the legacy ``vision/{sha512}.{ext}`` format
+  predates the storage split); NULL until the native-vision store step
+  runs.
 
 The column is intentionally nullable with no default: pre-feature rows have
 no vision bytes, and "has vision bytes" stays a cheap NULL predicate that
@@ -94,6 +97,6 @@ def getMigration() -> Type[BaseMigration]:
     """Return the migration class for this module.
 
     Returns:
-        Type[BaseMigration]: The migration class for this module.
+        The migration class for this module.
     """
     return Migration030AddVisionUrl

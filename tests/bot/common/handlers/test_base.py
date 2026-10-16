@@ -20,6 +20,8 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import threading
+import time
 import types
 from collections.abc import Awaitable, Callable
 from io import BytesIO
@@ -70,7 +72,7 @@ from internal.services.storage import StorageScope, StorageService
 from internal.services.storage.exceptions import StorageConfigError
 from internal.services.stt import STTOutcome, STTService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
-from lib.ai.imaging import VisionOutputImageFormat, normalizeVisionImageStrict
+from lib.ai.imaging import AlphaBackground, VisionOutputImageFormat, normalizeVisionImageStrict
 from lib.ai.manager import LLMManager
 from lib.stt.models import STTErrorCode
 
@@ -1727,6 +1729,7 @@ class TestProcessMediaV2Vision:
         "image-format": "image/jpeg",
         "image-quality": 85,
         "ttl-days": 30,
+        "alpha-background": "adaptive",
     }
     """``[bot.vision]`` config served by the mocked ConfigManager (no
     store-prefix — the app-layer prefix is deleted; scoped-storage v1 §4.4)."""
@@ -2802,6 +2805,7 @@ class TestProcessMediaV2Vision:
         assert handler._visionMaxImageDimension == 2048
         assert handler._visionImageFormat is VisionOutputImageFormat.JPEG
         assert handler._visionImageQuality == 85
+        assert handler._visionAlphaBackground is AlphaBackground.ADAPTIVE
         assert handler.visionStorage is StorageService.getInstance(StorageScope.VISION)
         assert handler.visionStorage.backendType == "fs"
 
@@ -3296,6 +3300,232 @@ class TestProcessMediaV2Vision:
         assert row is not None
         assert row["status"] == MediaStatus.DONE
         assert row["vision_url"] == currentKey
+
+    async def test_initBadAlphaBackgroundString_warnsAndFallsBackToAdaptive(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An invalid ``alpha-background`` config string falls back to ADAPTIVE with a warning.
+
+        Mirrors the ``image-format`` fallback: the conversion failure is
+        logged once at construction and the ADAPTIVE fallback must take
+        EFFECT downstream — the strict normalizer receives
+        ``alphaBackground=AlphaBackground.ADAPTIVE``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        badConfig = dict(self._VISION_CONFIG)
+        badConfig["alpha-background"] = "purple"  # not an AlphaBackground member
+
+        CacheService._instance = None
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(testDatabase)
+
+        configManager = self._makeMockConfigManager(
+            storageType="fs", storageBaseDir=str(tmp_path), visionConfig=badConfig
+        )
+        StorageService.getInstance().injectConfig(configManager)
+        StorageService.getInstance(StorageScope.VISION).injectConfig(configManager, scope=StorageScope.VISION)
+
+        with caplog.at_level(logging.WARNING):
+            handler = UserMemoriesHandler(
+                configManager=configManager,
+                database=testDatabase,
+                botProvider=BotProvider.TELEGRAM,
+            )
+
+        warnings = [r for r in caplog.records if "alpha-background" in r.message]
+        assert len(warnings) == 1
+        assert handler._visionAlphaBackground is AlphaBackground.ADAPTIVE
+
+        # The cached fallback enum takes effect at store time.
+        sourceBytes = self._makeImageBytes()
+        downloadMock = self._wireDownload(handler, sourceBytes)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+        with patch(
+            "internal.bot.common.handlers.base.normalizeVisionImageStrict", wraps=normalizeVisionImageStrict
+        ) as normalizeSpy:
+            visionUrl, _mediaData = await handler._storeVisionImage(
+                chatId=self._CHAT_ID,
+                mediaId=self._MEDIA_ID,
+                mediaType=MessageType.IMAGE,
+                fileId=self._FILE_ID,
+                mediaData=None,
+            )
+        assert visionUrl is not None
+        downloadMock.assert_awaited_once()
+        normalizeSpy.assert_called_once()
+        assert normalizeSpy.call_args is not None
+        assert normalizeSpy.call_args.kwargs["alphaBackground"] is AlphaBackground.ADAPTIVE
+
+    async def test_storeVisionImageForwardsConfiguredAlphaBackground(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """The configured ``alpha-background`` value reaches the strict normalizer.
+
+        ``alpha-background = "white"`` in ``[bot.vision]`` must surface as
+        ``AlphaBackground.WHITE`` on the ``normalizeVisionImageStrict`` call
+        inside ``_storeVisionImage`` — the config escape hatch's whole point.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path, visionConfig={"alpha-background": "white"})
+        assert handler._visionAlphaBackground is AlphaBackground.WHITE
+
+        sourceBytes = self._makeImageBytes()
+        self._wireDownload(handler, sourceBytes)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+        with patch(
+            "internal.bot.common.handlers.base.normalizeVisionImageStrict", wraps=normalizeVisionImageStrict
+        ) as normalizeSpy:
+            visionUrl, _mediaData = await handler._storeVisionImage(
+                chatId=self._CHAT_ID,
+                mediaId=self._MEDIA_ID,
+                mediaType=MessageType.IMAGE,
+                fileId=self._FILE_ID,
+                mediaData=None,
+            )
+        assert visionUrl is not None
+        normalizeSpy.assert_called_once()
+        assert normalizeSpy.call_args is not None
+        assert normalizeSpy.call_args.kwargs["alphaBackground"] is AlphaBackground.WHITE
+
+    async def test_storeVisionImageDefaultAlphaBackgroundIsAdaptive(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """The standard config (``alpha-background = "adaptive"``) yields ADAPTIVE.
+
+        No override: the standard ``_VISION_CONFIG`` carries the shipped
+        default explicitly, and the normalizer must receive
+        ``AlphaBackground.ADAPTIVE`` — locking the default against accidental
+        drift to a fixed color.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        assert handler._visionAlphaBackground is AlphaBackground.ADAPTIVE
+
+        sourceBytes = self._makeImageBytes()
+        self._wireDownload(handler, sourceBytes)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+        with patch(
+            "internal.bot.common.handlers.base.normalizeVisionImageStrict", wraps=normalizeVisionImageStrict
+        ) as normalizeSpy:
+            visionUrl, _mediaData = await handler._storeVisionImage(
+                chatId=self._CHAT_ID,
+                mediaId=self._MEDIA_ID,
+                mediaType=MessageType.IMAGE,
+                fileId=self._FILE_ID,
+                mediaData=None,
+            )
+        assert visionUrl is not None
+        normalizeSpy.assert_called_once()
+        assert normalizeSpy.call_args is not None
+        assert normalizeSpy.call_args.kwargs["alphaBackground"] is AlphaBackground.ADAPTIVE
+
+    async def test_normalizationRunsOffEventLoop_tickerProgresses(self, testDatabase: Database, tmp_path: Path) -> None:
+        """Slow normalization must not block the event loop (ticker keeps ticking).
+
+        Regression for the ``asyncio.to_thread`` offload in
+        ``_storeVisionImage``: the strict normalizer is patched to sleep
+        ~100ms in whatever thread invokes it while an independent ticker
+        task loops every 2ms, counting only ticks that land INSIDE the
+        normalization window (the wrapper marks the window with a
+        ``threading.Event``). On-loop execution would block the loop for
+        the whole sleep → zero ticks; the offloaded call keeps the loop
+        live → dozens. The receipt must still complete end-to-end (store
+        before publish) with the offload in place.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        sourceBytes = self._makeImageBytes()
+        downloadMock = self._wireDownload(handler, sourceBytes)
+        await self._seedMediaRow(testDatabase, status=MediaStatus.DONE)
+
+        mainThread = threading.current_thread()
+        normalizeThreads: List[threading.Thread] = []
+        normalizeActive = threading.Event()
+
+        def slowNormalizeStrict(
+            imageBytes: bytes,
+            maxDimension: int = 2048,
+            outputFormat: VisionOutputImageFormat = VisionOutputImageFormat.JPEG,
+            quality: int = 85,
+            alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
+        ) -> Optional[Tuple[bytes, str]]:
+            """Sleep INSIDE the normalization call, then delegate to the real one.
+
+            Args:
+                imageBytes: Raw image bytes production passed in.
+                maxDimension: Pixel cap production forwards.
+                outputFormat: Target format production forwards.
+                quality: JPEG quality production forwards.
+                alphaBackground: Alpha background production forwards.
+
+            Returns:
+                The real strict normalizer's result.
+            """
+            normalizeThreads.append(threading.current_thread())
+            normalizeActive.set()
+            time.sleep(0.1)
+            normalizeActive.clear()
+            return normalizeVisionImageStrict(
+                imageBytes=imageBytes,
+                maxDimension=maxDimension,
+                outputFormat=outputFormat,
+                quality=quality,
+                alphaBackground=alphaBackground,
+            )
+
+        ticksDuringNormalization = 0
+
+        async def ticker() -> None:
+            """Increment the tick counter every 2ms while normalization runs."""
+            nonlocal ticksDuringNormalization
+            while True:
+                await asyncio.sleep(0.002)
+                if normalizeActive.is_set():
+                    ticksDuringNormalization += 1
+
+        tickerTask = asyncio.create_task(ticker())
+        try:
+            with patch("internal.bot.common.handlers.base.normalizeVisionImageStrict", slowNormalizeStrict):
+                visionUrl, mediaData = await handler._storeVisionImage(
+                    chatId=self._CHAT_ID,
+                    mediaId=self._MEDIA_ID,
+                    mediaType=MessageType.IMAGE,
+                    fileId=self._FILE_ID,
+                    mediaData=None,
+                )
+        finally:
+            tickerTask.cancel()
+            try:
+                await tickerTask
+            except asyncio.CancelledError:
+                pass
+
+        # The receipt completed end-to-end (store-before-publish intact —
+        # the offload did not break the pipeline nor trip the fail-soft
+        # boundary, which would have returned a None key).
+        assert visionUrl is not None
+        assert mediaData == sourceBytes
+        downloadMock.assert_awaited_once()
+        # The normalizer really ran (exactly once) and NOT on the event-loop thread.
+        assert len(normalizeThreads) == 1
+        assert normalizeThreads[0] is not mainThread
+        # Loop liveness during the ~100ms normalization window: the offloaded
+        # call yields, so the 2ms ticker lands many ticks inside it
+        # (on-loop execution would block the ticker entirely → 0).
+        assert ticksDuringNormalization >= 5
 
     async def test_doneBackfill_visionUrlNull_visionOn_storesOnce_statusStaysDone(
         self, testDatabase: Database, tmp_path: Path

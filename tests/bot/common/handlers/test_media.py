@@ -32,12 +32,15 @@ I/O occurs; the autouse singleton-reset fixtures from ``tests/conftest.py``
 keep the ``LLMService`` singleton fresh per test.
 """
 
+import asyncio
 import datetime
 import json
 import struct
+import threading
+import time
 import zlib
 from io import BytesIO
-from typing import List, cast
+from typing import Dict, List, Optional, Tuple, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import telegram
@@ -64,6 +67,7 @@ from internal.services.cache.service import CacheService
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
 from lib.ai import ModelResultStatus, ModelRunResult
+from lib.ai.imaging import AlphaBackground, VisionOutputImageFormat, normalizeVisionImage
 from lib.ai.session import buildSessionId
 from lib.max_bot.models import PhotoAttachment, PhotoAttachmentPayload, Recipient, UserWithPhoto
 
@@ -85,15 +89,23 @@ PARENT_MESSAGE_ID = 7
 # ---------------------------------------------------------------------------
 
 
-def _makeConfigManager() -> Mock:
+def _makeConfigManager(*, visionConfig: Optional[Dict[str, object]] = None) -> Mock:
     """Build a ``ConfigManager`` stub satisfying ``MediaHandler.__init__``.
 
     ``BaseBotHandler.__init__`` reads ``getBotConfig()`` for the bot settings
     and ``getVisionConfig()`` for the native-vision normalization settings it
     caches on the handler (``_visionMaxImageDimension`` /
-    ``_visionImageFormat`` / ``_visionImageQuality`` — consumed by the
-    ``/analyze`` normalization); ``MediaHandler`` additionally registers the
-    image-generation tool on the (reset) ``LLMService`` singleton.
+    ``_visionImageFormat`` / ``_visionImageQuality`` /
+    ``_visionAlphaBackground`` — consumed by the ``/analyze`` normalization);
+    ``MediaHandler`` additionally registers the image-generation tool on the
+    (reset) ``LLMService`` singleton. The default vision table carries NO
+    ``alpha-background`` key (the pre-feature config shape) so the init
+    default (ADAPTIVE) is exercised; *visionConfig* entries are merged over
+    the base table to override individual keys.
+
+    Args:
+        visionConfig: Optional key/value overrides merged over the base
+            ``[bot.vision]`` table (e.g. ``{"alpha-background": "black"}``).
 
     Returns:
         ``Mock`` exposing ``getBotConfig()`` / ``getVisionConfig()`` with
@@ -101,9 +113,10 @@ def _makeConfigManager() -> Mock:
     """
     cm = Mock()
     cm.getBotConfig = Mock(return_value={"token": "test", "owners": []})
-    cm.getVisionConfig = Mock(
-        return_value={"max-image-dimension": 2048, "image-format": "image/jpeg", "image-quality": 85}
-    )
+    visionTable: Dict[str, object] = {"max-image-dimension": 2048, "image-format": "image/jpeg", "image-quality": 85}
+    if visionConfig is not None:
+        visionTable.update(visionConfig)
+    cm.getVisionConfig = Mock(return_value=visionTable)
     return cm
 
 
@@ -147,7 +160,9 @@ def _chatSettings() -> ChatSettingsDict:
     }
 
 
-def _newMediaHandler(*, botProvider: BotProvider = BotProvider.TELEGRAM) -> MediaHandler:
+def _newMediaHandler(
+    *, botProvider: BotProvider = BotProvider.TELEGRAM, visionConfig: Optional[Dict[str, object]] = None
+) -> MediaHandler:
     """Construct a :class:`MediaHandler` with stubbed leaf dependencies.
 
     ``getChatSettings`` / ``sendMessage`` are overridden at the instance
@@ -160,6 +175,8 @@ def _newMediaHandler(*, botProvider: BotProvider = BotProvider.TELEGRAM) -> Medi
         botProvider: Platform the handler runs as (default TELEGRAM). The
             multi-attachment analyze download path is MAX-only, so tests
             exercising it pass ``BotProvider.MAX``.
+        visionConfig: Optional ``[bot.vision]`` key overrides forwarded to
+            :func:`_makeConfigManager` (e.g. ``alpha-background``).
 
     Returns:
         A constructed handler ready for stubbing.
@@ -170,7 +187,7 @@ def _newMediaHandler(*, botProvider: BotProvider = BotProvider.TELEGRAM) -> Medi
         patch.object(StorageService, "getInstance", return_value=Mock()),
     ):
         handler = MediaHandler(
-            configManager=_makeConfigManager(),
+            configManager=_makeConfigManager(visionConfig=visionConfig),
             database=_makeDatabase(),
             botProvider=botProvider,
         )
@@ -623,6 +640,7 @@ class TestAnalyzeCommandImageNormalization:
             maxDimension=handler._visionMaxImageDimension,
             outputFormat=handler._visionImageFormat,
             quality=handler._visionImageQuality,
+            alphaBackground=handler._visionAlphaBackground,
         )
 
         generateText = cast(AsyncMock, handler.llmService.generateText)
@@ -632,6 +650,145 @@ class TestAnalyzeCommandImageNormalization:
         requestImages = reqMessages[1].images
         assert len(requestImages) == 1
         assert bytes(requestImages[0]) == sourcePng
+        sendMessage = cast(AsyncMock, handler.sendMessage)
+        sendMessage.assert_awaited_once()
+        assert sendMessage.await_args is not None
+        assert sendMessage.await_args.kwargs["messageText"] == "analysis"
+
+    async def test_analyzeForwardsDefaultAdaptiveAlphaBackground(self) -> None:
+        """With no ``alpha-background`` config key, the normalizer gets ADAPTIVE.
+
+        The stub config manager serves NO ``alpha-background`` key (the
+        pre-feature config shape): the init default must surface at the
+        ``/analyze`` normalizer boundary as ``AlphaBackground.ADAPTIVE`` —
+        the no-override default lock.
+        """
+        handler = _newMediaHandler()
+        handler.llmService.generateText = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("analysis")
+        )
+        handler._bot = Mock(downloadAttachment=AsyncMock(return_value=_minimalPngBytes()))
+
+        em = EnsuredMessage.fromTelegramMessage(_telegramCommandMessage(replyTo=_telegramPhotoMessage()))
+
+        with patch(
+            "internal.bot.common.handlers.media.normalizeVisionImage", wraps=normalizeVisionImage
+        ) as normalizeSpy:
+            await handler.analyze_command(em, "analyze", "what is this", Mock(), None)
+
+        assert handler._visionAlphaBackground is AlphaBackground.ADAPTIVE
+        normalizeSpy.assert_called_once()
+        assert normalizeSpy.call_args is not None
+        assert normalizeSpy.call_args.kwargs["alphaBackground"] is AlphaBackground.ADAPTIVE
+
+    async def test_analyzeForwardsConfiguredAlphaBackground(self) -> None:
+        """A configured ``alpha-background`` value reaches the lenient normalizer.
+
+        ``alpha-background = "black"`` in ``[bot.vision]`` must surface as
+        ``AlphaBackground.BLACK`` on the ``normalizeVisionImage`` call inside
+        ``analyze_command`` — the config escape hatch's whole point.
+        """
+        handler = _newMediaHandler(visionConfig={"alpha-background": "black"})
+        handler.llmService.generateText = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("analysis")
+        )
+        handler._bot = Mock(downloadAttachment=AsyncMock(return_value=_minimalPngBytes()))
+
+        em = EnsuredMessage.fromTelegramMessage(_telegramCommandMessage(replyTo=_telegramPhotoMessage()))
+
+        with patch(
+            "internal.bot.common.handlers.media.normalizeVisionImage", wraps=normalizeVisionImage
+        ) as normalizeSpy:
+            await handler.analyze_command(em, "analyze", "what is this", Mock(), None)
+
+        assert handler._visionAlphaBackground is AlphaBackground.BLACK
+        normalizeSpy.assert_called_once()
+        assert normalizeSpy.call_args is not None
+        assert normalizeSpy.call_args.kwargs["alphaBackground"] is AlphaBackground.BLACK
+
+    async def test_analyzeNormalizationRunsOffEventLoop_tickerProgresses(self) -> None:
+        """A slow normalization must not block the event loop (ticker keeps ticking).
+
+        Regression for the ``asyncio.to_thread`` offload in the ``/analyze``
+        path: the lenient normalizer is patched to sleep ~100ms in whatever
+        thread invokes it while an independent ticker task loops every 2ms,
+        counting only ticks that land INSIDE the normalization window (the
+        wrapper marks the window with a ``threading.Event``). On-loop
+        execution would block the loop for the whole sleep → zero ticks;
+        the offloaded call keeps the loop live → dozens.
+        """
+        handler = _newMediaHandler()
+        handler.llmService.generateText = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("analysis")
+        )
+        handler._bot = Mock(downloadAttachment=AsyncMock(return_value=_minimalPngBytes()))
+
+        em = EnsuredMessage.fromTelegramMessage(_telegramCommandMessage(replyTo=_telegramPhotoMessage()))
+
+        mainThread = threading.current_thread()
+        normalizeThreads: List[threading.Thread] = []
+        normalizeActive = threading.Event()
+
+        def slowNormalize(
+            imageBytes: bytes,
+            maxDimension: int = 2048,
+            outputFormat: VisionOutputImageFormat = VisionOutputImageFormat.JPEG,
+            quality: int = 85,
+            alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
+        ) -> Tuple[bytes, str]:
+            """Sleep INSIDE the normalization call, then delegate to the real one.
+
+            Args:
+                imageBytes: Raw image bytes production passed in.
+                maxDimension: Pixel cap production forwards.
+                outputFormat: Target format production forwards.
+                quality: JPEG quality production forwards.
+                alphaBackground: Alpha background production forwards.
+
+            Returns:
+                The real lenient wrapper's ``(normalizedBytes, mimeType)``.
+            """
+            normalizeThreads.append(threading.current_thread())
+            normalizeActive.set()
+            time.sleep(0.1)
+            normalizeActive.clear()
+            return normalizeVisionImage(
+                imageBytes,
+                maxDimension=maxDimension,
+                outputFormat=outputFormat,
+                quality=quality,
+                alphaBackground=alphaBackground,
+            )
+
+        ticksDuringNormalization = 0
+
+        async def ticker() -> None:
+            """Increment the tick counter every 2ms while normalization runs."""
+            nonlocal ticksDuringNormalization
+            while True:
+                await asyncio.sleep(0.002)
+                if normalizeActive.is_set():
+                    ticksDuringNormalization += 1
+
+        tickerTask = asyncio.create_task(ticker())
+        try:
+            with patch("internal.bot.common.handlers.media.normalizeVisionImage", slowNormalize):
+                await handler.analyze_command(em, "analyze", "what is this", Mock(), None)
+        finally:
+            tickerTask.cancel()
+            try:
+                await tickerTask
+            except asyncio.CancelledError:
+                pass
+
+        # The normalizer really ran (exactly once) and NOT on the event-loop thread.
+        assert len(normalizeThreads) == 1
+        assert normalizeThreads[0] is not mainThread
+        # Loop liveness during the ~100ms normalization window: the offloaded
+        # call yields, so the 2ms ticker lands many ticks inside it
+        # (on-loop execution would block the ticker entirely → 0).
+        assert ticksDuringNormalization >= 5
+        # The analysis itself was still delivered.
         sendMessage = cast(AsyncMock, handler.sendMessage)
         sendMessage.assert_awaited_once()
         assert sendMessage.await_args is not None

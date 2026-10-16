@@ -19,7 +19,6 @@ eligibility, fail-soft layers, conditional condenser strip.
 ## 1. Overview
 
 ### 1.1 Goal
-
 Move native image attachment from the single late chokepoint
 (`LLMMessageHandler._applyNativeVision`, run inside `_sendLLMChatMessage` after
 assembly) **into message construction itself** (`EnsuredMessage.toModelMessage`),
@@ -33,8 +32,9 @@ Net effects:
 1. Attached images no longer pay the up-to-300 s `_awaitMedia` description wait
    at assembly time ([`ensured_message.py`](../../internal/bot/models/ensured_message.py):1111,
    `MAX_MEDIA_AWAIT_SECS = 300` at :52).
-2. The model no longer sees both the image AND its full text description for
-   the same media (dedup on the attach path).
+2. When all describable media attach, the model no longer sees both the image
+   AND its full text description for the same media (dedup on the attach path;
+   partial albums intentionally keep the description — see §4.3/§5).
 3. The condenser (text-only condensing models) still learns what the image
    contained — via the resolver at strip time, with today's omission marker as
    fallback.

@@ -1438,8 +1438,10 @@ class EnsuredMessage:
         entry attached, the description is skipped entirely and the returned
         :class:`ModelImagesMessage` carries a lazy description resolver for the
         condenser; when only part of the album loaded, the loaded subset is
-        attached alongside the description-bearing envelope (no resolver); when
-        nothing loaded, today's plain ``ModelMessage`` is returned.
+        attached alongside an envelope rendering ALL per-media descriptions
+        (the caller's ``useSingleMedia`` selection is overridden so the
+        unattached media's description survives; no resolver); when nothing
+        loaded, today's plain ``ModelMessage`` is returned.
 
         Args:
             db: Database wrapper for accessing media content
@@ -1499,21 +1501,26 @@ class EnsuredMessage:
             )
 
         # Default path — the description wait happens HERE if media is pending.
+        # A nonempty ``images`` at this point means the PARTIAL case (the
+        # full-attach case returned above): the caller's primary-only
+        # ``useSingleMedia`` selection is overridden to per-media, because it
+        # would render only the attached (primary) media's description and
+        # silently drop the unattached media's description from model context.
         content = await self.formatForLLM(
             db=db,
             format=format,
             replaceMessageText=replaceMessageText,
             stripAtsign=stripAtsign,
             outputFormat=outputFormat,
-            useSingleMedia=useSingleMedia,
+            useSingleMedia=useSingleMedia and not images,
             cache=cache,
             excludeMemoryIds=excludeMemoryIds,
         )
         if images:
             # PARTIAL — attach the loaded subset ALONGSIDE the description-bearing
             # envelope (dropping the description would silently lose the
-            # unattached media). No resolver: the content already carries the
-            # descriptions, so the condenser's lazy gate needs nothing.
+            # unattached media). No resolver: the content already carries ALL
+            # the descriptions, so the condenser's lazy gate needs nothing.
             return ModelImagesMessage(role=role, content=content, images=images, source=self)
         return ModelMessage(role=role, content=content, source=self)
 

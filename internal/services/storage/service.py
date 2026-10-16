@@ -10,7 +10,7 @@ instance, configured from its own config table.
 import logging
 import threading
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict
 
 from .backends.abstract import AbstractStorageBackend
 from .backends.filesystem import FSStorageBackend
@@ -159,7 +159,8 @@ class StorageService:
         keys = storage.list(prefix="prefix-", limit=10)
 
     Thread Safety:
-        Per-scope singleton instance creation is thread-safe using RLock.
+        Per-scope singleton instance creation and first-time initialization
+        are thread-safe using a class-level RLock.
         Individual backend operations depend on backend implementation.
     """
 
@@ -188,19 +189,22 @@ class StorageService:
         Initialize storage service.
 
         Only runs once per scoped instance due to the scoped singleton pattern.
-        The ``scope`` parameter is accepted (Python forwards ``__new__``'s
-        arguments to ``__init__``) but intentionally unused: per-instance
-        state is identical for every scope. Sets up:
-        - Backend placeholder (None until injectConfig is called)
-        - Initialization flag
+        The ``hasattr`` guard and the initialization assignments run under the
+        class lock so a concurrent first-time caller cannot re-run them (and
+        cannot reset ``backend``/``initialized`` on an instance another thread
+        has already configured). The ``scope`` parameter (forwarded by Python
+        from ``__new__``) is retained as the instance's bound construction
+        scope, which ``injectConfig`` validates against.
 
         Args:
-            scope: The storage scope this instance was created for (unused)
+            scope: The storage scope this instance was created for
         """
-        if not hasattr(self, "initialized"):
-            self.backend: AbstractStorageBackend | None = None
-            self.initialized = False
-            logger.info("StorageService created, awaiting configuration")
+        with self._lock:
+            if not hasattr(self, "initialized"):
+                self.scope: StorageScope = scope
+                self.backend: AbstractStorageBackend | None = None
+                self.initialized = False
+                logger.info("StorageService created, awaiting configuration")
 
     @classmethod
     def getInstance(cls, scope: StorageScope = StorageScope.DEFAULT) -> "StorageService":
@@ -231,9 +235,14 @@ class StorageService:
 
         Args:
             configManager: The configuration manager containing storage settings
-            scope: The storage scope to configure (default: StorageScope.DEFAULT)
+            scope: The storage scope to configure (default: StorageScope.DEFAULT).
+                Must match the scope this instance was created for
 
         Raises:
+            ValueError: If ``scope`` does not match the scope this instance was
+                created for (e.g. an arg-less call on the VISION instance).
+                Raised before any state changes, so the instance's backend is
+                never silently redirected to another scope's storage
             StorageConfigError: If configuration is invalid or backend creation fails
 
         Configuration format (identical for the default and every named table):
@@ -250,6 +259,14 @@ class StorageService:
                 }
             }
         """
+        if scope is not self.scope:
+            raise ValueError(
+                f"injectConfig scope mismatch: instance was created for scope "
+                f"'{self.scope.value}' but injectConfig was called with scope "
+                f"'{scope.value}'; use StorageService.getInstance(scope) to get "
+                f"the instance for the target scope"
+            )
+
         try:
             if scope is StorageScope.DEFAULT:
                 # Get the default storage configuration from ConfigManager
@@ -292,7 +309,7 @@ class StorageService:
             raise StorageConfigError("StorageService is not initialized. Call injectConfig() first")
 
     @property
-    def backendType(self) -> Optional[str]:
+    def backendType(self) -> str | None:
         """Name of the configured backend type, for read-only introspection.
 
         Mirrors the ``type`` value accepted by :meth:`injectConfig`, so callers

@@ -482,7 +482,7 @@ class MediaAttachmentsRepository(BaseRepository):
             dataSource: Optional data source name for multi-source routing.
 
         Returns:
-            bool: True if the update executed successfully, False otherwise.
+            True if the update executed successfully, False otherwise.
             A mediaId matching no row is not an error (True, same semantics
             as updateMediaAttachment). On a database failure the error is
             logged (ERROR) by the repository and False is returned; the

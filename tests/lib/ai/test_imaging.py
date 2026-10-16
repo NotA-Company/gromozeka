@@ -35,22 +35,49 @@ Covers:
   6, over-cap, and PNG-input/output cases take the normal pipeline; an
   EXIF-free JPEG round-trips byte-identically; a corrupt marker stream warns
   and still normalizes via the fallback re-encode; XMP APP1 survives.
+- normalizeVisionImageStrict first-frame collapse (review fix): animated
+  sources normalize from the already-positioned frame 0 WITHOUT querying
+  animation length (Pillow's ``is_animated``/``n_frames`` walk the ENTIRE
+  animation on GIF sources — wasted parse work on untrusted input).
+- convertImageIfNeeded (send-time converter): failure branches mirror
+  normalization's guards with a LENIENT contract — oversized-header
+  rejection BEFORE decode and libmagic-detection failure return the
+  ORIGINAL bytes unchanged (detected MIME / ``application/octet-stream``);
+  plus the never-raise pin at the serialization boundary
+  (``ModelImagesMessage.toDict`` with corrupt bytes still renders exactly
+  one ``image_url`` block carrying the original bytes).
+- Alpha compositing (review finding "Important 2" fix): ``flattenAlphaToRgb``
+  composites alpha-bearing input (RGBA / LA / P with ``info["transparency"]``)
+  onto an :class:`AlphaBackground` with per-pixel blending instead of
+  discarding the channel — ADAPTIVE picks the background contrasting the
+  visible pixels' mean luminance (dark content → white, light content →
+  black), fully transparent falls back deterministically onto BLACK, forced
+  WHITE/BLACK pin the documented trade-off, no-alpha input is unchanged;
+  wired through convertImageIfNeeded, normalizeVisionImageStrict, and the
+  lenient wrapper, while the alpha-preserving PNG output path stays
+  unflattened. All assertions are on PIXEL VALUES (mode checks cannot
+  detect the alpha-discard bug).
 """
 
+import base64
 import logging
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple, cast
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from PIL import Image, ImageOps
+from PIL import GifImagePlugin, Image, ImageOps
 
 from lib.ai.imaging import (
+    AlphaBackground,
     VisionOutputImageFormat,
     _stripJpegExif,
+    convertImageIfNeeded,
+    flattenAlphaToRgb,
     normalizeVisionImage,
     normalizeVisionImageStrict,
 )
+from lib.ai.models import ModelImagesMessage
 
 # ============================================================================
 # normalizeVisionImage — native-vision Phase 1a normalization helper
@@ -105,6 +132,91 @@ def _animatedGifBytes() -> bytes:
     buf = BytesIO()
     frame0.save(buf, format="GIF", save_all=True, append_images=[frame1], duration=100, loop=0)
     return buf.getvalue()
+
+
+def _transparentBackedPngBytes(
+    contentColor: Tuple[int, int, int],
+    transparentRgb: Tuple[int, int, int],
+    contentAlpha: int = 255,
+) -> bytes:
+    """Return a 32x32 RGBA PNG: transparent margins around a centered 12x12 square.
+
+    The RGB stored UNDER the fully transparent margins is *transparentRgb*:
+    real transparent content (line art, stickers) carries arbitrary color
+    there, and the old alpha-DISCARD convert leaked it straight into the
+    JPEG output — so the fixtures set it deliberately (the
+    white-on-transparent fixture uses white underneath, the shape real
+    stickers have).
+
+    Args:
+        contentColor: RGB color of the centered content square.
+        transparentRgb: RGB stored under the fully transparent margins.
+        contentAlpha: Alpha of the content square; 255 (default) is opaque,
+            lower values make it semi-transparent (blend tests).
+
+    Returns:
+        bytes of an RGBA PNG-encoded image.
+    """
+    img = Image.new("RGBA", (32, 32), transparentRgb + (0,))
+    content = Image.new("RGBA", (12, 12), contentColor + (contentAlpha,))
+    img.paste(content, (10, 10))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _fullyTransparentPngBytes() -> bytes:
+    """Return a 16x16 RGBA PNG where EVERY pixel is fully transparent.
+
+    The RGB under the alpha is white, so the deterministic fully-transparent
+    fallback (BLACK) is observable: an alpha DISCARD would render all-white.
+
+    Returns:
+        bytes of an RGBA PNG-encoded image.
+    """
+    buf = BytesIO()
+    Image.new("RGBA", (16, 16), (255, 255, 255, 0)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _transparentPaletteGifBytes() -> bytes:
+    """Return a single-frame palette-mode (P) GIF: transparent margins, opaque red square.
+
+    Palette index 0 (black) is marked transparent via
+    ``info["transparency"]``; index 1 is opaque red. Exercises the palette
+    branch of the alpha detection (``P`` + transparency).
+
+    Returns:
+        bytes of a GIF-encoded palette image carrying transparency.
+    """
+    img = Image.new("P", (32, 32), 0)
+    img.putpalette([0, 0, 0, 255, 0, 0] + [0, 0, 0] * 254)
+    for y in range(10, 22):
+        for x in range(10, 22):
+            img.putpixel((x, y), 1)
+    img.info["transparency"] = 0
+    buf = BytesIO()
+    img.save(buf, format="GIF", transparency=0)
+    return buf.getvalue()
+
+
+def _pixelChannels(image: Image.Image, x: int, y: int) -> Tuple[int, int, int]:
+    """Return one pixel's first three channels as an int tuple.
+
+    Args:
+        image: Image to sample.
+        x: Pixel x coordinate.
+        y: Pixel y coordinate.
+
+    Returns:
+        (r, g, b) ints of the sampled pixel.
+
+    Raises:
+        AssertionError: When the pixel is not an RGB tuple.
+    """
+    pixel = image.getpixel((x, y))
+    assert isinstance(pixel, tuple) and len(pixel) >= 3, f"expected an RGB tuple at {(x, y)}, got {pixel!r}"
+    return (int(pixel[0]), int(pixel[1]), int(pixel[2]))
 
 
 def _jpegBytesWithExifTags(width: int, height: int, tags: Dict[int, object]) -> bytes:
@@ -979,6 +1091,61 @@ class TestNormalizeVisionImageStrict:
         assert strict is None
         assert lenientBytes == corrupt
 
+    def testFirstFrameNormalizationNeverQueriesAnimationLength(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Normalizing an animated GIF must not read ``n_frames``/``is_animated``.
+
+        Regression for the review finding: the pipeline probed
+        ``is_animated``/``n_frames`` before collapsing to frame 0, and on
+        Pillow those properties lazily walk the ENTIRE animation (untrusted
+        input; the 50MP guard bounds dimensions, not frame count). Both
+        properties are patched to raise on ANY access — the raise lands in
+        the fail-closed handler and yields ``None``, so success here proves
+        the pipeline ran purely on the already-positioned frame 0. Frame-0
+        pixels are asserted to pin the collapse behavior itself.
+
+        Args:
+            monkeypatch: pytest fixture for temporary attribute patching.
+
+        Returns:
+            None
+        """
+
+        def forbiddenAccess(image: object) -> int:
+            """Property getter that fails the test when the property is read.
+
+            Raises AssertionError — NOT AttributeError — because
+            ``getattr`` with a default silently swallows AttributeError,
+            which would turn a forbidden query into a skipped branch
+            instead of a loud failure.
+
+            Args:
+                image: The image instance the property was read from.
+
+            Returns:
+                Never returns; always raises AssertionError.
+
+            Raises:
+                AssertionError: Signals a forbidden animation-length query.
+            """
+            raise AssertionError(f"animation-length property accessed on {type(image).__name__}")
+
+        monkeypatch.setattr(GifImagePlugin.GifImageFile, "n_frames", property(forbiddenAccess))
+        monkeypatch.setattr(GifImagePlugin.GifImageFile, "is_animated", property(forbiddenAccess))
+        original = _animatedGifBytes()
+
+        result = normalizeVisionImageStrict(original, maxDimension=2048)
+
+        assert result is not None
+        normalized, mime = result
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(normalized))
+        assert out.format == "JPEG"
+        pixel = out.convert("RGB").getpixel((0, 0))
+        assert isinstance(pixel, tuple) and len(pixel) >= 3
+        red, green, blue = pixel[0], pixel[1], pixel[2]
+        assert red > 200 and green < 60 and blue < 60, f"expected frame-0 red, got {pixel}"
+        out.load()
+
 
 class TestStripJpegExifHelper:
     """Direct marker-walk contract tests for :func:`lib.ai.imaging._stripJpegExif`.
@@ -1782,3 +1949,603 @@ class TestNormalizeVisionImageJpegExifFastPath:
         srcPixels = Image.open(BytesIO(original)).convert("RGB").tobytes()
         outPixels = Image.open(BytesIO(normalized)).convert("RGB").tobytes()
         assert outPixels == srcPixels
+
+
+class TestConvertImageIfNeeded:
+    """Failure-coverage tests for :func:`lib.ai.imaging.convertImageIfNeeded`.
+
+    The send-time converter mirrors normalization's guards (50MP
+    before-decode rejection, libmagic failure fallback) with a LENIENT
+    contract: every failure returns the ORIGINAL bytes unchanged (never
+    raises) so the caller can still attempt the request. Happy-path
+    conversion behavior is covered by ``tests/lib/ai/test_image_format_conversion.py``
+    and the ``ModelImagesMessage.toDict`` tests; this class pins the
+    failure branches and the never-raise contract at the serialization
+    boundary.
+    """
+
+    def testOversizeImageRejectedBeforeDecodeReturnsOriginal(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The 50MP guard returns original bytes BEFORE any decode is attempted.
+
+        ``Image.open`` is mocked to report 10000x10000 (100 MP > 50 MP cap)
+        from its cheap header read; neither the decode (``load``) nor the
+        re-encode steps (``convert``/``save``) may run — the size guard
+        must trip first, exactly like normalization's guard.
+
+        Args:
+            caplog: pytest fixture capturing log records.
+            monkeypatch: pytest fixture for temporary attribute patching.
+
+        Returns:
+            None
+        """
+        original = _jpegBytesOfSize(10, 10)  # real bytes: libmagic must detect image/jpeg
+        mockImg = MagicMock()
+        mockImg.width = 10_000
+        mockImg.height = 10_000
+        openMock = Mock(return_value=mockImg)
+        monkeypatch.setattr(Image, "open", openMock)
+
+        with caplog.at_level(logging.ERROR, logger="lib.ai.imaging"):
+            # Target deliberately differs from the detected source MIME: an
+            # already-supported image takes the passthrough short-circuit
+            # and never reaches the size guard.
+            result, mime = convertImageIfNeeded(original, ["image/webp"])
+
+        assert result == original
+        assert mime == _JPEG_MIME
+        openMock.assert_called_once()  # header read happened...
+        mockImg.load.assert_not_called()  # ...but the decode never ran
+        mockImg.convert.assert_not_called()  # and neither did any re-encode step
+        mockImg.save.assert_not_called()
+        assert "too large" in caplog.text
+        assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+    def testMimeDetectionFailureReturnsOctetStreamFallback(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A libmagic failure returns the original bytes as application/octet-stream.
+
+        Distinct failure point from undecodable bytes: MIME DETECTION
+        itself raises, so the converter must bail out before even opening
+        the image — with the honest unknown-type fallback MIME
+        (documented never-raise contract).
+
+        Args:
+            caplog: pytest fixture capturing log records.
+            monkeypatch: pytest fixture for temporary attribute patching.
+
+        Returns:
+            None
+        """
+        original = b"\x00\x01payload-that-is-never-inspected"
+
+        def failingFromBuffer(*args: object, **kwargs: object) -> str:
+            """Stub raising the simulated libmagic failure.
+
+            Args:
+                *args: Positional call arguments (ignored).
+                **kwargs: Keyword call arguments (ignored).
+
+            Returns:
+                Never returns; always raises OSError.
+
+            Raises:
+                OSError: The simulated libmagic failure.
+            """
+            raise OSError("simulated libmagic failure")
+
+        monkeypatch.setattr("lib.ai.imaging.magic.from_buffer", failingFromBuffer)
+
+        with caplog.at_level(logging.ERROR, logger="lib.ai.imaging"):
+            result, mime = convertImageIfNeeded(original, [_JPEG_MIME])
+
+        assert result == original
+        assert mime == "application/octet-stream"
+        assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+    def testCorruptImageToDictNeverRaisesAndShipsOriginalBytes(self, caplog: pytest.LogCaptureFixture) -> None:
+        """``ModelImagesMessage.toDict`` with undecodable bytes never raises.
+
+        Pins the never-raise contract at the serialization boundary:
+        a conversion is demanded (JPEG-only model) but the payload cannot
+        be opened — the converter must degrade to the original bytes, and
+        the rendered message must still carry exactly one ``image_url``
+        block whose base64 payload IS the original bytes.
+
+        Args:
+            caplog: pytest fixture capturing log records.
+
+        Returns:
+            None
+        """
+        corrupt = b"\x00\x01\x02\x03not-an-image-at-all-garbage"
+        message = ModelImagesMessage(role="user", content="describe", images=[bytearray(corrupt)])
+
+        with caplog.at_level(logging.ERROR, logger="lib.ai.imaging"):
+            rendered = message.toDict(supportedImageFormats=[_JPEG_MIME])
+
+        content = rendered["content"]
+        assert isinstance(content, list)
+        typesList = [block["type"] for block in content if isinstance(block, dict)]
+        assert typesList == ["text", "image_url"]
+        imageBlock = next(block for block in content if block.get("type") == "image_url")
+        url = imageBlock["image_url"]["url"]
+        assert url.startswith("data:")
+        payload = base64.b64decode(url.split(",", 1)[1])
+        assert payload == corrupt
+        assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+
+# ============================================================================
+# Alpha compositing — flattenAlphaToRgb + AlphaBackground (review "Important 2")
+# ============================================================================
+
+
+class TestFlattenAlphaToRgb:
+    """Direct pixel-level tests for :func:`lib.ai.imaging.flattenAlphaToRgb`.
+
+    The helper is the shared compositing primitive behind both
+    :func:`convertImageIfNeeded` and :func:`normalizeVisionImageStrict`, so
+    its blending math is pinned here EXACTLY (PIL/PNG round-trips are
+    lossless); the pipeline tests below re-prove the adaptive decision
+    end-to-end through lossy JPEG with tolerant thresholds. Mode checks
+    alone cannot detect the alpha-discard bug — every meaningful assertion
+    here is on PIXEL VALUES.
+    """
+
+    def testNoAlphaInputPassesThroughAsRgb(self) -> None:
+        """A no-alpha input takes plain ``convert("RGB")`` — pixels unchanged.
+
+        Pins the unchanged-behavior contract for alpha-free sources.
+
+        Returns:
+            None
+        """
+        src = Image.new("RGB", (8, 8), (10, 20, 30))
+
+        result = flattenAlphaToRgb(src)
+
+        assert result.mode == "RGB"
+        assert result.tobytes() == src.tobytes()
+
+    def testAdaptiveDarkContentCompositesOntoWhite(self) -> None:
+        """Black content on transparent → ADAPTIVE picks a WHITE background.
+
+        Corners (transparent margins) composite to white and the content
+        square stays black — the black-on-transparent line-art case the old
+        alpha discard rendered as an all-black image.
+
+        Returns:
+            None
+        """
+        img = Image.open(BytesIO(_transparentBackedPngBytes((0, 0, 0), (0, 0, 0))))
+
+        result = flattenAlphaToRgb(img)
+
+        assert result.mode == "RGB"
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            assert _pixelChannels(result, *corner) == (255, 255, 255), f"expected white margin at {corner}"
+        assert _pixelChannels(result, 15, 15) == (0, 0, 0), "expected black content at (15, 15)"
+
+    def testAdaptiveLightContentCompositesOntoBlack(self) -> None:
+        """White content on transparent (white underneath) → ADAPTIVE picks BLACK.
+
+        The white-sticker case: margins composite to black, content stays
+        white — the old discard rendered the whole canvas white/garbage.
+
+        Returns:
+            None
+        """
+        img = Image.open(BytesIO(_transparentBackedPngBytes((255, 255, 255), (255, 255, 255))))
+
+        result = flattenAlphaToRgb(img)
+
+        assert result.mode == "RGB"
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            assert _pixelChannels(result, *corner) == (0, 0, 0), f"expected black margin at {corner}"
+        assert _pixelChannels(result, 15, 15) == (255, 255, 255), "expected white content at (15, 15)"
+
+    def testSemiTransparentContentBlendsPerPixelAgainstBackground(self) -> None:
+        """A semi-transparent content square blends exactly against the forced background.
+
+        Blue content at alpha 128 over WHITE: each channel becomes
+        ``src * 128/255 + background * 127/255`` (PIL paste blending) —
+        per-pixel alpha blending, not a binary keep/drop of the pixel.
+
+        Returns:
+            None
+        """
+        img = Image.open(BytesIO(_transparentBackedPngBytes((0, 0, 255), (0, 0, 0), contentAlpha=128)))
+
+        result = flattenAlphaToRgb(img, AlphaBackground.WHITE)
+
+        alphaShare = 128 / 255
+        backgroundShare = 1 - alphaShare
+        expected = (
+            round(0 * alphaShare + 255 * backgroundShare),
+            round(0 * alphaShare + 255 * backgroundShare),
+            round(255 * alphaShare + 255 * backgroundShare),
+        )
+        actual = _pixelChannels(result, 15, 15)
+        for channelIndex in range(3):
+            assert (
+                abs(actual[channelIndex] - expected[channelIndex]) <= 2
+            ), f"expected blended channel {channelIndex} ≈ {expected[channelIndex]}, got {actual[channelIndex]}"
+        # The fully transparent margins must be untouched background.
+        assert _pixelChannels(result, 2, 2) == (255, 255, 255), "expected untouched white margin"
+
+    def testLaModeTransparentRegionComposites(self) -> None:
+        """An ``LA`` (grayscale + alpha) source composites instead of alpha-discarding.
+
+        Left half opaque white; right half white RGB with alpha 0. Forced
+        BLACK background: the transparent half must go BLACK (the old
+        ``convert("RGB")`` alpha discard would have rendered it white).
+
+        Returns:
+            None
+        """
+        la = Image.new("LA", (8, 4), (255, 255))
+        transparentHalf = Image.new("LA", (4, 4), (255, 0))
+        la.paste(transparentHalf, (4, 0))
+
+        result = flattenAlphaToRgb(la, AlphaBackground.BLACK)
+
+        assert result.mode == "RGB"
+        assert _pixelChannels(result, 2, 2) == (255, 255, 255), "expected opaque half unchanged"
+        assert _pixelChannels(result, 6, 2) == (0, 0, 0), "expected transparent half composited onto black"
+
+    def testPaletteTransparencyComposites(self) -> None:
+        """A ``P``-mode source with ``info["transparency"]`` composites adaptively.
+
+        The visible red content (mean luminance ≈ 0.299·255 ≈ 76 < 128)
+        drives an ADAPTIVE WHITE background: transparent margins must be
+        white, not the palette color leaking through.
+
+        Returns:
+            None
+        """
+        img = Image.open(BytesIO(_transparentPaletteGifBytes()))
+        # Fixture sanity: palette mode carrying transparency.
+        assert img.mode == "P"
+        assert "transparency" in img.info
+
+        result = flattenAlphaToRgb(img)
+
+        assert result.mode == "RGB"
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            assert _pixelChannels(result, *corner) == (255, 255, 255), f"expected white margin at {corner}"
+        contentRed, contentGreen, contentBlue = _pixelChannels(result, 15, 15)
+        assert contentRed > 200 and contentGreen < 60 and contentBlue < 60, "expected red content"
+
+    def testFullyTransparentAdaptiveFallsBackToBlackDeterministically(self) -> None:
+        """A fully transparent image composites onto BLACK (documented fallback).
+
+        No visible pixels → the luminance statistic is undefined; the
+        deterministic BLACK fallback replaces it. White RGB under the alpha
+        makes an alpha DISCARD (all-white) distinguishable from the
+        fallback (all-black).
+
+        Returns:
+            None
+        """
+        img = Image.open(BytesIO(_fullyTransparentPngBytes()))
+
+        result = flattenAlphaToRgb(img)
+        again = flattenAlphaToRgb(Image.open(BytesIO(_fullyTransparentPngBytes())))
+
+        assert result.mode == "RGB"
+        assert result.tobytes() == again.tobytes(), "fallback must be deterministic"
+        for probe in ((0, 0), (8, 8), (15, 15)):
+            assert _pixelChannels(result, *probe) == (0, 0, 0), f"expected black at {probe}"
+
+    def testAdaptiveAlphaThresholdBoundaryEightInvisibleNineVisible(self) -> None:
+        """Alpha 8 is invisible to the ADAPTIVE decision; alpha 9 is visible.
+
+        Pins :data:`ALPHA_VISIBLE_THRESHOLD` (8) exactly: a WHITE field at
+        alpha 8 around an opaque BLACK square is EXCLUDED from the
+        visible-pixel luminance — only the black square is measured, so the
+        decision is dark → WHITE background and the margins composite white.
+        Bumping ONLY the field alpha to 9 pulls the whole field into the
+        measurement (visible mean luminance ≈ 219 ≥ 128) → BLACK background
+        and the margins composite dark. A threshold off by one in either
+        direction flips the chosen background and fails the matching margin
+        assertion.
+
+        Returns:
+            None
+        """
+        alphaEight = Image.new("RGBA", (32, 32), (255, 255, 255, 8))
+        alphaEight.paste(Image.new("RGBA", (12, 12), (0, 0, 0, 255)), (10, 10))
+        alphaNine = Image.new("RGBA", (32, 32), (255, 255, 255, 9))
+        alphaNine.paste(Image.new("RGBA", (12, 12), (0, 0, 0, 255)), (10, 10))
+
+        fromEight = flattenAlphaToRgb(alphaEight)
+        fromNine = flattenAlphaToRgb(alphaNine)
+
+        # Alpha 8 excluded: the black square alone is visible → WHITE background.
+        eightMargin = _pixelChannels(fromEight, 2, 2)
+        assert all(channel > 200 for channel in eightMargin), f"expected white margin, got {eightMargin}"
+        assert _pixelChannels(fromEight, 15, 15) == (0, 0, 0), "expected black content at (15, 15)"
+        # Alpha 9 included: the luminous white field dominates → BLACK background.
+        nineMargin = _pixelChannels(fromNine, 2, 2)
+        assert all(channel < 60 for channel in nineMargin), f"expected dark margin, got {nineMargin}"
+        assert _pixelChannels(fromNine, 15, 15) == (0, 0, 0), "expected black content at (15, 15)"
+
+    def testAdaptiveLuminanceMidpointBoundaryBelowWhiteAboveBlack(self) -> None:
+        """Visible content one luminance step below 128 → WHITE; one above → BLACK.
+
+        Pins the :data:`ADAPTIVE_LUMINANCE_MIDPOINT` decision on solid-gray
+        content squares (their luminance equals the gray value): gray 127
+        (mean luminance < 128) selects the WHITE background — transparent
+        margins composite white — while gray 129 (>= 128) selects BLACK and
+        the same margins composite black. Deliberately one step clear of the
+        midpoint on each side: the float formula evaluated at EXACTLY 128
+        lands at ``127.99999999999999`` and picks WHITE, so the
+        exact-midpoint side of the boundary is float-epsilon territory this
+        pin does not claim.
+
+        Returns:
+            None
+        """
+        below = flattenAlphaToRgb(Image.open(BytesIO(_transparentBackedPngBytes((127, 127, 127), (0, 0, 0)))))
+        above = flattenAlphaToRgb(Image.open(BytesIO(_transparentBackedPngBytes((129, 129, 129), (0, 0, 0)))))
+
+        # Gray 127: dark side of the midpoint → WHITE background shows in the margins.
+        belowMargin = _pixelChannels(below, 2, 2)
+        assert all(channel > 200 for channel in belowMargin), f"expected white margin, got {belowMargin}"
+        assert _pixelChannels(below, 15, 15) == (127, 127, 127), "expected gray-127 content unchanged"
+        # Gray 129: light side of the midpoint → BLACK background shows in the margins.
+        aboveMargin = _pixelChannels(above, 2, 2)
+        assert all(channel < 60 for channel in aboveMargin), f"expected black margin, got {aboveMargin}"
+        assert _pixelChannels(above, 15, 15) == (129, 129, 129), "expected gray-129 content unchanged"
+
+
+class TestVisionAlphaCompositing:
+    """End-to-end alpha compositing through the public entry points.
+
+    Pins the ratified fix for review finding "Important 2": flattening to
+    RGB must COMPOSITE the alpha onto a background (adaptive by default)
+    instead of discarding the channel and leaking whatever RGB sits under
+    the transparent pixels — in both the send-time converter and the strict
+    receipt-time normalizer (which persists the corrupted JPEG). The
+    adaptive cases pass NO extra argument: the ADAPTIVE default itself must
+    produce the contrasting background.
+    """
+
+    def testStrictAdaptiveBlackLetteringOnTransparentShipsWhiteBackground(self) -> None:
+        """Strict JPEG normalization of black-on-transparent → white background, dark lettering.
+
+        Returns:
+            None
+        """
+        original = _transparentBackedPngBytes((0, 0, 0), (0, 0, 0))
+
+        result = normalizeVisionImageStrict(original, maxDimension=2048)
+
+        assert result is not None
+        normalized, mime = result
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(normalized))
+        assert out.format == "JPEG"
+        rgb = out.convert("RGB")
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            channels = _pixelChannels(rgb, *corner)
+            assert all(channel > 200 for channel in channels), f"expected white-ish margin at {corner}, got {channels}"
+        contentChannels = _pixelChannels(rgb, 15, 15)
+        assert all(
+            channel < 60 for channel in contentChannels
+        ), f"expected dark content at (15, 15), got {contentChannels}"
+        out.load()
+
+    def testStrictAdaptiveWhiteStickerOnTransparentShipsBlackBackground(self) -> None:
+        """Strict JPEG normalization of white-on-transparent → black background, white sticker.
+
+        Returns:
+            None
+        """
+        original = _transparentBackedPngBytes((255, 255, 255), (255, 255, 255))
+
+        result = normalizeVisionImageStrict(original, maxDimension=2048)
+
+        assert result is not None
+        normalized, mime = result
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(normalized))
+        assert out.format == "JPEG"
+        rgb = out.convert("RGB")
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            channels = _pixelChannels(rgb, *corner)
+            assert all(channel < 60 for channel in channels), f"expected black-ish margin at {corner}, got {channels}"
+        contentChannels = _pixelChannels(rgb, 15, 15)
+        assert all(
+            channel > 200 for channel in contentChannels
+        ), f"expected visible white content at (15, 15), got {contentChannels}"
+        out.load()
+
+    @pytest.mark.parametrize(
+        ("background", "contentColor", "marginRgb"),
+        [
+            (AlphaBackground.WHITE, (255, 255, 255), (255, 255, 255)),
+            (AlphaBackground.BLACK, (0, 0, 0), (0, 0, 0)),
+        ],
+    )
+    def testForcedBackgroundPinsTheDocumentedTradeOff(
+        self,
+        background: AlphaBackground,
+        contentColor: Tuple[int, int, int],
+        marginRgb: Tuple[int, int, int],
+    ) -> None:
+        """A forced background renders same-color-on-transparent content INVISIBLE.
+
+        Pins the documented trade-off: forced WHITE with white-on-transparent
+        yields an all-white image; forced BLACK with black-on-transparent
+        yields all-black. The caller explicitly chose the background; the
+        compositing must honour it even when it erases the content.
+
+        Args:
+            background: Forced background under test.
+            contentColor: RGB of the content square (matches the background).
+            marginRgb: RGB stored under the transparent margins.
+
+        Returns:
+            None
+        """
+        original = _transparentBackedPngBytes(contentColor, marginRgb)
+
+        result = normalizeVisionImageStrict(original, maxDimension=2048, alphaBackground=background)
+
+        assert result is not None
+        normalized, mime = result
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(normalized))
+        rgb = out.convert("RGB")
+        isLight = background == AlphaBackground.WHITE
+        for probe in ((2, 2), (29, 29), (15, 15)):
+            channels = _pixelChannels(rgb, *probe)
+            if isLight:
+                assert all(channel > 200 for channel in channels), f"expected white at {probe}, got {channels}"
+            else:
+                assert all(channel < 60 for channel in channels), f"expected black at {probe}, got {channels}"
+        out.load()
+
+    def testStrictPaletteGifTransparencyCompositesAdaptively(self) -> None:
+        """A transparent palette GIF normalizes to JPEG with the margins composited.
+
+        Returns:
+            None
+        """
+        original = _transparentPaletteGifBytes()
+        # Fixture sanity: P mode carrying transparency.
+        src = Image.open(BytesIO(original))
+        assert src.mode == "P"
+        assert "transparency" in src.info
+
+        result = normalizeVisionImageStrict(original, maxDimension=2048)
+
+        assert result is not None
+        normalized, mime = result
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(normalized))
+        assert out.format == "JPEG"
+        rgb = out.convert("RGB")
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            channels = _pixelChannels(rgb, *corner)
+            assert all(channel > 200 for channel in channels), f"expected white margin at {corner}, got {channels}"
+        red, green, blue = _pixelChannels(rgb, 15, 15)
+        assert red > 200 and green < 60 and blue < 60, f"expected red content, got {(red, green, blue)}"
+        out.load()
+
+    def testStrictFullyTransparentAdaptiveIsDeterministicBlack(self) -> None:
+        """Fully transparent + ADAPTIVE normalizes deterministically onto black.
+
+        Returns:
+            None
+        """
+        original = _fullyTransparentPngBytes()
+
+        first = normalizeVisionImageStrict(original, maxDimension=2048)
+        second = normalizeVisionImageStrict(original, maxDimension=2048)
+
+        assert first is not None and second is not None
+        normalized, mime = first
+        assert mime == _JPEG_MIME
+        assert second == (normalized, mime), "fallback must be deterministic"
+        rgb = Image.open(BytesIO(normalized)).convert("RGB")
+        for probe in ((0, 0), (8, 8), (15, 15)):
+            channels = _pixelChannels(rgb, *probe)
+            assert all(channel < 60 for channel in channels), f"expected black at {probe}, got {channels}"
+
+    def testStrictPngOutputKeepsAlphaUnflattened(self) -> None:
+        """PNG output keeps the alpha — compositing applies only where flattening happens.
+
+        RGBA in → PNG out must stay RGBA with the original transparency
+        (opaque content square, transparent margins) — the alpha-preserving
+        path must NOT composite.
+
+        Returns:
+            None
+        """
+        original = _transparentBackedPngBytes((255, 0, 0), (0, 0, 0))
+
+        result = normalizeVisionImageStrict(original, maxDimension=2048, outputFormat=VisionOutputImageFormat.PNG)
+
+        assert result is not None
+        normalized, mime = result
+        assert mime == _PNG_MIME
+        out = Image.open(BytesIO(normalized))
+        assert out.format == "PNG"
+        assert out.mode == "RGBA"
+        alphaChannel = out.getchannel("A")
+        assert alphaChannel.getextrema() == (0, 255), "expected both transparent and opaque pixels to survive"
+        rgb = out.convert("RGB")
+        contentChannels = _pixelChannels(rgb, 15, 15)
+        assert contentChannels[0] > 200 and contentChannels[1] < 60, f"expected red content, got {contentChannels}"
+        out.load()
+
+    def testConvertImageIfNeededAdaptiveCompositesOntoWhite(self) -> None:
+        """The send-time converter composites adaptively for a JPEG-only model.
+
+        Black content on transparent margins converted to JPEG: margins must
+        ship white (not the leaked black-under-alpha of the old discard),
+        content stays dark.
+
+        Returns:
+            None
+        """
+        original = _transparentBackedPngBytes((0, 0, 0), (0, 0, 0))
+
+        result, mime = convertImageIfNeeded(original, [_JPEG_MIME])
+
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(result))
+        assert out.format == "JPEG"
+        rgb = out.convert("RGB")
+        for corner in ((2, 2), (29, 2), (2, 29), (29, 29)):
+            channels = _pixelChannels(rgb, *corner)
+            assert all(channel > 200 for channel in channels), f"expected white margin at {corner}, got {channels}"
+        contentChannels = _pixelChannels(rgb, 15, 15)
+        assert all(
+            channel < 60 for channel in contentChannels
+        ), f"expected dark content at (15, 15), got {contentChannels}"
+        out.load()
+
+    def testLenientWrapperForwardsAlphaBackground(self) -> None:
+        """``normalizeVisionImage`` forwards ``alphaBackground`` to the strict pipeline.
+
+        Phase 2 wires config to BOTH normalization entry points; the lenient
+        wrapper must not drop the parameter on the way through. The explicit
+        choice is deliberately CONTRARY to ADAPTIVE on this fixture: white
+        visible content (mean luminance 255 >= 128) makes ADAPTIVE pick
+        BLACK, so the forced WHITE produces a result the default could never
+        produce for the same bytes — if the wrapper dropped the parameter,
+        the margins would composite black and the white-margin assertions
+        below would fail.
+
+        Returns:
+            None
+        """
+        original = _transparentBackedPngBytes((255, 255, 255), (255, 255, 255))
+
+        result, mime = normalizeVisionImage(original, maxDimension=2048, alphaBackground=AlphaBackground.WHITE)
+
+        assert mime == _JPEG_MIME
+        out = Image.open(BytesIO(result))
+        assert out.format == "JPEG"
+        rgb = out.convert("RGB")
+        for probe in ((2, 2), (29, 2), (2, 29), (29, 29), (15, 15)):
+            channels = _pixelChannels(rgb, *probe)
+            assert all(channel > 200 for channel in channels), f"expected white at {probe}, got {channels}"
+        out.load()
+        # Contrast proof on the SAME bytes: the ADAPTIVE default picks the
+        # contrasting BLACK background (white content), so the all-white
+        # result above is attributable to the explicitly forwarded parameter
+        # alone.
+        adaptiveResult, _ = normalizeVisionImage(original, maxDimension=2048)
+        adaptiveRgb = Image.open(BytesIO(adaptiveResult)).convert("RGB")
+        adaptiveMargin = _pixelChannels(adaptiveRgb, 2, 2)
+        assert all(
+            channel < 60 for channel in adaptiveMargin
+        ), f"expected adaptive black margin at (2, 2), got {adaptiveMargin}"

@@ -67,7 +67,6 @@ async def _insertToken(db: Database, storage: DatabaseBayesStorage, token: str, 
 class TestCleanupOldTokens:
     """Tests for DatabaseBayesStorage.cleanupOldTokens."""
 
-    @pytest.mark.asyncio
     async def testRuleDeletesOldRareToken(self, db):
         """Rule (90d, count<=1) deletes a token older than 90d with total_count 1.
 
@@ -83,7 +82,6 @@ class TestCleanupOldTokens:
         stats = await storage.getTokenStats(["oldrare"])
         assert "oldrare" not in stats
 
-    @pytest.mark.asyncio
     async def testRuleSparesRecentToken(self, db):
         """Rule (90d, count<=1) spares a token only 30 days old.
 
@@ -99,7 +97,6 @@ class TestCleanupOldTokens:
         stats = await storage.getTokenStats(["recent"])
         assert "recent" in stats
 
-    @pytest.mark.asyncio
     async def testRuleSparesHighCountToken(self, db):
         """Rule (90d, count<=1) spares a token with total_count=5 even at 200d old.
 
@@ -115,7 +112,6 @@ class TestCleanupOldTokens:
         stats = await storage.getTokenStats(["frequent"])
         assert "frequent" in stats
 
-    @pytest.mark.asyncio
     async def testRuleDeletesOldLessRareToken(self, db):
         """Rule (180d, count<=2) deletes a token with total_count=2 older than 180d.
 
@@ -131,7 +127,6 @@ class TestCleanupOldTokens:
         stats = await storage.getTokenStats(["lessrare"])
         assert "lessrare" not in stats
 
-    @pytest.mark.asyncio
     async def testMultipleRulesCumulative(self, db):
         """Two rules applied together purge matching tokens and spare the rest.
 
@@ -159,7 +154,6 @@ class TestCleanupOldTokens:
         assert "tokenC" in stats
         assert "tokenD" in stats
 
-    @pytest.mark.asyncio
     async def testEmptyRulesDeletesNothing(self, db):
         """An empty rules list is a no-op; no tokens are removed.
 
@@ -178,7 +172,6 @@ class TestCleanupOldTokens:
         countAfter = await storage.getVocabularySize()
         assert countAfter == countBefore
 
-    @pytest.mark.asyncio
     async def testReturnsTrueOnSuccess(self, db):
         """cleanupOldTokens returns True on a successful sweep.
 

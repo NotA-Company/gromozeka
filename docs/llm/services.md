@@ -384,13 +384,14 @@ keys: List[str] = storage.list(prefix="attachments/", limit=100)
   - **absent table** → silent `NullStorageBackend` (feature off). **No inheritance** from `[storage]` — every scope's backend is fully determined by its own table.
   - **present but malformed** → `StorageConfigError` → startup crash, exact parity with a bad default table.
 
-**Wiring:** `HandlersManager.__init__` injects the default scope, then immediately the vision scope (`self.visionStorage`); `BaseBotHandler.__init__` binds `self.visionStorage = StorageService.getInstance(StorageScope.VISION)`, and `EnsuredMessage._loadNativeVisionImages` reads through the same scoped instance.
+**Wiring:** `HandlersManager.__init__` iterates every `StorageScope` member in a loop (`internal/bot/common/handlers/manager.py`, `for storageVariant in StorageScope:` → `getInstance(storageVariant)` + `injectConfig(configManager, scope=storageVariant)` per scope) — it holds no `visionStorage` attribute of its own. `self.visionStorage` lives on `BaseBotHandler` (`BaseBotHandler.__init__` binds `self.visionStorage = StorageService.getInstance(StorageScope.VISION)`), and `EnsuredMessage._loadNativeVisionImages` obtains the vision store through the same scoped singleton accessor.
 
 **Backends:** `null` (no-op), `fs` (filesystem), `s3` (AWS S3/compatible)
 
 **IMPORTANT:** `injectConfig` MUST be called **per scope** before that scope's storage operations. This is done automatically by `HandlersManager` for both sanctioned scopes.
 
 ---
+
 ## 5. RateLimiterManager
 
 **File:** [`lib/rate_limiter/manager.py:57`](../../lib/rate_limiter/manager.py:57)  

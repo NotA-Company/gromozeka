@@ -15,7 +15,7 @@ Key components:
 - ModelResultStatus: Enumeration of possible result statuses
 
 Image-manipulation helpers (convertImageIfNeeded, normalizeVisionImage*,
-VisionOutputImageFormat) live in :mod:`lib.ai.imaging`.
+VisionOutputImageFormat, AlphaBackground) live in :mod:`lib.ai.imaging`.
 
 Example:
     >>> from lib.ai.models import LLMToolFunction, LLMFunctionParameter, LLMParameterType
@@ -47,7 +47,7 @@ from enum import Enum, StrEnum
 from typing import Any, Dict, List, Optional, Sequence, TypeAlias
 
 import lib.utils as utils
-from lib.ai.imaging import convertImageIfNeeded
+from lib.ai.imaging import AlphaBackground, convertImageIfNeeded
 
 logger = logging.getLogger(__name__)
 
@@ -741,7 +741,7 @@ class ModelImagesMessage(ModelMessage):
         self,
         role: str = "user",
         content: str = "",
-        images: List[bytearray] = [],
+        images: Optional[List[bytearray]] = None,
         source: Optional[object] = None,
         descriptionResolver: Optional[ModelMessageDescriptionResolver] = None,
     ) -> None:
@@ -752,6 +752,9 @@ class ModelImagesMessage(ModelMessage):
             content: The text content of the message (default: "").
             images: Ordered list of image bytearrays; each becomes one
                 ``image_url`` block in list order (default: empty list).
+                The list is COPIED: the message owns its own list, so later
+                mutation of the caller's list is not reflected, and messages
+                constructed without ``images`` never share one list.
             source: Optional source message (default: None). Metadata only:
                 never serialized (mirrors the parent ``source`` field).
             descriptionResolver: Optional lazy media-description resolver
@@ -762,7 +765,7 @@ class ModelImagesMessage(ModelMessage):
             None
         """
         super().__init__(role=role, content=content, source=source, descriptionResolver=descriptionResolver)
-        self.images = images
+        self.images = list(images) if images is not None else []
 
     def toDict(
         self,
@@ -779,6 +782,7 @@ class ModelImagesMessage(ModelMessage):
         content: Optional[Any] = None,
         skipRole: bool = False,
         supportedImageFormats: Optional[List[str]] = None,
+        alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
     ) -> Dict[str, Any]:
         """Convert the message to a dictionary with one image block per embedded image.
 
@@ -801,10 +805,17 @@ class ModelImagesMessage(ModelMessage):
                 ``self.images`` is never mutated, so repeated serialisation
                 (e.g. primary then fallback model) always starts from the
                 original bytes.
+            alphaBackground: Background an image's alpha channel composites
+                onto when it must flatten to RGB for the target model (a
+                JPEG target). Defaults to :attr:`AlphaBackground.ADAPTIVE`
+                (the contrasting background of the visible pixels; see
+                :func:`lib.ai.imaging.flattenAlphaToRgb`). Pure parameter
+                threading — lib/ stays config-free, so config-aware internal
+                callers pass the value in explicitly.
 
         Returns:
-            Dict[str, Any]: A dictionary representation with the images
-                embedded as base64 data URIs.
+            A dictionary representation with the images embedded as
+            base64 data URIs.
 
         Note:
             Each image MIME type is automatically detected using the
@@ -828,7 +839,7 @@ class ModelImagesMessage(ModelMessage):
                 content.append({"type": "text", "text": self.content})
 
             for image in self.images:
-                imageBytes, mimeType = convertImageIfNeeded(bytes(image), supportedImageFormats)
+                imageBytes, mimeType = convertImageIfNeeded(bytes(image), supportedImageFormats, alphaBackground)
                 base64Image = base64.b64encode(imageBytes).decode("utf-8")
                 content.append(
                     {

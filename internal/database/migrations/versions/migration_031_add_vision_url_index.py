@@ -96,6 +96,6 @@ def getMigration() -> Type[BaseMigration]:
     """Return the migration class for this module.
 
     Returns:
-        Type[BaseMigration]: The migration class for this module.
+        The migration class for this module.
     """
     return Migration031AddVisionUrlIndex

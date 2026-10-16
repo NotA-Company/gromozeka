@@ -2,6 +2,12 @@
 category: design
 ---
 
+> **Partially superseded (2026-10-06).** The attachment mechanism and the image cap were reworked in
+> [`native-vision-v2-construction-attach.md`](native-vision-v2-construction-attach.md) (images now attach at
+> message-construction time; the `max-images-per-request` cap was removed), and storage placement/key layout moved to
+> [`scoped-storage-design-v1.md`](scoped-storage-design-v1.md) (own `[storage.storages.vision]` backend, bare
+> `{sha512}.{ext}` keys). The rest of this document remains the ratified v1 record; read the two successors first.
+
 # Native Vision Design v1
 
 **Author:** OpenCode Architect

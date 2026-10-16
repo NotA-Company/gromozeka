@@ -19,7 +19,6 @@ def goldenDataProvider() -> GoldenDataProvider:
     return baseGoldenDataProvider(str(GOLDEN_DATA_PATH))
 
 
-@pytest.mark.asyncio
 async def test_geocode_maps_golden(goldenDataProvider):
     """Test Geocode Maps client methods using golden data.
 

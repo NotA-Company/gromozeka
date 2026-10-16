@@ -846,7 +846,7 @@ async def test_migration_026_chat_accessibility_bot_status() -> None:
             os.unlink(dbPath)
 
 
-async def test_migration_030_add_vision_url() -> None:
+async def testMigration030AddVisionUrl() -> None:
     """Test migration 030: nullable vision_url column on media_attachments.
 
     Creates a temporary database, applies all migrations (including 030),
@@ -893,13 +893,13 @@ async def test_migration_030_add_vision_url() -> None:
         provider = await db.manager.getProvider()
 
         # Get migration 030 from discovered migrations
-        migration_030 = None
+        migration030 = None
         for migration in DISCOVERED_MIGRATIONS:
             if migration.version == 30:
-                migration_030 = migration
+                migration030 = migration
                 break
 
-        assert migration_030 is not None, "Migration 030 not found"
+        assert migration030 is not None, "Migration 030 not found"
 
         # Check that vision_url column exists with correct properties
         columns = await provider.executeFetchAll("PRAGMA table_info(media_attachments)")
@@ -957,16 +957,16 @@ async def test_migration_030_add_vision_url() -> None:
         # back FIRST, exactly like the reverse-order rollback the
         # MigrationManager performs (rollbackTo runs 031.down() before
         # 030.down()).
-        migration_031 = None
+        migration031 = None
         for migration in DISCOVERED_MIGRATIONS:
             if migration.version == 31:
-                migration_031 = migration
+                migration031 = migration
                 break
 
-        assert migration_031 is not None, "Migration 031 not found"
-        await migration_031().down(sqlProvider=provider)
+        assert migration031 is not None, "Migration 031 not found"
+        await migration031().down(sqlProvider=provider)
 
-        migrationInstance = migration_030()
+        migrationInstance = migration030()
         await migrationInstance.down(sqlProvider=provider)
 
         # Check that column is dropped
@@ -984,7 +984,7 @@ async def test_migration_030_add_vision_url() -> None:
             os.unlink(dbPath)
 
 
-async def test_migration_031_add_vision_url_index() -> None:
+async def testMigration031AddVisionUrlIndex() -> None:
     """Test migration 031: composite index for the vision TTL-GC retained-keys lookup.
 
     Creates a temporary database, applies all migrations (including 031),
@@ -1030,13 +1030,13 @@ async def test_migration_031_add_vision_url_index() -> None:
         provider = await db.manager.getProvider()
 
         # Get migration 031 from discovered migrations
-        migration_031 = None
+        migration031 = None
         for migration in DISCOVERED_MIGRATIONS:
             if migration.version == 31:
-                migration_031 = migration
+                migration031 = migration
                 break
 
-        assert migration_031 is not None, "Migration 031 not found"
+        assert migration031 is not None, "Migration 031 not found"
 
         indexName = "idx_media_attachments_vision_url_updated_at"
 
@@ -1074,7 +1074,7 @@ async def test_migration_031_add_vision_url_index() -> None:
         logger.info("✅ Row through the indexed columns reads back fine")
 
         # Test rollback (down())
-        migrationInstance = migration_031()
+        migrationInstance = migration031()
         await migrationInstance.down(sqlProvider=provider)
 
         assert not await indexExists(), "Composite index should be dropped by down()"

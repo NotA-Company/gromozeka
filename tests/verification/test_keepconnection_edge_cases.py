@@ -10,8 +10,6 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from internal.database import Database
 from lib.db.manager import DatabaseManagerConfig
 from lib.db.providers.sqlite3 import SQLite3Provider
@@ -20,7 +18,6 @@ from lib.db.providers.sqlite3 import SQLite3Provider
 class TestKeepConnectionEdgeCases:
     """Test edge cases for keepConnection parameter"""
 
-    @pytest.mark.asyncio
     async def test_keep_connection_true_with_file_db(self):
         """Test keepConnection=True with file-based database"""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -58,7 +55,6 @@ class TestKeepConnectionEdgeCases:
 
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_keep_connection_false_with_memory_db(self):
         """Test keepConnection=False with in-memory database (explicit override)
 
@@ -102,7 +98,6 @@ class TestKeepConnectionEdgeCases:
 
         await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_keep_connection_none_with_memory_db(self):
         """Test keepConnection=None with in-memory database (auto-detect)"""
         config: DatabaseManagerConfig = {
@@ -136,7 +131,6 @@ class TestKeepConnectionEdgeCases:
 
         await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_keep_connection_none_with_file_db(self):
         """Test keepConnection=None with file-based database (auto-detect)"""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -172,7 +166,6 @@ class TestKeepConnectionEdgeCases:
 
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_concurrent_operations_with_keep_connection_true(self):
         """Test concurrent operations with keepConnection=True"""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -214,7 +207,6 @@ class TestKeepConnectionEdgeCases:
 
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_connection_leak_prevention(self):
         """Test that connections don't leak with keepConnection=False"""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -247,7 +239,6 @@ class TestKeepConnectionEdgeCases:
 
             await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_provider_direct_instantiation_keep_connection(self):
         """Test provider instantiation with different keepConnection values"""
         # Test with keepConnection=True
@@ -271,7 +262,6 @@ class TestKeepConnectionEdgeCases:
             provider4 = SQLite3Provider(str(db_path), keepConnection=None)
             assert provider4.keepConnection is False  # Auto-detected
 
-    @pytest.mark.asyncio
     async def test_cursor_context_manager_keep_connection_override(self):
         """Test cursor context manager with keepConnection override"""
         provider = SQLite3Provider(":memory:", keepConnection=False)
@@ -286,7 +276,6 @@ class TestKeepConnectionEdgeCases:
 
         await provider.disconnect()
 
-    @pytest.mark.asyncio
     async def test_memory_db_data_persistence_with_keep_connection(self):
         """Test that in-memory DB data persists with keepConnection=True"""
         config: DatabaseManagerConfig = {
@@ -314,7 +303,6 @@ class TestKeepConnectionEdgeCases:
 
         await db.manager.closeAll()
 
-    @pytest.mark.asyncio
     async def test_memory_db_data_loss_without_keep_connection(self):
         """Test that in-memory DB data is lost without keepConnection"""
         config: DatabaseManagerConfig = {

@@ -14,6 +14,10 @@ from here — the dependency is one-directional, models -> imaging):
   animated-frame collapse). The strict variant is the implementation and
   fails CLOSED (returns ``None``); the lenient one is a thin never-raise
   wrapper returning the original bytes on failure.
+- AlphaBackground / flattenAlphaToRgb: alpha compositing shared by the two
+  flattening sites above — transparency-bearing sources composite onto a
+  background (ADAPTIVE: the background contrasting the visible pixels' mean
+  luminance) instead of discarding the alpha channel.
 - _stripJpegExif: JPEG marker surgery backing the strict normalizer's
   EXIF lossless fast path (with its kept-APPn payload-identifier validation
   helper _isRecognizedAppSegmentPayload).
@@ -29,7 +33,7 @@ from io import BytesIO
 from typing import Dict, List, Optional, Tuple
 
 import magic
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageStat
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,35 @@ _MIME_TO_PIL_FORMAT: Dict[str, str] = {
     "image/webp": "WEBP",
     "image/gif": "GIF",
 }
+
+
+class AlphaBackground(StrEnum):
+    """Background a transparency-bearing image composites onto when flattened to RGB.
+
+    JPEG targets have no alpha channel, so alpha-bearing sources must be
+    composited onto an opaque background before encoding (see
+    :func:`flattenAlphaToRgb`). ``ADAPTIVE`` — the default — measures the
+    mean luminance of the VISIBLE pixels and picks the CONTRASTING
+    background, preserving both dark line art (composited onto white) and
+    light sticker content (composited onto black); a fully transparent image
+    has no visible pixels and falls back to BLACK deterministically.
+
+    Being a :class:`enum.StrEnum`, members ARE their lowercase config-string
+    values, so raw config strings remain RUNTIME-compatible until callers
+    migrate to the members (mirrors :class:`VisionOutputImageFormat`).
+
+    Example:
+        >>> print(AlphaBackground.ADAPTIVE)
+        adaptive
+    """
+
+    #: Pick the background contrasting the visible pixels' mean luminance
+    #: (dark content → WHITE, light content → BLACK; fully transparent → BLACK).
+    ADAPTIVE = "adaptive"
+    #: Composite onto opaque white (255, 255, 255).
+    WHITE = "white"
+    #: Composite onto opaque black (0, 0, 0).
+    BLACK = "black"
 
 
 class VisionOutputImageFormat(StrEnum):
@@ -98,7 +131,134 @@ _VISION_OUTPUT_PIL_FORMATS: Dict[VisionOutputImageFormat, str] = {
 MAX_VISION_IMAGE_PIXELS = 50_000_000  # 50 MP
 
 
-def convertImageIfNeeded(imageBytes: bytes, supportedFormats: Optional[List[str]]) -> Tuple[bytes, str]:
+# ---------------------------------------------------------------------------
+# Alpha compositing (shared by both RGB-flattening sites)
+# ---------------------------------------------------------------------------
+
+#: Alpha value at or below which a pixel counts as invisible when measuring
+#: the visible content for :attr:`AlphaBackground.ADAPTIVE` — nearly
+#: invisible dust pixels must not drive the dark/light background decision.
+ALPHA_VISIBLE_THRESHOLD = 8
+
+#: Luminance midpoint (0-255 scale) separating "dark content" from "light
+#: content" for the :attr:`AlphaBackground.ADAPTIVE` decision (luminance ≈
+#: 0.299·R + 0.587·G + 0.114·B; below the midpoint → white background).
+ADAPTIVE_LUMINANCE_MIDPOINT = 128.0
+
+#: Opaque white background color for alpha compositing.
+_WHITE_BACKGROUND: Tuple[int, int, int] = (255, 255, 255)
+
+#: Opaque black background color for alpha compositing (also the
+#: deterministic fallback for fully transparent images).
+_BLACK_BACKGROUND: Tuple[int, int, int] = (0, 0, 0)
+
+#: Lookup table mapping alpha values to the visible/invisible mask levels
+#: used for the ADAPTIVE luminance measurement (see
+#: :data:`ALPHA_VISIBLE_THRESHOLD`).
+_VISIBLE_PIXEL_LUT: Tuple[int, ...] = tuple(0 if value <= ALPHA_VISIBLE_THRESHOLD else 255 for value in range(256))
+
+
+def _hasAlphaChannel(img: Image.Image) -> bool:
+    """Return whether the image carries a transparency channel that must be honoured.
+
+    Covers the alpha-bearing modes :func:`flattenAlphaToRgb` composites:
+    ``RGBA``/``LA`` directly, and palette (``P``) images whose ``info``
+    marks a transparent palette index (GIF/PNG palette transparency).
+
+    Args:
+        img: Image to inspect (a header-opened image suffices; no decode).
+
+    Returns:
+        True when the image carries transparency that must be composited
+        rather than discarded.
+    """
+    if img.mode in ("RGBA", "LA"):
+        return True
+    return img.mode == "P" and "transparency" in img.info
+
+
+def _adaptiveBackgroundFor(rgba: Image.Image, alpha: Image.Image) -> AlphaBackground:
+    """Choose the ADAPTIVE background contrasting the image's visible content.
+
+    The mean luminance of the VISIBLE pixels (alpha above
+    :data:`ALPHA_VISIBLE_THRESHOLD`, measured via ``ImageStat`` over the RGB
+    bands with the binarized alpha as mask) decides: dark content composites
+    onto WHITE, light content onto BLACK. A fully transparent image has no
+    visible pixels — the statistic is undefined there, so the documented
+    deterministic BLACK fallback applies.
+
+    Args:
+        rgba: The image in ``RGBA`` form (its RGB bands are measured).
+        alpha: The image's alpha channel as an ``L`` image.
+
+    Returns:
+        :attr:`AlphaBackground.WHITE` for dark visible content;
+        :attr:`AlphaBackground.BLACK` for light content and for the fully
+        transparent (no visible pixels) case.
+    """
+    visibleMask = alpha.point(_VISIBLE_PIXEL_LUT)
+    if visibleMask.getextrema()[1] == 0:
+        return AlphaBackground.BLACK  # fully transparent: deterministic fallback
+    stat = ImageStat.Stat(rgba, mask=visibleMask)
+    luminance = 0.299 * stat.mean[0] + 0.587 * stat.mean[1] + 0.114 * stat.mean[2]
+    return AlphaBackground.WHITE if luminance < ADAPTIVE_LUMINANCE_MIDPOINT else AlphaBackground.BLACK
+
+
+def flattenAlphaToRgb(img: Image.Image, alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE) -> Image.Image:
+    """Flatten an image to ``RGB``, COMPOSITING any alpha onto a background color.
+
+    The shared compositing primitive behind :func:`convertImageIfNeeded`
+    (send-time JPEG targets) and :func:`normalizeVisionImageStrict`
+    (receipt-time JPEG output): transparency-bearing sources — ``RGBA``,
+    ``LA``, palette images with ``info["transparency"]`` — are composited
+    onto the chosen :class:`AlphaBackground` with per-pixel blending
+    (semi-transparent pixels blend against the background) instead of
+    discarding the alpha channel and leaking whatever RGB sits under the
+    transparent pixels (the old ``convert("RGB")`` behavior that rendered
+    black-on-transparent line art as an all-black image and white stickers
+    as all-white garbage).
+
+    For :attr:`AlphaBackground.ADAPTIVE` (the default) the background is
+    picked per image: the mean luminance of the VISIBLE pixels (alpha above
+    :data:`ALPHA_VISIBLE_THRESHOLD`) decides — dark content composites onto
+    WHITE, light content onto BLACK, so both black line art and white
+    sticker content stay visible. A FULLY TRANSPARENT image has no visible
+    pixels and falls back deterministically onto BLACK.
+
+    Images without an alpha channel are returned as a plain
+    ``img.convert("RGB")`` — behavior unchanged. Callers that keep a
+    transparency-capable output format (PNG) must NOT call this —
+    compositing applies only where flattening to RGB actually happens.
+
+    Args:
+        img: Image to flatten; any Pillow-openable pixel mode.
+        alphaBackground: Background to composite onto;
+            :attr:`AlphaBackground.ADAPTIVE` (the default) picks the
+            contrasting background from the visible pixels, ``WHITE`` /
+            ``BLACK`` force a fixed one.
+
+    Returns:
+        A new ``RGB`` image — or one equal to ``img.convert("RGB")`` when
+        the source carries no alpha.
+    """
+    if not _hasAlphaChannel(img):
+        return img.convert("RGB")
+    rgba = img.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    effectiveBackground = alphaBackground
+    if effectiveBackground == AlphaBackground.ADAPTIVE:
+        effectiveBackground = _adaptiveBackgroundFor(rgba, alpha)
+    backgroundColor = _WHITE_BACKGROUND if effectiveBackground == AlphaBackground.WHITE else _BLACK_BACKGROUND
+    flattened = Image.new("RGB", rgba.size, backgroundColor)
+    flattened.paste(rgba, mask=alpha)
+    return flattened
+
+
+def convertImageIfNeeded(
+    imageBytes: bytes,
+    supportedFormats: Optional[List[str]],
+    alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
+) -> Tuple[bytes, str]:
     """Return image bytes in a MIME format the target model accepts, converting only when required.
 
     Detects the current MIME type of *imageBytes*. When *supportedFormats* is
@@ -120,6 +280,13 @@ def convertImageIfNeeded(imageBytes: bytes, supportedFormats: Optional[List[str]
             target model, e.g. ``["image/jpeg", "image/png"]``. ``None`` or an
             empty list disables conversion (passthrough). The first element is
             used as the conversion target when the current MIME is absent.
+        alphaBackground: Background the alpha channel composites onto when a
+            transparency-bearing source must flatten to RGB (a JPEG target).
+            :attr:`AlphaBackground.ADAPTIVE` (the default) measures the mean
+            luminance of the VISIBLE pixels and picks the contrasting
+            background (dark content → white, light content → black); forced
+            ``WHITE``/``BLACK`` honor an explicit choice. No-alpha sources
+            are unaffected.
 
     Returns:
         A ``(finalBytes, finalMimeType)`` tuple where *finalBytes* is the
@@ -158,10 +325,12 @@ def convertImageIfNeeded(imageBytes: bytes, supportedFormats: Optional[List[str]
                     f"current={currentMime!r} target={targetMime!r}"
                 )
                 return (imageBytes, currentMime)
-            # JPEG has no alpha channel; flatten onto an RGB canvas first so
-            # Pillow can encode transparency-bearing sources (PNG/WebP) into JPEG.
+            # JPEG has no alpha channel; composite any alpha onto
+            # alphaBackground (ADAPTIVE picks a contrasting background) so
+            # Pillow can encode transparency-bearing sources (PNG/WebP)
+            # into JPEG WITHOUT discarding their visible content.
             if targetMime == "image/jpeg":
-                img = img.convert("RGB")
+                img = flattenAlphaToRgb(img, alphaBackground)
             with BytesIO() as outBuf:
                 img.save(outBuf, format=pilFormat)
                 converted = outBuf.getvalue()
@@ -358,6 +527,7 @@ def normalizeVisionImage(
     maxDimension: int = 2048,
     outputFormat: VisionOutputImageFormat = VisionOutputImageFormat.JPEG,
     quality: int = 85,
+    alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
 ) -> Tuple[bytes, str]:
     """Normalize raw image bytes for storage as a native-vision attachment.
 
@@ -384,6 +554,10 @@ def normalizeVisionImage(
             original bytes.
         quality: JPEG encoder quality (1-95); values outside the range
             are clamped into it with a logged warning. Ignored for PNG.
+        alphaBackground: Background the alpha channel composites onto when
+            the output target is JPEG (see
+            :func:`normalizeVisionImageStrict`). PNG output keeps alpha
+            as-is.
 
     Returns:
         A ``(normalizedBytes, mimeType)`` tuple where *normalizedBytes*
@@ -396,6 +570,7 @@ def normalizeVisionImage(
         maxDimension=maxDimension,
         outputFormat=outputFormat,
         quality=quality,
+        alphaBackground=alphaBackground,
     )
     if result is not None:
         return result
@@ -416,6 +591,7 @@ def normalizeVisionImageStrict(
     maxDimension: int = 2048,
     outputFormat: VisionOutputImageFormat = VisionOutputImageFormat.JPEG,
     quality: int = 85,
+    alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
 ) -> Optional[Tuple[bytes, str]]:
     """Normalize raw image bytes for vision, FAILING CLOSED on any problem.
 
@@ -448,10 +624,14 @@ def normalizeVisionImageStrict(
       Palette/bilevel sources (modes ``P``/``1``) are converted to RGB/RGBA
       BEFORE resizing, because Pillow silently forces NEAREST resampling
       for those modes and would ignore the LANCZOS request;
-    - The image is re-encoded to *outputFormat*; for JPEG an alpha channel
-      is flattened onto RGB and *quality* controls the encoder (values
+    - The image is re-encoded to *outputFormat*; for JPEG the alpha channel
+      is composited onto *alphaBackground* (``adaptive`` picks the
+      contrasting background from the visible pixels' mean luminance — see
+      :func:`flattenAlphaToRgb`) and *quality* controls the encoder (values
       outside 1-95 are clamped into range with a logged warning — Pillow
-      itself accepts out-of-range integers). The re-save also drops EXIF
+      itself accepts out-of-range integers). PNG output keeps the alpha
+      channel as-is (compositing applies only where flattening to RGB
+      actually happens). The re-save also drops EXIF
       metadata (GPS/device data) as a deliberate privacy property;
     - The same decompression-bomb guard as :func:`convertImageIfNeeded`
       (:data:`MAX_VISION_IMAGE_PIXELS`, 50 MP) rejects crafted oversized
@@ -479,6 +659,13 @@ def normalizeVisionImageStrict(
             the default).
         quality: JPEG encoder quality (1-95); values outside the range
             are clamped into it with a logged warning. Ignored for PNG.
+        alphaBackground: Background the alpha channel composites onto when
+            the output target is JPEG. :attr:`AlphaBackground.ADAPTIVE`
+            (the default) measures the mean luminance of the VISIBLE
+            pixels and picks the contrasting background (dark content →
+            white, light content → black); a fully transparent image falls
+            back deterministically onto black; forced ``WHITE``/``BLACK``
+            honor an explicit choice. PNG output keeps alpha as-is.
 
     Returns:
         A ``(normalizedBytes, outputFormat)`` tuple on success, or
@@ -563,8 +750,15 @@ def normalizeVisionImageStrict(
                             )
             except Exception:  # noqa: BLE001 — the fast path must never fail normalization
                 logger.exception("EXIF fast path probe failed; falling back to the full normalization pipeline")
-            # Animated content (GIF/WebP stickers): keep the first frame only.
-            if getattr(img, "is_animated", False) and getattr(img, "n_frames", 1) > 1:
+            # Animated content (GIF/WebP stickers): the frame that ships is
+            # frame 0. A freshly opened image is ALWAYS positioned at frame
+            # 0 (nothing above advances the frame pointer), so re-anchor
+            # defensively WITHOUT querying animation length: Pillow's
+            # ``is_animated``/``n_frames`` lazily walk the ENTIRE animation
+            # on GIF sources — wasted parse work on untrusted input when
+            # only frame zero is consumed (the 50MP guard above bounds
+            # dimensions, not frame count).
+            if img.tell() != 0:
                 img.seek(0)
             # Bake EXIF orientation into the pixels BEFORE stripping metadata:
             # portrait phone shots carry orientation 6/8 while the stored
@@ -592,10 +786,13 @@ def normalizeVisionImageStrict(
                 newWidth = max(1, round(img.width * scale))
                 newHeight = max(1, round(img.height * scale))
                 img = img.resize((newWidth, newHeight), Image.Resampling.LANCZOS)
-            # JPEG has no alpha channel; flatten onto an RGB canvas first so
-            # Pillow can encode transparency-bearing sources (PNG/WebP) into JPEG.
+            # JPEG has no alpha channel; composite any alpha onto
+            # alphaBackground (ADAPTIVE picks a contrasting background) so
+            # Pillow can encode transparency-bearing sources (PNG/WebP)
+            # into JPEG WITHOUT discarding their visible content. The
+            # alpha-preserving PNG output path never reaches this.
             if outputFormat == "image/jpeg":
-                img = img.convert("RGB")
+                img = flattenAlphaToRgb(img, alphaBackground)
             # Pillow's JPEG encoder accepts integer qualities outside the
             # documented 1-95 band (e.g. 96-100 save without error), so
             # out-of-range values are clamped explicitly, with a warning

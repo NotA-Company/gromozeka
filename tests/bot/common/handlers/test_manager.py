@@ -16,15 +16,19 @@ handler-construction concerns.
 
 import asyncio
 import datetime
+import hashlib
 import logging
 import time
+from io import BytesIO
 from pathlib import Path
+from types import TracebackType
 from typing import Dict, List, Optional, Set, Tuple
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
+from PIL import Image
 
-from internal.bot.common.handlers.base import visionStorageLock
+from internal.bot.common.handlers.base import BaseBotHandler, visionStorageLock
 from internal.bot.common.handlers.manager import (
     AGGRESSIVE_CLEANUP_CACHE_TYPES,
     BAYES_TOKEN_CLEANUP_RULES,
@@ -38,8 +42,10 @@ from internal.bot.common.handlers.manager import (
 from internal.database import Database
 from internal.database.models import MediaAttachmentDict
 from internal.database.repositories.media_attachments import MediaAttachmentsRepository
+from internal.models import MessageType
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction
 from internal.services.storage import StorageScope, StorageService
+from lib.ai.imaging import AlphaBackground, VisionOutputImageFormat, normalizeVisionImageStrict
 
 
 def _mockRateLimiterManager(statsList: list) -> Mock:
@@ -54,6 +60,70 @@ def _mockRateLimiterManager(statsList: list) -> Mock:
     mockInstance = Mock()
     mockInstance.dumpAllStats = Mock(return_value=statsList)
     return mockInstance
+
+
+class _ObservedVisionLock:
+    """Transparent shared-lock wrapper recording task-specific acquire/release events.
+
+    Delegates every acquire/release to the REAL module-level
+    ``visionStorageLock`` instance, so production mutual-exclusion semantics
+    stay fully in force while the wrapper is patched in; each COMPLETED
+    acquisition and each release is appended to a shared event log tagged
+    with the acquiring task's ``name``. A contended acquisition is recorded
+    only once it actually holds the lock, so the event log doubles as a
+    serialization proof: a test can assert both that production code still
+    enters its critical sections and the exact ordering of those sections
+    against concurrent lock holders.
+    """
+
+    def __init__(self, realLock: asyncio.Lock, events: List[str]) -> None:
+        """Wrap the real lock and share the event log.
+
+        Args:
+            realLock: The real ``visionStorageLock`` every operation delegates to.
+            events: Shared list the acquire/release events are appended to.
+        """
+        self._realLock = realLock
+        self._events = events
+
+    async def __aenter__(self) -> "_ObservedVisionLock":
+        """Acquire the real lock, then record the acquisition for the current task.
+
+        Returns:
+            This wrapper, as the ``async with`` context value.
+        """
+        await self._realLock.acquire()
+        self._events.append(f"acquire:{self._currentTaskName()}")
+        return self
+
+    async def __aexit__(
+        self,
+        excType: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> None:
+        """Release the real lock, then record the release for the current task.
+
+        Args:
+            excType: Exception class propagating out of the block, if any.
+            exc: Exception instance propagating out of the block, if any.
+            tb: Traceback propagating out of the block, if any.
+
+        Returns:
+            None
+        """
+        self._realLock.release()
+        self._events.append(f"release:{self._currentTaskName()}")
+        return None
+
+    def _currentTaskName(self) -> str:
+        """Return the running task's name used to tag lock events.
+
+        Returns:
+            The current task's name, or a placeholder when no task is active.
+        """
+        task = asyncio.current_task()
+        return task.get_name() if task is not None else "no-task"
 
 
 @pytest.fixture
@@ -883,6 +953,186 @@ class TestVisionGc:
         assert rowB is not None
         assert rowB["vision_url"] is None
         assert "key1.jpeg" not in files
+
+    async def testProductionReceiptPath_objectRestoredByRealReceipt(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The REAL ``_storeVisionImage`` receipt restores a key the sweep deleted.
+
+        Companion to ``testConcurrentPublishDuringSweep_objectRestoredByReceipt``
+        (which hand-rolls the receipt's critical section to prove the GC-side
+        lock protocol in isolation); this test runs the REAL production receipt
+        path against a live sweep. Rows A(key1) and B(K) are expired and cold;
+        the receipt for fresh row C carries the same source bytes, so strict
+        normalization re-derives exactly K (deterministic content addressing).
+        The receipt is started first: it takes ``visionStorageLock`` for its
+        reuse-check section, so the sweep cannot begin until the receipt has
+        stepped out to normalization — and the receipt's store-and-publish
+        section can only run AFTER the sweep releases the lock. By then the
+        sweep has already deleted K (it was cold at snapshot time), so the
+        receipt re-stores K and publishes it on row C: no dangling row, and
+        the sweep's own outcome is intact.
+
+        Receipt-first ordering alone cannot force normalization to finish
+        while the sweep is active, so final states alone cannot detect a
+        production regression that drops the lock: a late store-and-publish
+        would re-store the deleted object and still look consistent. This
+        test therefore also swaps in a transparent wrapper
+        ([`_ObservedVisionLock`]) that delegates to the real lock while
+        recording task-specific acquire/release events, and asserts the
+        receipt performs BOTH critical-section acquisitions with its
+        store-and-publish acquisition following the sweep's release — the
+        test fails deterministically if ``_storeVisionImage`` stops
+        acquiring ``visionStorageLock``, regardless of scheduling.
+
+        Args:
+            testDatabase: Fresh in-memory Database with migrations applied.
+            tmp_path: pytest tmp dir for the real fs vision store.
+            caplog: pytest log-capture fixture.
+
+        Returns:
+            None
+        """
+        StorageService._instances.clear()
+        # Python 3.14 checks asyncio.Lock loop-affinity only on the CONTENDED
+        # acquire path, so a binding left by an earlier test's loop would fail
+        # this test's contended GC acquire with "bound to a different event
+        # loop". Clear the stale binding so the lock (re)binds to THIS test's
+        # loop, and clear it again afterwards to leave a pristine lock.
+        visionStorageLock._loop = None  # type: ignore[attr-defined]
+        try:
+            configManager = Mock()
+            configManager.getStorageConfig = Mock(
+                return_value={
+                    "type": "null",
+                    "storages": {"vision": {"type": "fs", "fs": {"base-dir": str(tmp_path / "vision")}}},
+                }
+            )
+            visionStorage = StorageService.getInstance(StorageScope.VISION)
+            visionStorage.injectConfig(configManager, scope=StorageScope.VISION)
+
+            # A real decodable PNG so the receipt's libmagic guard and the
+            # strict normalization (asyncio.to_thread thread hop) run for real.
+            pngBuf = BytesIO()
+            Image.new("RGB", (8, 8), (200, 10, 10)).save(pngBuf, format="PNG")
+            pngBytes = pngBuf.getvalue()
+
+            # Pre-derive the receipt's content key with the SAME normalizer and
+            # parameters the handler below is configured with — byte-identical
+            # output means the receipt re-derives exactly expired row B's key.
+            normalized = normalizeVisionImageStrict(
+                imageBytes=pngBytes,
+                maxDimension=2048,
+                outputFormat=VisionOutputImageFormat.JPEG,
+                quality=85,
+            )
+            assert normalized is not None
+            normalizedBytes, normalizedMime = normalized
+            receiptKey = f"{hashlib.sha512(normalizedBytes).hexdigest()}.{normalizedMime.split('/')[-1]}"
+
+            manager = self._buildManager(testDatabase, visionTtlDays=1)
+            repo = testDatabase.mediaAttachments
+            await self._seedAttachmentWithVisionUrl(testDatabase, "row-A", "key1.jpeg")
+            await self._seedAttachmentWithVisionUrl(testDatabase, "row-B", receiptKey)
+            await self._seedAttachmentWithVisionUrl(testDatabase, "row-C", None)
+            await self._backdateUpdatedAt(testDatabase, "row-A", self._OLD_TS)
+            await self._backdateUpdatedAt(testDatabase, "row-B", self._OLD_TS)
+
+            visionStorage.store("key1.jpeg", b"old-bytes-1")
+            visionStorage.store(receiptKey, b"old-normalized")
+
+            # Minimal real BaseBotHandler carrying exactly what
+            # _storeVisionImage touches (the file's __new__ bypass pattern).
+            handler = BaseBotHandler.__new__(BaseBotHandler)
+            handler.db = testDatabase
+            handler.visionStorage = visionStorage
+            handler._bot = None
+            handler._visionMaxImageDimension = 2048
+            handler._visionImageFormat = VisionOutputImageFormat.JPEG
+            handler._visionImageQuality = 85
+            handler._visionAlphaBackground = AlphaBackground.ADAPTIVE
+
+            # Transparent lock observation: delegate to the REAL lock (the
+            # module-level instance imported above — patching does not touch
+            # this binding) while recording task-specific acquire/release
+            # events. It must be patched into BOTH consumer modules: base.py
+            # resolves its global at call time, but manager.py holds its own
+            # ``from .base import`` binding, so patching base alone would
+            # leave the sweep's hold unobserved.
+            lockEvents: List[str] = []
+            observedLock = _ObservedVisionLock(visionStorageLock, lockEvents)
+
+            with (
+                caplog.at_level(logging.INFO),
+                patch("internal.bot.common.handlers.base.visionStorageLock", observedLock),
+                patch("internal.bot.common.handlers.manager.visionStorageLock", observedLock),
+            ):
+                # Receipt first: its uncontended lock acquisition happens
+                # before any await, so the sweep below deterministically
+                # starts AFTER the receipt's reuse-check section released
+                # the lock — the production receipt-in-flight interleaving.
+                # Named tasks so the observed lock can tag events per role.
+                receiptTask = asyncio.create_task(
+                    handler._storeVisionImage(
+                        chatId=100,
+                        mediaId="row-C",
+                        mediaType=MessageType.IMAGE,
+                        fileId="fid-row-C",
+                        mediaData=pngBytes,
+                    ),
+                    name="receipt",
+                )
+                gcTask = asyncio.create_task(manager._visionGcCronJob(self._makeTask()), name="gc-sweep")
+                receiptResult, _ = await asyncio.gather(receiptTask, gcTask)
+
+            # Deterministic lock-observation gate: the REAL receipt performed
+            # BOTH production critical sections through the real lock,
+            # serialized against the sweep's single hold — the reuse-check
+            # pair (before the sweep could start), then the sweep's pair,
+            # then the store-and-publish pair (a contended acquire is
+            # recorded only once it holds the lock, i.e. after the sweep's
+            # release; no receipt acquisition can be recorded between the
+            # sweep's acquire and release). If _storeVisionImage stopped
+            # acquiring ``visionStorageLock``, no receipt events would be
+            # recorded and this fails even though every final-state
+            # assertion below could still pass.
+            assert lockEvents == [
+                "acquire:receipt",
+                "release:receipt",
+                "acquire:gc-sweep",
+                "release:gc-sweep",
+                "acquire:receipt",
+                "release:receipt",
+            ]
+
+            # The receipt republished exactly row B's deleted key with the
+            # freshly normalized bytes.
+            assert receiptResult == (receiptKey, pngBytes)
+
+            # Row C ends consistent: published DB reference AND stored object.
+            rowC = await repo.getMediaAttachment("row-C")
+            assert rowC is not None
+            assert rowC["vision_url"] == receiptKey
+            assert visionStorage.get(receiptKey) == normalizedBytes
+
+            # The sweep completed normally: both expired rows cleared, and the
+            # summary proves BOTH keys were deleted (including the receipt's
+            # key — cold at snapshot time, before the post-sweep re-store).
+            rowA = await repo.getMediaAttachment("row-A")
+            rowB = await repo.getMediaAttachment("row-B")
+            assert rowA is not None
+            assert rowA["vision_url"] is None
+            assert rowB is not None
+            assert rowB["vision_url"] is None
+            assert visionStorage.get("key1.jpeg") is None
+
+            summary = next(record for record in caplog.records if "Vision GC:" in record.getMessage())
+            message = summary.getMessage()
+            assert "cleared 2/2 expired row(s)" in message
+            assert "deleted 2 distinct file(s)" in message
+        finally:
+            StorageService._instances.clear()
+            visionStorageLock._loop = None  # type: ignore[attr-defined]
 
     async def testSummaryCounts_outcomesAndDistinctKeys(
         self, testDatabase: Database, caplog: pytest.LogCaptureFixture

@@ -27,6 +27,7 @@ VisionConfigDict = TypedDict(
         "image-format": str,
         "image-quality": int,
         "ttl-days": int,
+        "alpha-background": str,
     },
     total=False,
 )
