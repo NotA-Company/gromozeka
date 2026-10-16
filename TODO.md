@@ -1,7 +1,12 @@
 # Our TODO list
-
-- [x] `/sandbox update` to update packages
-- [ ] Add ability to store resized images + send them to context
+- [ ] Vision storage: offload blocking network I/O off the asyncio event loop (user decision: big work, later). `StorageService` backends make synchronous boto3 calls (`exists`/`store`/`get`/`delete`) reached from async code at `EnsuredMessage._loadNativeVisionImages` (chat-time `get`), `BaseBotHandler._storeVisionImage` (receipt-time `exists`/`store`), and `HandlersManager._visionGcCronJob` (hourly `delete` + existence probes, repeated under the shared lock). Direction: `asyncio.to_thread` offload (the repo-standard mechanism per docs/llm/tasks.md §3 — image normalization already offloaded this way) or an async storage adapter; MUST preserve `visionStorageLock` coordination, store-before-publish ordering, and fail-soft boundaries; needs slow-backend responsiveness regressions (an independent event-loop task keeps progressing during storage ops). CPU-bound normalization is already offloaded — this item is the network-I/O remainder.
+- [ ] just like `VisionConfigDict` - add typed-dicts for other configs
+- [ ] send-sticker tool: semantic-search by description
+- [ ] llm-call: retry on timeout (up to X times, do not reject just cal again)
+- [ ] repost\link to message from publich channel
+- [ ] Image search, search by image, download image and see it
+- [ ] add gpt-image-2.5
+- [ ] `internal.services.queue_service.service:226 - There are 1 left, awaiting...` - wait with tryN seconds (max - 10)
 - [ ] `Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:`
 - [ ] gifs from sandbox sent as static image
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
@@ -10,8 +15,6 @@
 - [ ] teamlead - say about markdown-mcp write ability
 - [ ] add ability to add bot-memory. think how to inject it
 - [ ] `Handler MessagePreprocessorHandler returned next` - add messageID+chatID
-- [x] move Max Webhook reciver to lib
-- [x] move database providers to lib
 - [ ] On llm-tool-call-fix save wrong + fixed call to file
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
@@ -65,3 +68,12 @@
 - [x] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
 - [x] migrate to httpx2
 - [x] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md
+- [x] `/sandbox update` to update packages
+- [x] move Max Webhook reciver to lib
+- [x] move database providers to lib
+## Vision:
+- [x] Add ability to store resized images + send them to context
+- [x] re-getting "old" attachments - need to re-save (for vision as well)
+- [x] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
+- [x] vision: add storage service choosing
+- [x] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)

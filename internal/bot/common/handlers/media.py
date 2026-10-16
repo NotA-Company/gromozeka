@@ -11,6 +11,7 @@ The module integrates with LLM services to provide AI-powered media
 generation and analysis capabilities with fallback support.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Union
 
@@ -43,10 +44,11 @@ from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.imaging import normalizeVisionImage
 from lib.ai.session import buildSessionId
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -525,15 +527,31 @@ class MediaHandler(BaseBotHandler):
                 )
                 continue
 
+            # Reuse the receipt-time normalization pipeline and settings through its LENIENT wrapper
+            # (normalizeVisionImage) — best-effort here: on any normalization failure the original bytes are
+            # sent (the vision STORE uses the strict fail-closed variant; this one-shot command must never
+            # block analysis). Nothing is stored and no vision_url is written.
+            # CPU-bound decode/resize/encode runs in a worker thread (``asyncio.to_thread`` — the
+            # repo-standard offload) so a large image/album cannot stall unrelated chats between
+            # per-item LLM calls.
+            normalizedBytes, _normalizedMime = await asyncio.to_thread(
+                normalizeVisionImage,
+                bytes(mediaData),
+                maxDimension=self._visionMaxImageDimension,
+                outputFormat=self._visionImageFormat,
+                quality=self._visionImageQuality,
+                alphaBackground=self._visionAlphaBackground,
+            )
+
             reqMessages = [
                 ModelMessage(
                     role="system",
                     content=prompt,
                 ),
-                ModelImageMessage(
+                ModelImagesMessage(
                     role="user",
                     # content="",
-                    image=bytearray(mediaData),
+                    images=[bytearray(normalizedBytes)],
                 ),
             ]
 

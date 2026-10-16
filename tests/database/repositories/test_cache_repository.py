@@ -37,14 +37,12 @@ async def db():
 class TestCacheStorage:
     """Tests for cache storage operations."""
 
-    @pytest.mark.asyncio
     async def test_set_cache_storage(self, db):
         """Test cache storage upsert."""
         repo = db.cache
         result = await repo.setCacheStorage("test", "key1", "value1")
         assert result is True
 
-    @pytest.mark.asyncio
     async def test_get_cache_storage(self, db):
         """Test getting cache storage entries."""
         repo = db.cache
@@ -59,7 +57,6 @@ class TestCacheStorage:
         assert entries[0]["namespace"] == "test"
         assert entries[0]["key"] in ["key1", "key2"]
 
-    @pytest.mark.asyncio
     async def test_unset_cache_storage(self, db):
         """Test deleting cache storage entry."""
         repo = db.cache
@@ -79,7 +76,6 @@ class TestCacheStorage:
         entries = await repo.getCacheStorage()
         assert len(entries) == 0
 
-    @pytest.mark.asyncio
     async def test_update_cache_storage(self, db):
         """Test updating cache storage entry."""
         repo = db.cache
@@ -99,7 +95,6 @@ class TestCacheStorage:
 class TestCacheDataTypes:
     """Tests for cache data type handling."""
 
-    @pytest.mark.asyncio
     async def test_cache_storage_with_json_data(self, db):
         """Test cache storage with JSON data."""
         repo = db.cache
@@ -113,7 +108,6 @@ class TestCacheDataTypes:
         assert len(entries) == 1
         assert entries[0]["value"] == jsonData
 
-    @pytest.mark.asyncio
     async def test_cache_storage_with_special_characters(self, db):
         """Test cache storage with special characters."""
         repo = db.cache

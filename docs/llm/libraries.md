@@ -37,13 +37,12 @@ category: guide
 ## 1. `lib/ai` — LLM Abstraction
 
 ### 1.1 Imports and key classes
-
 **Import paths:**
 ```python
 from lib.ai import LLMManager, AbstractModel, ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.models import (
     ModelMessage,
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelRunResult,
     ModelStructuredResult,
     ModelResultStatus,
@@ -53,6 +52,12 @@ from lib.ai.models import (
     LLMAbstractTool,
     LLMToolCall,
 )
+from lib.ai.imaging import (
+    VisionOutputImageFormat,
+    convertImageIfNeeded,
+    normalizeVisionImage,
+    normalizeVisionImageStrict,
+)
 ```
 
 `LLMToolCall(id: str, name: str, parameters: Dict[str, Any], errorMessage: Optional[str] = None)` is the tool-call payload the model emits. The `errorMessage` field is **internal plumbing** — it is NOT serialised by `__str__` / `toDict()` and is NOT sent back to the provider. When set, the call was synthesised from a malformed but recognisable tool-call attempt and the handler must NOT be executed; instead `errorMessage` is fed back to the model as a retry error. Left as `None` for ordinary tool calls.
@@ -61,19 +66,19 @@ from lib.ai.models import (
 
 | Class | File | Purpose |
 |---|---|---|
-| [`LLMManager`](../../lib/ai/manager.py:49) | `lib/ai/manager.py` | Registry for providers and models |
-| [`AbstractModel`](../../lib/ai/abstract.py:47) | `lib/ai/abstract.py` | ABC for all LLM models |
+| [`LLMManager`](../../lib/ai/manager.py:50) | `lib/ai/manager.py` | Registry for providers and models |
+| [`AbstractModel`](../../lib/ai/abstract.py:199) | `lib/ai/abstract.py` | ABC for all LLM models |
 | [`AbstractLLMProvider`](../../lib/ai/abstract.py) | `lib/ai/abstract.py` | ABC for LLM providers |
 | [`OpencodeGoProvider`](../../lib/ai/providers/opencode_go_provider.py) / [`OpencodeGoModel`](../../lib/ai/providers/opencode_go_provider.py) | `lib/ai/providers/opencode_go_provider.py` | OpenCode Go endpoint — like `custom-openai`, but attaches the mandatory `x-opencode-session` header to every request (see "Request session identification" below) |
-| [`ModelMessage`](../../lib/ai/models.py:550) | `lib/ai/models.py` | Standard text message for LLM. `__slots__ = (role, content, contentKey, toolCalls, toolCallId, weight, source)` — `source` is an optional passthrough for the originating handler message (used by the llm-messages-handler to round-trip provenance, see [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md)) |
-| [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
-| [`ModelRunResult`](../../lib/ai/models.py:965) | `lib/ai/models.py` | LLM response container. `__slots__` add `isFallback`, `isToolsUsed`, `roundLimitHit` (set by `LLMService.generateTextViaLLM` when the `maxRounds` tool-loop budget is exhausted, regardless of resulting status — see [`memories/user-memory-refinement.md`](memories/user-memory-refinement.md)), and the optional provider-reported usage fields `cachedInputTokens` (subset of `inputTokens`, from `prompt_tokens_details.cached_tokens`), `reasoningTokens` (subset of `outputTokens`, from `completion_tokens_details.reasoning_tokens` / YC SDK `usage.reasoning_tokens`), and `cost` (USD, e.g. OpenRouter's extra `usage.cost`) — all `None` when the provider doesn't report them |
+| [`ModelMessage`](../../lib/ai/models.py:463) | `lib/ai/models.py` | Standard text message for LLM. `__slots__ = (role, content, contentKey, toolCalls, toolCallId, weight, source, descriptionResolver)` — `source` is an optional passthrough for the originating handler message (used by the llm-messages-handler to round-trip provenance, see [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md)); `descriptionResolver` (native-vision v2, ADR-028) is typed `Optional[ModelMessageDescriptionResolver]` (= `Optional[Callable[[], Awaitable[Optional[str]]]]`, TypeAlias in `models.py`) — an at-most-once, never-raises lazy media-description resolver attached by the construction-time vision attach (`EnsuredMessage._makeDescriptionResolver`). Its serialization contract mirrors `source` exactly: never emitted by `toDict`, never read by `fromDict`/`fromDictList` (a poisoned incoming key is ignored), absent from `toLogMessage` — invisible to providers, the token estimator, JSON logs, and tools-DB round-trips; never implicitly copied. Its ONLY consumer is the condenser strip (`stripImagesForCondensing`, §1.3), which awaits it and deliberately does NOT copy it onto the stripped output |
+| [`ModelImagesMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | The image message class (since the 2026-10-04 merge that folded the single-image `ModelImageMessage` into it and deleted it repo-wide): holds one or more images — `images: List[bytearray]`, a lone image or a multi-image set (e.g. a Telegram album or a Max multi-attachment) — and serialises as an optional text block followed by N `image_url` blocks (the text part is emitted only when `content` is non-empty; the shape the native-vision construction-time attach — `EnsuredMessage.toModelMessage(nativeImages=True)` — produces; both the full-attach and the partial-album paths, and post-merge the single-image parse paths too). Accepts `source` and `descriptionResolver` keyword arguments and passes them through to `ModelMessage.__init__` for ANY image count (the pre-merge single-image class deliberately lacked them; that asymmetry is gone). Runs `convertImageIfNeeded` per image (format/MIME normalization; the helper lives in [`lib/ai/imaging.py`](../../lib/ai/imaging.py)) and **never mutates `self.images`** — encoding works on copies |
+| [`VisionOutputImageFormat`](../../lib/ai/imaging.py:52) | `lib/ai/imaging.py` | StrEnum of the normalized vision storage formats (`JPEG` = `image/jpeg`, `PNG` = `image/png`); re-exported from `lib.ai`, so both import paths work |
+| [`ModelRunResult`](../../lib/ai/models.py:1037) | `lib/ai/models.py` | LLM response container. `__slots__` add `isFallback`, `isToolsUsed`, `roundLimitHit` (set by `LLMService.generateTextViaLLM` when the `maxRounds` tool-loop budget is exhausted, regardless of resulting status — see [`memories/user-memory-refinement.md`](memories/user-memory-refinement.md)), and the optional provider-reported usage fields `cachedInputTokens` (subset of `inputTokens`, from `prompt_tokens_details.cached_tokens`), `reasoningTokens` (subset of `outputTokens`, from `completion_tokens_details.reasoning_tokens` / YC SDK `usage.reasoning_tokens`), and `cost` (USD, e.g. OpenRouter's extra `usage.cost`) — all `None` when the provider doesn't report them |
 | [`ModelStructuredResult`](../../lib/ai/models.py) | `lib/ai/models.py` | Structured-output result; adds `data: Optional[Dict]` |
 | [`ModelResultStatus`](../../lib/ai/models.py) | `lib/ai/models.py` | `FINAL`, `ERROR`, `TIMEOUT`, etc. |
-| [`LLMToolFunction`](../../lib/ai/models.py:345) | `lib/ai/models.py` | Tool/function definition for LLM |
-| [`LLMFunctionParameter`](../../lib/ai/models.py:277) | `lib/ai/models.py` | Tool parameter definition |
-| [`LLMParameterType`](../../lib/ai/models.py:253) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
-
+| [`LLMToolFunction`](../../lib/ai/models.py:258) | `lib/ai/models.py` | Tool/function definition for LLM |
+| [`LLMFunctionParameter`](../../lib/ai/models.py:190) | `lib/ai/models.py` | Tool parameter definition |
+| [`LLMParameterType`](../../lib/ai/models.py:166) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
 ### 1.2 Key methods on models
 
 **Key methods on `AbstractModel`:**
@@ -200,13 +205,26 @@ msg = ModelMessage(role="user", content="Hello")
 msg = ModelMessage(role="system", content="You are helpful")
 msg = ModelMessage(role="assistant", content="Response text")
 
-# Image message
-imgMsg = ModelImageMessage(
+# Image message (one or more images)
+imgMsg = ModelImagesMessage(
     role="user",
     content="Describe this image",
-    image=bytearray(imageData),
+    images=[bytearray(imageData)],
 )
 ```
+
+#### Image normalization contract
+
+`normalizeVisionImage` / `normalizeVisionImageStrict`, both in [`lib/ai/imaging.py`](../../lib/ai/imaging.py): the STRICT variant is the implementation; the lenient `normalizeVisionImage` is a **thin never-raise wrapper** — on any strict failure it logs a WARNING and returns the ORIGINAL input bytes (tagged with the detected MIME, or `application/octet-stream` when detection fails). The strict `normalizeVisionImageStrict` is **fail-closed** — it returns `None` instead — and every failure path logs: guards via `logger.warning`/`logger.error`, except-blocks via `logger.exception`. STORAGE callers MUST use the Strict variant: the lenient fallback can return the original oversized, EXIF-bearing bytes, which would poison the dedup store. One sanctioned lenient consumer exists: `/analyze` (`MediaHandler.analyze_command` in [`internal/bot/common/handlers/media.py`](../../internal/bot/common/handlers/media.py)) — each downloaded `image/*` payload passes through the lenient wrapper once, best-effort, before the describe-model request; a one-shot send (nothing is stored, no `vision_url` is written) where the original-bytes fallback only costs a larger unstripped payload, never corrupted stored data (see [`handlers.md`](handlers.md) §9.3). Both cap the long side at `maxDimension` (LANCZOS, never upscale; `maxDimension=0` disables resizing), re-encode per `outputFormat`/`quality` — typed as the `VisionOutputImageFormat` StrEnum (JPEG/PNG only; anything else fails strict / degrades lenient) — take frame 0 of animated inputs, strip EXIF, and refuse inputs over ~50 MP. **EXIF fast path:** when the source is JPEG, the output is JPEG, no resize is needed (cap disabled or long side ≤ cap), the source pixel mode is RGB, EXIF orientation is absent/identity, and the image fully decodes, the Exif APP1 segment(s) are surgically removed from the compressed bytes ([`_stripJpegExif`](../../lib/ai/imaging.py:209) marker surgery — self-implemented, no new dependencies) and the ORIGINAL scan data is returned: zero generational quality loss, GPS/EXIF gone, XMP/ICC preserved. The RGB-mode gate exists because the re-encode path converts every non-RGB mode (grayscale, CMYK, ...) to RGB — their original component layouts must not ship unchanged to vision providers. Non-RGB modes, orientation 2-8, any resize, format change, or an unrecognisable marker structure falls back to the re-encode path (orientation baked into the pixels). **Known limitation (accepted):** importing grabliarium (→ pdf_converter → weasyprint) sets `PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True` process-wide in the live bot, so with grabliarium loaded the strict variant may gray-fill and accept truncated JPEGs instead of returning `None` (owner decision: leave as-is).
+
+#### Image token estimation (estimator trusted boundary)
+
+`getEstimateTokensCount` handles message OBJECT lists itself — when the input is a list/tuple of `ModelMessage`s containing at least one image-bearing message (`ModelImagesMessage`), it is serialized (`[m.toDict() ...]`) BEFORE the trusted boundary, so inline `image_url` data-URIs are stripped from the estimate; text-only object lists, mixed lists, and every other input keep the exact verbatim `json.dumps` estimate (there is no `_estimateMessagesTokens` helper — the logic lives inside `getEstimateTokensCount`). For serialized input, the `_isMessageList` gate remains the trusted boundary. Accepted limitation: inside a trusted list, the flag spans the whole envelope — a nested non-message blob inside a trusted list is not re-examined. Since the image cap's removal (ADR-028) this exclusion means per-request image cost scales with the total attached images across current and retained history messages — the thread render loop attaches loadable images from historical albums too — with no request-wide cap; a ratified decision, and re-adding a cap after real-chat cost testing is a user follow-up.
+
+#### Condensation and image stripping
+
+`LLMService.condenseContext` strips image messages at the condenser boundary via `stripImagesForCondensing` — now **`async`** (native-vision v2, ADR-028) — ONLY when the condensing model does NOT declare `support_image_input` (fail-soft — capability-probe exception, missing key, or falsy value all mean "strip"); a vision-capable condensing model sees image messages untouched (and any `descriptionResolver` stays uninvoked). `condenseContext` strips the body via `asyncio.gather` — resolver waits for multiple pending albums run concurrently (one 300 s window, not N×300 s serial), order preserved. When stripping and the envelope text carries no media description, the message's `descriptionResolver` (when present) is awaited — lazily, at most once — and a truthy result is appended wrapped in `<media-description>…</media-description>` (the same tag the TEXT envelope uses, so the condenser reads one consistent vocabulary); when there is no resolver or it resolves to nothing (timeout, parse failure, pre-feature media), the count-based omission marker is appended instead — exactly one attached image → the singular `[image attached, omitted for condensing]`; two or more → the count-bearing `[N images attached, omitted for condensing]` — so the condenser knows the image was dropped deliberately, not lost (marker choice is purely `len(images)`-based since the 2026-10-04 image-message class merge; a single-image message always gets the singular form). The stripped copy preserves `role`/`content`/`contentKey`/`weight`/`source` and carries NO resolver (it was consumed).
+
 ### 1.4 Structured output and provider support
 
 **Structured (JSON-Schema) output:**

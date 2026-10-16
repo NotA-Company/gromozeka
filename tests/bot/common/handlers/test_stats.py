@@ -1535,7 +1535,7 @@ class TestStatsHandlerRegistrationInvariant:
         # Reset singleton
         StatsAggregationService._instance = None
         CacheService._instance = None
-        StorageService._instance = None
+        StorageService._instances.clear()
         QueueService._instance = None
 
         # Mock config manager with stats enabled and minimal bot config
@@ -1602,7 +1602,7 @@ class TestStatsHandlerRegistrationInvariant:
 
         # Reset singletons
         CacheService._instance = None
-        StorageService._instance = None
+        StorageService._instances.clear()
         QueueService._instance = None
 
         # Mock config manager with stats disabled and minimal bot config

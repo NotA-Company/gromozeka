@@ -21,12 +21,14 @@ Test Organization:
 """
 
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Iterator
 
 import pytest
 
 from internal.config.manager import ConfigManager
+from internal.config.models import VisionConfigDict
 
 # ============================================================================
 # Fixtures
@@ -1003,6 +1005,112 @@ ttl = 3600
         statsPagesConfig3 = manager3.getStatsPagesConfig()
         assert statsPagesConfig3["enabled"] is True
         assert statsPagesConfig3["ttl-hours"] == 48
+
+    def testGetVisionConfig(self, tempDir: Path) -> None:
+        """Test getting the [bot.vision] section nested under [bot].
+
+        Also pins the ``VisionConfigDict`` import path (``internal.config.models``):
+        the TypedDict is assigned from the NEW location, so a move back into
+        ``manager.py`` or a rename fails this test at import/collection time.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
+        config = """
+[bot]
+token = "test_token"
+
+[bot.vision]
+max-image-dimension = 2048
+image-format = "image/jpeg"
+image-quality = 85
+ttl-days = 30
+"""
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+
+        visionConfig = manager.getVisionConfig()
+
+        expected: VisionConfigDict = {
+            "max-image-dimension": 2048,
+            "image-format": "image/jpeg",
+            "image-quality": 85,
+            "ttl-days": 30,
+        }
+        assert visionConfig == expected
+
+    def testGetVisionConfigEmpty(self, tempDir: Path) -> None:
+        """Test getting vision config when [bot.vision] is absent.
+
+        Tests:
+        - [bot] present but no [bot.vision] → {}
+        - merged configs where a later dir adds [bot.vision] → table visible
+        """
+        # bot present, no vision section
+        config1 = """
+[bot]
+token = "test_token"
+"""
+        configPath1 = createConfigFile(tempDir, "config1.toml", config1)
+        manager1 = ConfigManager(str(configPath1))
+        assert manager1.getVisionConfig() == {}
+
+        # vision section arrives via a second config dir (hierarchical merge)
+        override = """
+[bot.vision]
+max-image-dimension = 1024
+"""
+        configPath2 = createConfigFile(tempDir, "config2.toml", config1)
+        configDir = createConfigDir(tempDir, "configs", {"vision-override.toml": override})
+        manager2 = ConfigManager(str(configPath2), configDirs=[str(configDir)])
+        visionConfig = manager2.getVisionConfig()
+        # .get() because TypedDict keys are non-required (total=False).
+        assert visionConfig.get("max-image-dimension") == 1024
+
+    def testGetVisionConfigAlphaBackgroundValues(self, tempDir: Path) -> None:
+        """Test that ``alpha-background`` values parse through getVisionConfig.
+
+        "white" and "black" (and the default "adaptive") are plain strings at
+        this layer — the getter does no validation; enum conversion and the
+        invalid-value fallback live at the consumer
+        (``BaseBotHandler.__init__``). Also checks the hierarchical merge: a
+        later config dir overrides the earlier value.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
+        config = """
+[bot]
+token = "test_token"
+
+[bot.vision]
+alpha-background = "white"
+"""
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+        assert manager.getVisionConfig().get("alpha-background") == "white"
+
+        # A later config dir overrides the value (hierarchical merge).
+        override = """
+[bot.vision]
+alpha-background = "black"
+"""
+        configDir = createConfigDir(tempDir, "configs", {"alpha-override.toml": override})
+        manager2 = ConfigManager(str(configPath), configDirs=[str(configDir)])
+        assert manager2.getVisionConfig().get("alpha-background") == "black"
+
+    def testShippedDefaultVisionAlphaBackgroundIsAdaptive(self) -> None:
+        """The shipped ``configs/00-defaults/vision.toml`` default is "adaptive".
+
+        Pins the user-facing default in the shipped config file itself: the
+        bot-side consumers also fall back to ADAPTIVE when the key is absent,
+        but the shipped file must carry the ratified default explicitly.
+        """
+        visionTomlPath = Path(__file__).resolve().parents[2] / "configs" / "00-defaults" / "vision.toml"
+        assert visionTomlPath.exists(), f"Shipped vision config not found: {visionTomlPath}"
+        with visionTomlPath.open("rb") as f:
+            visionToml = tomllib.load(f)
+        assert visionToml.get("bot", {}).get("vision", {}).get("alpha-background") == "adaptive"
 
 
 # ============================================================================

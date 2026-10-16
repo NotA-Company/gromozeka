@@ -61,7 +61,6 @@ class TestProxyLifecycle:
     #  start()
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_startRunsStartCommand(self):
         """start() runs the start command fire-and-forget."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
@@ -78,7 +77,6 @@ class TestProxyLifecycle:
             # Fire-and-forget: communicate() must NOT be awaited
             mockProcess.communicate.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_startEmptyCommand(self):
         """Empty startCommand is a no-op, no subprocess created."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(startCommand=[]), self._makeProxyConfig())
@@ -91,7 +89,6 @@ class TestProxyLifecycle:
     #  stop()
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_stopWaitsForCompletion(self):
         """stop() awaits the stop command and returns its exit code."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
@@ -109,7 +106,6 @@ class TestProxyLifecycle:
             )
             mockProcess.communicate.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_stopEmptyCommand(self):
         """Empty stopCommand is a no-op, no subprocess created."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(stopCommand=[]), self._makeProxyConfig())
@@ -118,7 +114,6 @@ class TestProxyLifecycle:
             await lifecycle.stop()
             mockCreate.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_stopTimeout(self):
         """stop() logs warning on timeout and returns without exception."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
@@ -169,7 +164,6 @@ class TestProxyLifecycle:
     #  restart()
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_restartUsesRestartCommand(self):
         """When restartCommand is set, it is called instead of stop+start."""
         lifecycle = ProxyLifecycle(
@@ -192,7 +186,6 @@ class TestProxyLifecycle:
                 stderr=asyncio.subprocess.DEVNULL,
             )
 
-    @pytest.mark.asyncio
     async def test_restartFallsBackToStopStart(self):
         """When restartCommand is empty, stop then start are called."""
         lifecycle = ProxyLifecycle(
@@ -227,7 +220,6 @@ class TestProxyLifecycle:
     #  healthCheck() — NONE
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_healthCheckNone(self):
         """healthCheckType NONE always returns True (no-op)."""
         lifecycle = ProxyLifecycle(
@@ -334,7 +326,6 @@ class TestProxyLifecycle:
     #  healthCheck() — COMMAND
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_healthCheckCommand0(self):
         """Command health check returns True on exit code 0."""
         lifecycle = ProxyLifecycle(
@@ -362,7 +353,6 @@ class TestProxyLifecycle:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-    @pytest.mark.asyncio
     async def test_healthCheckCommandNonZero(self):
         """Command health check returns False on non-zero exit code."""
         lifecycle = ProxyLifecycle(
@@ -384,7 +374,6 @@ class TestProxyLifecycle:
 
             assert result is False
 
-    @pytest.mark.asyncio
     async def test_healthCheckCommandMisconfigured(self):
         """COMMAND type with empty command returns True (treated as disabled)."""
         lifecycle = ProxyLifecycle(
@@ -401,7 +390,6 @@ class TestProxyLifecycle:
             assert result is True
             mockCreate.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_healthCheckCommandException(self):
         """Command health check returns False when subprocess creation fails."""
         lifecycle = ProxyLifecycle(
@@ -424,7 +412,6 @@ class TestProxyLifecycle:
     #  onCronTick()
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_onCronTickGating(self):
         """onCronTick() skips health check until interval elapses."""
         lifecycle = ProxyLifecycle(
@@ -449,7 +436,6 @@ class TestProxyLifecycle:
             assert lifecycle._tickCounter == 3
             mockHc.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_onCronTickRestartsOnFailure(self):
         """onCronTick() calls restart() when health check fails."""
         lifecycle = ProxyLifecycle(
@@ -471,7 +457,6 @@ class TestProxyLifecycle:
             mockHc.assert_called_once()
             mockRestart.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_onCronTickHealthCheckException(self):
         """onCronTick() catches health check exception and restarts."""
         lifecycle = ProxyLifecycle(
@@ -494,7 +479,6 @@ class TestProxyLifecycle:
             mockHc.assert_called_once()
             mockRestart.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_onCronTickRestartException(self):
         """onCronTick() catches restart exception and does not propagate."""
         lifecycle = ProxyLifecycle(
@@ -517,7 +501,6 @@ class TestProxyLifecycle:
             mockHc.assert_called_once()
             mockRestart.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_onCronTickIntervalZeroEdgeCase(self):
         """Interval <= 0 is clamped to 5, health check only fires every 5 ticks."""
         lifecycle = ProxyLifecycle(
@@ -542,7 +525,6 @@ class TestProxyLifecycle:
             assert lifecycle._tickCounter == 5
             mockRun.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_onCronTickIntervalNegativeEdgeCase(self):
         """Negative interval is clamped to 5 just like zero."""
         lifecycle = ProxyLifecycle(
@@ -569,7 +551,6 @@ class TestProxyLifecycle:
     #  onExit()
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_onExitCallsStop(self):
         """onExit() calls stop()."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
@@ -578,7 +559,6 @@ class TestProxyLifecycle:
             await lifecycle.onExit()
             mockStop.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_onExitStopException(self):
         """onExit() catches stop() exception and does not propagate."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
@@ -591,7 +571,6 @@ class TestProxyLifecycle:
     #  __init__ validation
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_initValidatesUrlTypeWithoutUrl(self):
         """URL type without URL logs warning but does not raise."""
         # Should not raise
@@ -606,7 +585,6 @@ class TestProxyLifecycle:
         # Health check should return True (disabled)
         assert await lifecycle.healthCheck() is True
 
-    @pytest.mark.asyncio
     async def test_initValidatesCommandTypeWithoutCommand(self):
         """COMMAND type without command logs warning but does not raise."""
         lifecycle = ProxyLifecycle(
@@ -623,14 +601,12 @@ class TestProxyLifecycle:
     #  _runCommand edge cases
     # ------------------------------------------------------------------ #
 
-    @pytest.mark.asyncio
     async def test_runCommandEmptyReturnsNone(self):
         """_runCommand with empty command list returns None."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
         result = await lifecycle._runCommand([], waitForCompletion=True)
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_runCommandSubprocessException(self):
         """_runCommand handles subprocess creation exception gracefully."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
@@ -642,7 +618,6 @@ class TestProxyLifecycle:
             result = await lifecycle._runCommand(["some", "cmd"], waitForCompletion=True)
             assert result is None
 
-    @pytest.mark.asyncio
     async def test_runCommandFireAndForgetReturnsNone(self):
         """_runCommand with waitForCompletion=False returns None."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())

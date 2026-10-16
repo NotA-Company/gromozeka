@@ -6,10 +6,13 @@ error handling, and integration scenarios.
 """
 
 import asyncio
+import base64
 import datetime
+import json
 import logging
+import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import Mock, patch
 
 import pytest
@@ -25,6 +28,7 @@ from lib.ai.models import (
     LLMParameterType,
     LLMToolCall,
     LLMToolFunction,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -353,7 +357,6 @@ def testRegisterToolWithExtraParameterConfig(llmService, sampleToolHandler):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testToolExecutionViaLLMToolFunction(sampleToolHandler):
     """Test executing tool via LLMToolFunction.call()"""
     tool = LLMToolFunction(
@@ -368,7 +371,6 @@ async def testToolExecutionViaLLMToolFunction(sampleToolHandler):
     assert result == "Weather in Tokyo: 20°C"
 
 
-@pytest.mark.asyncio
 async def testToolExecutionWithMissingOptionalParameter(sampleToolHandler):
     """Test tool execution with missing optional parameter"""
     tool = LLMToolFunction(
@@ -383,7 +385,6 @@ async def testToolExecutionWithMissingOptionalParameter(sampleToolHandler):
     assert result == "Weather in Paris: 20°C"
 
 
-@pytest.mark.asyncio
 async def testToolExecutionWithExtraData():
     """Test tool execution with extraData parameter"""
 
@@ -404,7 +405,6 @@ async def testToolExecutionWithExtraData():
     assert result == "Extra: value"
 
 
-@pytest.mark.asyncio
 async def testToolExecutionError():
     """Test tool execution that raises an error"""
 
@@ -422,7 +422,6 @@ async def testToolExecutionError():
         await tool.call(None)
 
 
-@pytest.mark.asyncio
 async def testToolExecutionWithoutFunction():
     """Test calling tool without function raises error"""
     tool = LLMToolFunction(
@@ -441,7 +440,6 @@ async def testToolExecutionWithoutFunction():
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithoutTools(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -475,7 +473,6 @@ async def testGenerateTextWithoutTools(
     assert callArgs.kwargs["tools"] == []
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithCallId(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -504,7 +501,6 @@ async def testGenerateTextWithCallId(
     mockModel.generateText.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def testGenerateTextAutoGeneratesCallId(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -539,7 +535,6 @@ async def testGenerateTextAutoGeneratesCallId(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithToolCall(
     llmService, mockModel, mockFallbackModel, sampleMessages, sampleToolHandler, mockChatSettings, mockLlmManager
 ):
@@ -594,7 +589,6 @@ async def testGenerateTextWithToolCall(
     assert mockModel.generateText.call_count == 2
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithMultipleToolCalls(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -645,7 +639,6 @@ async def testGenerateTextWithMultipleToolCalls(
     assert mockModel.generateText.call_count == 2
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithMultipleToolCallRounds(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -698,7 +691,6 @@ async def testGenerateTextWithMultipleToolCallRounds(
     assert mockModel.generateText.call_count == 3
 
 
-@pytest.mark.asyncio
 async def testGenerateTextWithToolCallCallback(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -749,7 +741,6 @@ async def testGenerateTextWithToolCallCallback(
     assert callArgs.args[1] == extraData
 
 
-@pytest.mark.asyncio
 async def testGenerateTextToolCallResultFormatting(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -808,7 +799,6 @@ async def testGenerateTextToolCallResultFormatting(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testToolCallMessageConstruction(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -865,7 +855,6 @@ async def testToolCallMessageConstruction(
     assert toolMsg[0].toolCallId == "call_123"
 
 
-@pytest.mark.asyncio
 async def testConversationContextPreserved(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -917,7 +906,6 @@ async def testConversationContextPreserved(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testToolExecutionException(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -950,7 +938,6 @@ async def testToolExecutionException(
         )
 
 
-@pytest.mark.asyncio
 async def testCallbackException(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -1131,7 +1118,6 @@ def testParameterTypeConversion():
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testFullWorkflowRegisterGenerateExecute(
     llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
 ):
@@ -1192,7 +1178,6 @@ async def testFullWorkflowRegisterGenerateExecute(
     assert mockModel.generateText.call_count == 2
 
 
-@pytest.mark.asyncio
 async def testConversationWithMultipleToolCallRounds(
     llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
 ):
@@ -1255,7 +1240,6 @@ async def testConversationWithMultipleToolCallRounds(
     assert mockModel.generateText.call_count == 3
 
 
-@pytest.mark.asyncio
 async def testToolResultsAffectSubsequentResponses(
     llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
 ):
@@ -1308,7 +1292,6 @@ async def testToolResultsAffectSubsequentResponses(
     assert toolContent == {"status": "success", "value": 42}
 
 
-@pytest.mark.asyncio
 async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
     """Test extraData is properly passed to tool handlers"""
     # Track what extraData was received
@@ -1359,7 +1342,6 @@ async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel, m
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testEmptyToolCallsList(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -1395,7 +1377,6 @@ async def testEmptyToolCallsList(
     assert mockModel.generateText.call_count == 2
 
 
-@pytest.mark.asyncio
 async def testToolReturnsNone(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -1436,7 +1417,6 @@ async def testToolReturnsNone(
     assert result.status == ModelResultStatus.FINAL
 
 
-@pytest.mark.asyncio
 async def testToolReturnsComplexObject(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -1491,7 +1471,6 @@ async def testToolReturnsComplexObject(
     assert "list" in toolContent
 
 
-@pytest.mark.asyncio
 async def testNoCallbackProvided(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -1533,7 +1512,6 @@ async def testNoCallbackProvided(
     assert result.status == ModelResultStatus.FINAL
 
 
-@pytest.mark.asyncio
 async def testToolsListPassedToModel(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):
@@ -1619,7 +1597,6 @@ def testSingletonThreadSafety():
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testManyToolsRegistration(llmService):
     """Test registering many tools"""
 
@@ -1638,7 +1615,6 @@ async def testManyToolsRegistration(llmService):
     assert len(llmService.toolsHandlers) == 100
 
 
-@pytest.mark.asyncio
 async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
     """Test many sequential tool calls"""
 
@@ -1963,6 +1939,26 @@ def _condenseTokensFor(data: Any) -> int:
     return total
 
 
+def _serializedLengthTokens(data: Any) -> int:
+    """Deterministic token estimator measuring FULL serialized length.
+
+    Unlike :func:`_condenseTokensFor` (which counts only the ``content``
+    string), this counts the JSON-serialized length of every message dict —
+    so an image-bearing message whose ``toDict()`` embeds a base64 data URI
+    counts as huge. Used to drive ``condenseContext`` into the
+    oversized-single-message skip path for an image message.
+
+    Args:
+        data: A string, or a list of ``ModelMessage.toDict()`` dicts.
+
+    Returns:
+        The deterministic token count.
+    """
+    if isinstance(data, str):
+        return len(data)
+    return sum(len(json.dumps(item, default=str)) for item in data)
+
+
 def _makeCountingModel(contextSize: int) -> Mock:
     """Build a mock AbstractModel whose token count is the content-length sum.
 
@@ -1976,6 +1972,12 @@ def _makeCountingModel(contextSize: int) -> Mock:
     model = Mock(spec=AbstractModel)
     model.contextSize = contextSize
     model.getEstimateTokensCount = Mock(side_effect=_condenseTokensFor)
+    # A bare ``Mock(spec=AbstractModel)`` auto-creates ``getInfo()`` returning
+    # a truthy Mock, which the condenseContext vision gate would misread as
+    # "supports images". Wire an explicit TEXT-ONLY capability so the default
+    # condenser takes the strip path; tests needing a vision condenser
+    # override ``getInfo`` explicitly.
+    model.getInfo = Mock(return_value={})
     return model
 
 
@@ -2142,6 +2144,178 @@ class TestCondenseContextCoverage:
         # ``source=resDict`` and ``coverage[key]=resDict`` — same object).
         assert result[1].role == "user"
         assert result[1].source is coverage[0]
+
+    async def testImageBearingBodyCondensedAsTextOnly(self, llmService):
+        """Image-bearing body messages cross into the condenser as TEXT-ONLY copies.
+
+        Regression (Phase 2b review, finding 1): the chat-time vision swap runs
+        BEFORE ``generateTextViaLLM``, whose per-round ``condenseContext``
+        originally passed body messages straight to the condensing model
+        without checking its image-input capability, so a text-only condenser
+        would hard-reject a batch carrying serialized ``image_url`` parts —
+        and the failed-batch path would skip that batch's TEXT context too.
+        Since then the capability IS checked: ``condenseContext`` gates the
+        strip on the condensing model's ``support_image_input`` capability
+        (see ``TestCondenseContextImageStripGating``). This test pins the
+        text-only branch of that gate: image payloads are stripped at the
+        condenser boundary while the envelope text and the ``source`` (for
+        coverage tracking) are preserved and the caller's messages are not
+        mutated.
+
+        Returns:
+            None
+        """
+        source = EnsuredMessage(
+            sender=MessageSender(id=1, name="user1", username="user1"),
+            recipient=MessageRecipient(id=-100, chatType=ChatType.GROUP),
+            messageId=MessageId(7),
+            date=datetime.datetime.fromtimestamp(1000.0, datetime.timezone.utc),
+            messageText="IMG ENVELOPE",
+        )
+        imageMessage = ModelImagesMessage(role="user", content="IMG ENVELOPE", images=[bytearray(b"FAKE-IMG")])
+        imageMessage.source = source
+        messages = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+        )
+
+        # The condenser saw ONE batch of plain text messages: no image
+        # message types and no serialized image blocks anywhere in the
+        # request (a text-only condenser can process it).
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(isinstance(m, ModelMessage) for m in requestMessages)
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        # The envelope text (not a blanked placeholder) reached the condenser.
+        # The envelope carries no media description, so the omission marker
+        # is appended: the condenser knows an image was there and dropped
+        # deliberately, not lost. Marker choice is count-based: a 1-image
+        # message gets the legacy singular marker.
+        assert any("IMG ENVELOPE" in m["content"] for m in serialized)
+        assert "IMG ENVELOPE\n[image attached, omitted for condensing]" in [m["content"] for m in serialized]
+
+        # Coverage survived the text-only copy: the summary still covers the
+        # image message's source metadata.
+        assert set(coverage.keys()) == {0}
+        assert coverage[0].get("text") == "summary-0"
+        assert coverage[0].get("messageIds") == [MessageId(7)]
+        assert coverage[0].get("participants") == ["user1"]
+        assert coverage[0].get("messageCount") == 1
+
+        # The caller's list is untouched: the image message keeps its payload.
+        assert messages[1] is imageMessage
+        assert imageMessage.images == [bytearray(b"FAKE-IMG")]
+        assert imageMessage.source is source
+
+    async def testNoCondensationLeavesImageBearingBodyUntouched(self, llmService):
+        """Without condensation the body keeps its image messages untouched.
+
+        The text-only swap at the condenser boundary must not alter the
+        non-condensing behaviour: when the context fits, the original sequence
+        (image payloads included) is what the CHAT model receives.
+
+        Returns:
+            None
+        """
+        imageMessage = ModelImagesMessage(role="user", content="IMG ENVELOPE", images=[bytearray(b"FAKE-IMG")])
+        messages = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+
+        # Huge budget + no force → nothing condenses.
+        ret, coverage = await llmService.condenseContext(
+            messages, model, keepFirstN=0, keepLastN=1, maxTokens=1_000_000
+        )
+
+        assert ret is messages
+        assert isinstance(ret[1], ModelImagesMessage)
+        assert ret[1].images == [bytearray(b"FAKE-IMG")]
+        assert coverage == {}
+
+    async def testCondensationKeepsHeadTailImageInstances(self, llmService):
+        """Real condensation: only the body reaches the condenser; head/tail keep their images.
+
+        Forces ACTUAL condensation (``force=True``, text-only condenser) with
+        DISTINCT image-bearing head, body, and tail messages (``keepFirstN > 0``
+        and ``keepLastN > 0``). Earlier tests covered only the no-op branch,
+        where the whole input list is returned unchanged. Asserts (a) only the
+        body reaches the text-only condenser — as text-only copies, without
+        image payloads and without head/tail envelope leakage; (b) the
+        returned head and tail are the ORIGINAL instances with their image
+        payloads intact.
+
+        Returns:
+            None
+        """
+        headImage = ModelImagesMessage(role="user", content="HEAD ENVELOPE", images=[bytearray(b"HEAD-IMG")])
+        bodyImage = ModelImagesMessage(role="user", content="BODY ENVELOPE", images=[bytearray(b"BODY-IMG")])
+        tailImage = ModelImagesMessage(role="user", content="TAIL ENVELOPE", images=[bytearray(b"TAIL-IMG")])
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content="sys"),
+            headImage,
+            bodyImage,
+            ModelMessage(role="user", content="plain body"),
+            tailImage,
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        # keepFirstN=1 (bumped to 2 by the system message) → head = [sys, headImage];
+        # keepLastN=1 → tail = [tailImage]; body = [bodyImage, plain body].
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=1,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+        )
+
+        # (a) The condenser received ONLY the body: one batch of plain
+        # text-only messages, no image payloads, and no head/tail envelopes.
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        requestContents = [s["content"] for s in serialized]
+        assert any("BODY ENVELOPE" in c for c in requestContents)
+        assert any("plain body" in c for c in requestContents)
+        assert all("HEAD ENVELOPE" not in c for c in requestContents)
+        assert all("TAIL ENVELOPE" not in c for c in requestContents)
+
+        # (b) The returned head/tail are the ORIGINAL instances with their
+        # image payloads; the body was replaced by the summary.
+        assert result[0].role == "system"
+        assert result[1] is headImage
+        assert result[1].images == [bytearray(b"HEAD-IMG")]
+        assert result[-1] is tailImage
+        assert result[-1].images == [bytearray(b"TAIL-IMG")]
+        assert result[2].source is coverage[0]
+        assert coverage[0].get("text") == "summary-0"
 
     async def testMultiBatchCoverage(self, llmService):
         """Two summary batches → two coverage entries with disjoint contiguous messageIds.
@@ -2552,6 +2726,459 @@ class TestCondenseContextCoverage:
         # Sanity: the summary text came back and the result holds the summary.
         assert cov["text"] == "multi-emit-summary"
         assert result[1].source is coverage[0]
+
+
+class TestCondenseContextImageStripGating:
+    """Tests for the vision-capability gate on the condenser image strip (Wave C).
+
+    ``condenseContext`` swaps image-bearing body messages to text-only copies
+    ONLY when the condensing model does NOT declare ``support_image_input``;
+    a vision-capable condenser receives the image payloads natively
+    (untouched instances). The capability probe is fail-soft: an exception
+    from ``getInfo()``, a missing key, or a falsy value all mean "does not
+    support images" → strip; a truthy value passes image-bearing messages
+    through UNTOUCHED.
+    """
+
+    SYS_PROMPT = "sys"
+
+    def _messagesWithImageBody(self) -> Tuple[List[ModelMessage], ModelImagesMessage]:
+        """Build ``[system, image-bearing user, tail user]`` for gating tests.
+
+        Returns:
+            A ``(messages, imageMessage)`` tuple; the image message sits at
+            index 1 and is the entire condensable body (``keepFirstN=0``,
+            ``keepLastN=1``).
+        """
+        imageMessage = ModelImagesMessage(role="user", content="IMG ENVELOPE", images=[bytearray(b"FAKE-IMG")])
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        return (messages, imageMessage)
+
+    async def testVisionCapableCondenserReceivesImagePayloads(self, llmService: LLMService) -> None:
+        """``support_image_input=True`` → body crosses UNTOUCHED, images intact.
+
+        The condenser request must contain the ORIGINAL image-bearing
+        instance (no text-only copy substituted) with its serialized
+        ``image_url`` payload, so a vision-capable condenser sees the image
+        natively.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": True})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        # The ORIGINAL image-bearing instance crossed into the condenser: no
+        # text-only copy was substituted for it.
+        assert any(m is imageMessage for m in requestMessages)
+        # Its serialized form carries the native image payload(s).
+        serialized = [m.toDict() for m in requestMessages]
+        assert any("image_url" in json.dumps(s, default=str) for s in serialized)
+        # The summary was still produced and covers the batch.
+        assert set(coverage.keys()) == {0}
+        assert coverage[0].get("text") == "summary-0"
+
+    async def testTextOnlyCondenserStripsImages(self, llmService: LLMService) -> None:
+        """``support_image_input=False`` → stripped (no image payloads reach the condenser).
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, _imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": False})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        # The envelope text survived the strip.
+        assert any("IMG ENVELOPE" in m.content for m in requestMessages)
+        assert set(coverage.keys()) == {0}
+
+    async def testMissingCapabilityKeyStripsImages(self, llmService: LLMService) -> None:
+        """``getInfo()`` without the ``support_image_input`` key → stripped.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, _imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        # Capability dict that carries unrelated keys only.
+        condensing.getInfo = Mock(return_value={"support_tools": True})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
+        assert any("IMG ENVELOPE" in m.content for m in requestMessages)
+        assert set(coverage.keys()) == {0}
+
+    async def testGetInfoFailureStripsImages(self, llmService: LLMService) -> None:
+        """A raising ``getInfo()`` → fail-soft strip, condensing still completes.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, _imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(side_effect=RuntimeError("capability probe boom"))
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        # The gate's exception must not propagate; condensing completed.
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
+        assert set(coverage.keys()) == {0}
+
+    async def testTextOnlyCondenserInjectsResolvedDescription(self, llmService: LLMService) -> None:
+        """A text-only condenser receives the RESOLVED description, zero image payloads.
+
+        Phase A (native-vision v2 §4.6): when the stripped image message
+        carries a ``descriptionResolver``, the strip awaits it and appends
+        the resolved text wrapped in ``<media-description>`` — the TEXT
+        envelope's tag — so the condenser summarizes real descriptions
+        instead of a bare omission marker.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        description = "a red square on a green table"
+
+        async def resolver() -> Optional[str]:
+            return description
+
+        imageMessage = ModelImagesMessage(
+            role="user",
+            content="IMG ENVELOPE",
+            images=[bytearray(b"FAKE-IMG")],
+            descriptionResolver=resolver,
+        )
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": False})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        # No image message types and no serialized image payloads crossed.
+        assert all(not isinstance(m, ModelImagesMessage) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        # The resolver's description was injected right after the envelope
+        # text, in the TEXT envelope's tag vocabulary.
+        assert f"IMG ENVELOPE\n<media-description>{description}</media-description>" in [
+            m["content"] for m in serialized
+        ]
+        # The summary was still produced and covers the batch.
+        assert set(coverage.keys()) == {0}
+        assert coverage[0].get("text") == "summary-0"
+
+
+class TestCondenseContextLogHygiene:
+    """Regression tests: base64 image payloads must never reach condenseContext logs.
+
+    ``ModelMessage.__repr__`` chains to ``toDict()``, which embeds complete
+    base64 data URIs for image-bearing messages. ``condenseContext`` logs
+    whole message lists at DEBUG (before condensing, for the condenser
+    request, and after condensing — head/tail keep their images) and can hit
+    an ERROR path for an oversized single message at production log levels.
+    Every one of those records must carry identifying info plus truncated
+    previews only (``toLogMessage()``), never a full image payload — and the
+    DEBUG dumps must not even be BUILT unless DEBUG logging is enabled
+    (f-string evaluation would otherwise pay the base64 encoding cost per
+    call).
+    """
+
+    HEAD_IMAGE = bytearray(b"HEAD-IMG-" * 120)
+    BODY_IMAGE = bytearray(b"BODY-IMG-" * 120)
+    TAIL_IMAGE = bytearray(b"TAIL-IMG-" * 120)
+
+    async def testDebugLogsNeverContainImagePayloads(
+        self, llmService: LLMService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """DEBUG condensation logs stay payload-free for an image-bearing context.
+
+        Forces REAL condensation (``force=True``, text-only condenser) with
+        DISTINCT image-bearing head, body, and tail messages. The pre-fix
+        code interpolated raw object/list representations into DEBUG records
+        (repr → ``toDict()`` → complete base64 data URIs), leaking every
+        image payload into the captured output. Post-fix the dumps use
+        truncated ``toLogMessage()`` views and are only BUILT when DEBUG is
+        enabled; the records must still be emitted (so the assertions are
+        not vacuous) with no long base64 run anywhere.
+
+        Args:
+            llmService: Fresh LLMService instance.
+            caplog: pytest log-capture fixture.
+        """
+        headImage = ModelImagesMessage(role="user", content="HEAD ENVELOPE", images=[self.HEAD_IMAGE])
+        bodyImage = ModelImagesMessage(role="user", content="BODY ENVELOPE", images=[self.BODY_IMAGE])
+        tailImage = ModelImagesMessage(role="user", content="TAIL ENVELOPE", images=[self.TAIL_IMAGE])
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content="sys"),
+            headImage,
+            bodyImage,
+            ModelMessage(role="user", content="plain body"),
+            tailImage,
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        with caplog.at_level(logging.DEBUG, logger="internal.services.llm.service"):
+            await llmService.condenseContext(
+                messages,
+                model,
+                keepFirstN=1,
+                keepLastN=1,
+                force=True,
+                condensingModel=condensing,
+                condensingPrompt="Summarize.",
+                condensingSystemPrompt="Condenser.",
+                maxTokens=1000,
+            )
+
+        logOutput = caplog.text
+        # Sanity: condensation ran and its DEBUG records were actually
+        # captured (a silently removed log statement would else pass
+        # vacuously).
+        assert any("Condensing context" in record.message for record in caplog.records)
+        assert any("Condensed context" in record.message for record in caplog.records)
+        # No complete image payload anywhere: neither the full base64 blob
+        # of any image nor any long base64 run (>= 100 chars).
+        for image in (self.HEAD_IMAGE, self.BODY_IMAGE, self.TAIL_IMAGE):
+            assert base64.b64encode(bytes(image)).decode("ascii") not in logOutput
+        assert re.search(r"[A-Za-z0-9+/=]{100,}", logOutput) is None
+
+    async def testOversizedImageMessageErrorLogStaysPayloadFree(
+        self, llmService: LLMService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The oversized-message ERROR path logs a preview, never the payload.
+
+        A vision-capable condenser (``support_image_input=True``) receives
+        the image-bearing body message UNSTRIPPED; when that message alone
+        overflows the condenser context, the skip path logs an ERROR — at
+        production log levels. Pre-fix that record interpolated the whole
+        message (repr → complete base64 data URI); it must carry identifying
+        info plus a truncated preview only.
+
+        Args:
+            llmService: Fresh LLMService instance.
+            caplog: pytest log-capture fixture.
+        """
+        image = bytearray(b"OVERSIZED-IMG-" * 300)
+        imageMessage = ModelImagesMessage(
+            role="user",
+            # Space-separated words so the envelope text itself never forms
+            # a long base64-like run that would trip the payload regex.
+            content="HUGE IMAGE ENVELOPE " + "word " * 120,
+            images=[image],
+        )
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content="Condenser."),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCountingModel(500)
+        condensing.getInfo = Mock(return_value={"support_image_input": True})
+        # Token count = full serialized JSON length, so the embedded image
+        # payload alone exceeds summaryMaxTokens and drives the skip path.
+        condensing.getEstimateTokensCount = Mock(side_effect=_serializedLengthTokens)
+
+        with caplog.at_level(logging.DEBUG, logger="internal.services.llm.service"):
+            result, coverage = await llmService.condenseContext(
+                messages,
+                model,
+                keepFirstN=0,
+                keepLastN=1,
+                force=True,
+                condensingModel=condensing,
+                condensingPrompt="Summarize.",
+                condensingSystemPrompt="Condenser.",
+                maxTokens=500,
+            )
+
+        # The skip path fired exactly once (the image message alone exceeded
+        # the condenser context) and produced no coverage entry.
+        errorRecords = [record for record in caplog.records if "Error while running LLM for message" in record.message]
+        assert len(errorRecords) == 1
+        assert errorRecords[0].levelno == logging.ERROR
+        assert coverage == {}
+        assert result[0].role == "system"
+        # The record still identifies the message type (diagnosable), but
+        # truncates its payload.
+        assert "ModelImagesMessage(" in errorRecords[0].message
+        logOutput = caplog.text
+        assert base64.b64encode(bytes(image)).decode("ascii") not in logOutput
+        assert re.search(r"[A-Za-z0-9+/=]{100,}", logOutput) is None
+
+    async def testVisionCondensedNoSourceImageWarningStaysPayloadFree(
+        self, llmService: LLMService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The no-source WARNING stays payload-free after a SUCCESSFUL vision condensation.
+
+        A vision-capable condenser (``support_image_input=True``) receives the
+        image-bearing body message UNSTRIPPED; when the batch FITS and
+        condensation SUCCEEDS, the original ``ModelImagesMessage`` — carrying
+        ``source=None``, a supported and explicitly handled case — reaches
+        :func:`generateCondensingDict`, which logs a WARNING for it at
+        production log levels. Pre-fix that record interpolated the whole
+        message (``str()`` → ``toDict()`` → complete base64 data URI); it must
+        carry identifying info plus a truncated preview only, while the
+        successful coverage is still produced.
+
+        Args:
+            llmService: Fresh LLMService instance.
+            caplog: pytest log-capture fixture.
+        """
+        image = bytearray(b"NOSOURCE-IMG-" * 150)
+        bodyImage = ModelImagesMessage(
+            role="user",
+            # Space-separated words so the envelope text itself never forms
+            # a long base64-like run that would trip the payload regex.
+            content="BODY IMAGE ENVELOPE " + "word " * 40,
+            images=[image],
+            # ``source`` defaults to None — the explicitly handled no-source
+            # case that must not leak the payload either.
+        )
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content="Condenser."),
+            bodyImage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": True})
+
+        with caplog.at_level(logging.WARNING, logger="internal.services.llm.service"):
+            result, coverage = await llmService.condenseContext(
+                messages,
+                model,
+                keepFirstN=0,
+                keepLastN=1,
+                force=True,
+                condensingModel=condensing,
+                condensingPrompt="Summarize.",
+                condensingSystemPrompt="Condenser.",
+                maxTokens=1000,
+            )
+
+        # The batch fitted and generation succeeded: the condenser was
+        # actually awaited and the no-source message still produced coverage.
+        condensing.generateText.assert_awaited_once()
+        assert coverage == {0: {"text": "summary-0", "messageCount": 1}}
+        assert len(result) == 3
+        assert result[0].role == "system"
+        assert result[2].content == "last"
+        # The no-source warning fired exactly once, at WARNING (DEBUG capture
+        # is off, so this record exists independently of any DEBUG dump), and
+        # still identifies the message type (diagnosable) while truncating
+        # its payload.
+        warningRecords = [record for record in caplog.records if "has no source" in record.message]
+        assert len(warningRecords) == 1
+        assert warningRecords[0].levelno == logging.WARNING
+        assert "ModelImagesMessage(" in warningRecords[0].message
+        # No complete image payload anywhere in ANY captured record: neither
+        # the full base64 blob of the image nor any long base64 run (>= 100
+        # chars).
+        logOutput = caplog.text
+        assert base64.b64encode(bytes(image)).decode("ascii") not in logOutput
+        assert re.search(r"[A-Za-z0-9+/=]{100,}", logOutput) is None
 
 
 # ============================================================================

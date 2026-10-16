@@ -69,19 +69,78 @@ from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
-from internal.services.storage import StorageService
+from internal.services.storage import StorageScope, StorageService
 from internal.services.stt import STTService
 from lib.ai import (
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.imaging import AlphaBackground, VisionOutputImageFormat, normalizeVisionImageStrict
 from lib.ai.session import buildSessionId
 from lib.stats import NullStatsStorage, StatsStorage
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["HandlerResultStatus", "BaseBotHandler"]
+
+
+visionStorageLock = asyncio.Lock()
+"""Serializes native-vision storage critical sections against the TTL-GC sweep.
+
+Single-process asyncio app, so a plain ``asyncio.Lock`` suffices. The lock is
+NOT reentrant: no holder may await code that re-acquires it.
+
+Protocol — two parties:
+
+- ``HandlersManager._visionGcCronJob`` holds it across its ONE combined
+  snapshot statement (``getExpiredVisionAttachmentsWithRetention``, which
+  returns the expired rows and the retained-key set from a single DB
+  evaluation point) AND the whole per-row delete/clear sweep, so the delete
+  decision is never made against a snapshot a concurrent receipt is still
+  mutating.
+- ``BaseBotHandler._storeVisionImage`` holds it around its two storage/DB
+  critical sections: (a) the reuse short-exit (in-lock row reread → current-
+  key probe → bare touch) and (b) the store-and-publish section (dedup
+  ``exists()`` + ``store()`` + ``vision_url`` write). The attachment download
+  and image normalization stay OUTSIDE the lock so network/encoder I/O never
+  serializes against the GC.
+
+Why this closes the receipt/GC races: publish (store + ``vision_url`` write)
+and reuse-confirm (in-lock row re-read + ``exists()`` probe + bare touch) are
+serialized against the sweep, so either order is safe. Receipt-first: the
+GC's snapshot observes the freshly published/touched live row and keeps the
+file. GC-first, BOTH outcomes resolve through the store path: (a)
+deleted-file — the sweep removed the object and cleared the row's reference,
+so the receipt's ``exists()`` probe misses and it falls through to the store
+path, which re-stores the object BEFORE publishing it; (b) retained-file —
+the sweep kept a shared file (a fresh row still references the key) but
+cleared the expired row's ``vision_url``; the receipt's probe of the cleared
+reference misses and it likewise takes the store path, which re-derives the
+SAME content-addressed key, skips the physical write via the dedup
+``exists()`` check, and republishes the key on the row — self-healing with
+no separate republish branch.
+"""
+
+
+def isMaxAnimatedStickerStubUrl(url: str) -> bool:
+    """
+    Classify a URL as a Max animated-sticker placeholder ("stub") image.
+
+    This is the single source of truth for the exclusion that
+    ``processMaxMedia`` applies when seeding animated-sticker rows: those
+    rows are seeded DONE on purpose so the generic placeholder is never
+    downloaded or analyzed — and the ``_processMediaV2`` DONE-arm
+    native-vision backfill must honor the same exclusion (classified from
+    the URL, never from the row description).
+
+    Args:
+        url: The attachment URL (or platform fileId carrying the URL) to check.
+
+    Returns:
+        True when *url* points at the generic animated-sticker stub image.
+    """
+    return url.startswith(constants.MAX_ANIMATED_STICKER_STUB_URL_PREFIX) and url.endswith(".png")
 
 
 class HandlerResultStatus(Enum):
@@ -171,6 +230,42 @@ class BaseBotHandler(CommandHandlerMixin):
         # Cached config flags — read once at init, require restart to take effect.
         # Mirrors the _searchEnabled pattern in MessagePreprocessorHandler.
         self._sttEnabled: bool = bool(self.configManager.getSttConfig().get("enabled", False))
+
+        # Native-vision receipt-time settings — read once at init (same
+        # "cached config flags" pattern as _sttEnabled above); require restart
+        # to take effect. The raw ``image-format`` / ``alpha-background``
+        # strings are converted to their enums exactly once here; an
+        # out-of-contract value falls back to the documented default with a
+        # warning.
+        visionConfig = self.configManager.getVisionConfig()
+        self._visionMaxImageDimension: int = visionConfig.get("max-image-dimension", 2048)
+        self._visionImageFormat: VisionOutputImageFormat
+        try:
+            self._visionImageFormat = VisionOutputImageFormat(str(visionConfig.get("image-format", "image/jpeg")))
+        except ValueError:
+            logger.warning(
+                f"Invalid bot.vision image-format {visionConfig.get('image-format')!r}, "
+                f"falling back to {VisionOutputImageFormat.JPEG}"
+            )
+            self._visionImageFormat = VisionOutputImageFormat.JPEG
+        self._visionImageQuality: int = visionConfig.get("image-quality", 85)
+        self._visionAlphaBackground: AlphaBackground
+        try:
+            self._visionAlphaBackground = AlphaBackground(str(visionConfig.get("alpha-background", "adaptive")))
+        except ValueError:
+            logger.warning(
+                f"Invalid bot.vision alpha-background {visionConfig.get('alpha-background')!r}, "
+                f"falling back to {AlphaBackground.ADAPTIVE}"
+            )
+            self._visionAlphaBackground = AlphaBackground.ADAPTIVE
+        # Vision-scoped storage instance (scoped-storage design v1 §4.4):
+        # normalized images land in the vision store under bare keys. The
+        # HandlersManager injects this scope before the handler pipeline is
+        # built; handlers constructed standalone may hold an uninitialized
+        # instance — every consumer (_storeVisionImage /
+        # _loadNativeVisionImages) is fail-soft and degrades exactly as it
+        # does for any other storage failure.
+        self.visionStorage = StorageService.getInstance(StorageScope.VISION)
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -787,6 +882,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self,
         ensuredMessage: EnsuredMessage,
         condenseThread: bool = True,
+        nativeImages: bool = False,
     ) -> Sequence[ModelMessage]:
         """
         Get the conversation thread for a message formatted for LLM processing
@@ -798,6 +894,9 @@ class BaseBotHandler(CommandHandlerMixin):
         Args:
             ensuredMessage: The message to get the thread for
             condenseThread: Whether to condense the thread if it exceeds token limits (default: True)
+            nativeImages: Opt-in construction-time image attach forwarded to every
+                ``toModelMessageList`` render site (native-vision v2 §4.7).
+                Default False keeps today's description-only rendering.
 
         Returns:
             Sequence of ModelMessage objects representing the conversation thread,
@@ -841,6 +940,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
                 cache=self.cache if needMemories else None,
                 excludeMemoryIds=set(),
+                nativeImages=nativeImages,
             )
 
         dbMessageList = await self.db.chatMessages.getChatMessagesByRootId(
@@ -884,6 +984,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     outputFormat=outputFormat,
                     cache=self.cache if needMemories else None,
                     excludeMemoryIds=set(),
+                    nativeImages=nativeImages,
                 )
                 ret.extend(mMessages)
 
@@ -933,6 +1034,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 outputFormat=outputFormat,
                 cache=self.cache if needMemories else None,
                 excludeMemoryIds=excludedMemoryIds,
+                nativeImages=nativeImages,
             )
             excludedMemoryIds.update(eMessage.getMemoryIds())
             # extendleft just call appendleft for each element so we need to reverse it for proper order
@@ -1802,7 +1904,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 url = attachment.payload.url
                 mediaId = f"{attachment.type}:{attachment.payload.code}"
 
-                if url.startswith("https://st.mycdn.me/static/messages/res/images/stub/") and url.endswith(".png"):
+                if isMaxAnimatedStickerStubUrl(url):
                     # https://st.mycdn.me/static/messages/res/images/stub/sticker_31856a27@2x.png
                     # It is not real sticker image, just stub for all(?) animated stickers.
                     # We should'nt process it as it will put wrong data into context
@@ -1889,12 +1991,19 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         Process media attachments from messages, handling database storage and optional LLM parsing.
 
+        DONE rows return early (retroactive STT transcription of previously-
+        processed media is out of scope), with one sanctioned exception: a
+        DONE IMAGE/STICKER row lacking USABLE vision bytes (empty
+        ``vision_url``, or a key that no longer resolves in the vision-scoped
+        store) gets a native-vision backfill (store step only — never
+        re-analysis) when ``NATIVE_VISION`` is on for the chat. FAILED and
+        stale-PENDING rows are reprocessed in full.
+
         Args:
             ensuredMessage: The validated message object containing media information
             mediaType: Type of media (image, video, audio, etc.)
             mediaId: Unique identifier for the media attachment
             fileId: Platform-specific file identifier for downloading
-            dataGetter: Async function to retrieve media data by mediaId and fileId
             metadata: Optional dictionary with additional media information
             prompt: Optional prompt text for media processing
 
@@ -1924,6 +2033,21 @@ class BaseBotHandler(CommandHandlerMixin):
         mediaAttachment = await self.db.mediaAttachments.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
 
+        # Chat settings are needed by every receipt now — the native-vision
+        # DONE-backfill gate reads NATIVE_VISION and the full reprocess path
+        # below reads the rest — so fetch them once up front, before the
+        # status machine. Early-returning receipts (DONE, fresh PENDING,
+        # wrong-mime skip) therefore pay the same cache-backed settings read
+        # as fully processed ones. The fetch is deliberately unwrapped: a
+        # settings-loading failure aborts the receipt uniformly for every
+        # status.
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        nativeVision = chatSettings[ChatSettingsKey.NATIVE_VISION].toBool()
+        needVisionStore = nativeVision and mediaType in (
+            MessageType.IMAGE,
+            MessageType.STICKER,
+        )
+
         if mediaAttachment is not None:
             logger.debug(f"Media#{ret.id} already in database")
             if mediaAttachment["media_type"] != mediaType:
@@ -1935,9 +2059,42 @@ class BaseBotHandler(CommandHandlerMixin):
             # Only skip processing if Media in DB is in right status
             match MediaStatus(mediaAttachment["status"]):
                 case MediaStatus.DONE:
-                    # DONE rows always return early — retroactive STT transcription of
+                    # DONE rows return early — retroactive STT transcription of
                     # previously-processed media is intentionally out of scope (the
                     # stateless simplification removed the DONE-reprocess branch).
+                    # Sanctioned exception (2026-10-04): native-vision backfill. A
+                    # DONE IMAGE/STICKER row lacking USABLE vision bytes (empty
+                    # vision_url, or a key that no longer resolves in the
+                    # vision-scoped store) gets the store step only
+                    # (reuse-check + download + normalize + store) on re-receipt
+                    # when NATIVE_VISION is on for the chat — never re-analysis
+                    # (no _parseImage, status stays DONE, description is not
+                    # re-parsed). Covered rows exit via the reuse check
+                    # inside `_storeVisionImage` with one in-lock confirm
+                    # write — a bare `updated_at` touch; a TTL-GC-cleared
+                    # reference falls through to the store path, which
+                    # re-derives the same content-addressed key and
+                    # republishes it (the dedup `exists()` check skips the
+                    # physical write when the shared object survived). Max
+                    # animated-sticker stub rows are NOT eligible:
+                    # processMaxMedia seeds them DONE precisely so the generic
+                    # placeholder image is never processed, and publishing it as
+                    # the sticker's vision content would poison chat-time
+                    # context (exclusion classified from the URL, not the
+                    # description).
+                    #
+                    # No local try/except: the gate above is pure comparisons,
+                    # and `_storeVisionImage` is its own fail-soft boundary and
+                    # never raises — a storage error surfaces as one WARNING
+                    # from the helper and the receipt still completes.
+                    if needVisionStore and not isMaxAnimatedStickerStubUrl(fileId):
+                        await self._storeVisionImage(
+                            chatId=ensuredMessage.recipient.id,
+                            mediaId=ret.id,
+                            mediaType=mediaType,
+                            fileId=fileId,
+                            mediaData=None,
+                        )
                     ret.task = makeEmptyAsyncTask()
                     return ret
 
@@ -1982,7 +2139,6 @@ class BaseBotHandler(CommandHandlerMixin):
                         ret.task = makeEmptyAsyncTask()
                         return ret
 
-        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         mediaData: Optional[bytes] = None
         if chatSettings[ChatSettingsKey.SAVE_ATTACHMENTS].toBool():
             if self._bot is None:
@@ -1999,6 +2155,7 @@ class BaseBotHandler(CommandHandlerMixin):
             MessageType.IMAGE,
             MessageType.STICKER,
         )
+
         needProcessSTT = (
             self._sttEnabled
             and mediaType
@@ -2041,6 +2198,30 @@ class BaseBotHandler(CommandHandlerMixin):
                 fileSize=None,
                 description=None,
             )
+
+        # Native-vision store branch (Phase 1b): normalize + persist the image
+        # bytes so Phase 2 can attach them natively at chat time. Runs
+        # synchronously right after the row upsert; the description pipeline
+        # below still spawns per its own `needParseImage` gate. The ENTIRE
+        # vision-specific operation — null-backend check, download,
+        # normalization, storage, and the vision_url write — lives inside
+        # `_storeVisionImage`'s fail-soft boundary
+        # (docs/design/native-vision-design-v1.md §3.2): any failure is
+        # logged as a WARNING and skipped, and the media status machine is
+        # never touched by this branch. Bytes the branch downloaded
+        # successfully are returned so the parse path below can reuse them;
+        # the parse path keeps its own pre-existing "download when mediaData
+        # is still None" retry.
+        if needVisionStore:
+            visionUrl, visionMediaData = await self._storeVisionImage(
+                chatId=ensuredMessage.recipient.id,
+                mediaId=ret.id,
+                mediaType=mediaType,
+                fileId=fileId,
+                mediaData=mediaData,
+            )
+            if visionMediaData is not None:
+                mediaData = visionMediaData
 
         # Need to process Attachment somehow
         if needParseImage or needProcessSTT:
@@ -2087,14 +2268,14 @@ class BaseBotHandler(CommandHandlerMixin):
                         role="system",
                         content=imagePrompt,
                     ),
-                    ModelImageMessage(
+                    ModelImagesMessage(
                         role="user",
                         # content=ensuredMessage.messageText,
                         # Openrouer LLMs does not support adding text to message with image.
                         # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
                         # So let's delete it
                         content="",
-                        image=bytearray(mediaData),
+                        images=[bytearray(mediaData)],
                     ),
                 ]
 
@@ -2115,6 +2296,200 @@ class BaseBotHandler(CommandHandlerMixin):
             ret.task = makeEmptyAsyncTask()
 
         return ret
+
+    async def _storeVisionImage(
+        self,
+        *,
+        chatId: int,
+        mediaId: str,
+        mediaType: MessageType,
+        fileId: str,
+        mediaData: Optional[bytes],
+    ) -> Tuple[Optional[str], Optional[bytes]]:
+        """
+        Run the complete native-vision receipt-time store operation; never raises.
+
+        This method OWNS the whole vision-specific flow and is its single
+        fail-soft boundary (docs/design/native-vision-design-v1.md §3.2):
+        the null-backend check, reuse check, download, libmagic image
+        guard, strict normalization, object storage, and the
+        ``media_attachments.vision_url`` write all happen inside one
+        try/except. Any failure is logged as a plain WARNING (every
+        occurrence — there is deliberately no rate-limiting) and the media
+        status machine is NOT touched.
+
+        Ordering contract:
+
+        - The null-backend check runs BEFORE any vision-only download, so a
+          misconfigured backend never wastes a fetch;
+        - the early reuse check runs next: under the lock it REVALIDATES the
+          row's CURRENT ``vision_url`` (in-lock row re-read — the TTL-GC
+          sweep may have cleared it while the receipt was in flight) and
+          probes that key against the vision-scoped store. Live reference +
+          live object → ONE bare-touch UPDATE of ``updated_at``
+          (receipt-freshness/LRU signal for the vision TTL-GC — repeated
+          coverage refreshes the retention clock) and an immediate return.
+          No usable reference, or the object behind it is missing (e.g. a
+          pre-storage-split legacy ``vision/{sha512}.{ext}`` key that no
+          longer resolves in the vision-scoped store) → falls through to the
+          full path, and the row's vision_url is overwritten with the fresh
+          bare key (self-heal). This also covers the retained-file GC-first
+          order: when the sweep cleared the row's reference while the shared
+          object stayed alive via another row, the store path re-downloads →
+          re-normalizes → derives the SAME content-addressed key → the dedup
+          ``exists()`` check skips the physical write → the key is
+          republished on the row — no separate republish branch and no hint
+          parameter are needed;
+        - the download happens only when *mediaData* is empty: a download
+          that already returned None earlier in the receipt flow (e.g. by
+          the save-attachments path) is RETRIED here — a transient failure
+          must not cost the chat its stored image;
+        - normalization uses the STRICT variant of
+          [`normalizeVisionImage`](lib/ai/imaging.py): on any normalization
+          failure the store is skipped and ``vision_url`` stays unpublished
+          — the lenient fallback is the ORIGINAL bytes (oversized, still
+          carrying EXIF), and send-time delivery does no resize;
+        - storage happens before the DB write: a failed write may leave an
+          orphan storage object (acceptable), but ``vision_url`` is never
+          published before the object exists;
+        - the two storage/DB critical sections — the reuse short-exit
+          (in-lock row reread → current-key probe → bare touch) and the
+          store-and-publish section (dedup ``exists()`` + ``store()`` +
+          ``vision_url`` write) — run under the module-level
+          ``visionStorageLock`` shared with the TTL-GC sweep (see the
+          lock's docstring for the protocol and why serializing them
+          closes the receipt/GC races). The download and normalization
+          stay OUTSIDE the lock so network/encoder I/O never serializes
+          against the GC; the CPU-bound normalization additionally runs
+          OFF the event loop via ``asyncio.to_thread`` so a large image
+          cannot delay unrelated chats (the await stays inline —
+          construction-time attachment depends on normalization
+          completing).
+
+        Normalization parameters (dimension, output format, quality, alpha
+        background) come from the vision settings cached in ``__init__``
+        (``_visionMaxImageDimension`` / ``_visionImageFormat`` /
+        ``_visionImageQuality`` / ``_visionAlphaBackground``) — no per-call
+        config reads. The object is
+        written to the vision-scoped store (``visionStorage``, configured
+        from ``[storage.storages.vision]``) under the BARE content key
+        ``{sha512}.{ext}`` — there is no app-layer prefix; separation from
+        the attachments store is achieved by backend placement (scoped-
+        storage design v1 §4.4).
+
+        Args:
+            chatId: Chat the media belongs to (for the warning log line).
+            mediaId: Media identifier, for logging.
+            mediaType: Media type (only IMAGE/STICKER reach this method).
+            fileId: Platform file id used when a download is required.
+            mediaData: Already-downloaded bytes (e.g. fetched by the
+                save-attachments path), or None when no bytes are available.
+
+        Returns:
+            ``(visionUrl, availableMediaData)`` where *visionUrl* is the
+            storage key written to ``media_attachments.vision_url`` (None on
+            skip/failure; on the early-reuse path the row's CURRENT verified
+            key) and *availableMediaData* is whatever bytes exist after this
+            method's download step (None when there are none), for reuse by
+            the parse path.
+        """
+        try:
+            if self.visionStorage.backendType == "null":
+                logger.warning(
+                    f"Native-vision store failed for chat {chatId}: vision storage backend is 'null' — "
+                    "configure [storage.storages.vision] to use native-vision"
+                )
+                return (None, None)
+
+            async with visionStorageLock:
+                # Revalidate the row's CURRENT reference under the lock: the
+                # TTL-GC sweep may have run while the receipt was in flight —
+                # most importantly the retained-file GC-first order (an
+                # expired row's shared key was kept alive by a fresh row, but
+                # the expired row's vision_url was CLEARED). The PK read is
+                # cheap; a vanished row is treated as "no current reference".
+                currentRow = await self.db.mediaAttachments.getMediaAttachment(mediaId)
+                currentVisionUrl: Optional[str] = currentRow.get("vision_url") if currentRow else None
+                if currentVisionUrl and self.visionStorage.exists(currentVisionUrl):
+                    # Early reuse: a live object backs the row's current key
+                    # in the vision-scoped store, so the download,
+                    # normalization, and store steps are all skipped
+                    # (repeated receipts are idempotent): one bare touch of
+                    # ``updated_at`` — the receipt-freshness/LRU signal the
+                    # vision TTL-GC sweeps on, so every covered re-receipt
+                    # refreshes the retention clock.
+                    # Everything else (no current reference, or the object
+                    # behind it vanished — e.g. a legacy pre-storage-split
+                    # `vision/{sha512}.{ext}` key that no longer resolves in
+                    # the vision-scoped store) falls through to the full
+                    # store path below. When the GC cleared the reference but
+                    # the shared object stayed alive via another row, that
+                    # path re-downloads → re-normalizes → derives the SAME
+                    # content-addressed key → the dedup ``exists()`` check
+                    # skips the physical write → the key is republished on
+                    # the row (self-heal — no hint parameter needed).
+                    await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId)
+                    return (currentVisionUrl, mediaData)
+
+            if mediaData is None:
+                if self._bot is None:
+                    raise ValueError("Bot is not initialized")
+                mediaData = await self._bot.downloadAttachment(mediaId, fileId)
+            if mediaData is None:
+                logger.warning(
+                    f"Native-vision store failed for chat {chatId}: download of {mediaType}#{mediaId} returned no data"
+                )
+                return (None, None)
+
+            # Same guard style as the parse path: only real images.
+            mimeType = magic.from_buffer(mediaData, mime=True)
+            if not mimeType.startswith("image/"):
+                logger.debug(f"{mediaType}#{mediaId} is not an image ({mimeType}), skipping vision store")
+                # Hand the downloaded bytes back so the parse path (which
+                # accepts any media and applies its own MIME guard) can
+                # reuse them instead of re-downloading.
+                return (None, mediaData)
+
+            # CPU-bound decode/resize/encode runs in a worker thread
+            # (``asyncio.to_thread`` — the repo-standard offload) so a large
+            # image cannot stall unrelated chats, typing updates, or cron
+            # work. The await stays INLINE (construction-time attachment
+            # depends on normalization completing) and OUTSIDE
+            # ``visionStorageLock`` (the ordering contract above).
+            normalized = await asyncio.to_thread(
+                normalizeVisionImageStrict,
+                imageBytes=mediaData,
+                maxDimension=self._visionMaxImageDimension,
+                outputFormat=self._visionImageFormat,
+                quality=self._visionImageQuality,
+                alphaBackground=self._visionAlphaBackground,
+            )
+            if normalized is None:
+                # Strict normalization failed (50MP guard, undecodable
+                # bytes, encoder error, ...): the lenient fallback would be
+                # the ORIGINAL bytes — oversized and still carrying EXIF —
+                # and send time does no resize, so fail closed instead.
+                logger.warning(
+                    f"Native-vision store failed for chat {chatId}: normalization of {mediaType}#{mediaId} failed"
+                )
+                return (None, mediaData)
+
+            normalizedBytes, normalizedMime = normalized
+            ext = normalizedMime.split("/")[-1]
+            sha512 = hashlib.sha512(normalizedBytes).hexdigest()
+            key = f"{sha512}.{ext}"
+            async with visionStorageLock:
+                # Content dedup: store only when not already present, mirroring storeAttachment.
+                if not self.visionStorage.exists(key):
+                    self.visionStorage.store(key, normalizedBytes)
+                # Store-then-write: the write below may still fail (leaving an
+                # orphan storage object — acceptable), but vision_url is never
+                # published before the object exists.
+                await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, visionUrl=key)
+            return (key, mediaData)
+        except Exception as e:
+            logger.warning(f"Native-vision store failed for chat {chatId}: {type(e).__name__}: {e}")
+            return (None, mediaData)
 
     async def storeAttachment(self, data: bytes, prefix: str, mediaType: str) -> Optional[str]:
         """

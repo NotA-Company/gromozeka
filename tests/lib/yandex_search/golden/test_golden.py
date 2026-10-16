@@ -20,7 +20,6 @@ def yandexSearchGoldenDataProvider() -> GoldenDataProvider:
     return baseGoldenDataProvider(GOLDEN_DATA_PATH)
 
 
-@pytest.mark.asyncio
 async def testYandexSearchClientInitialization():
     """Test that YandexSearchClient can be initialized."""
     client = YandexSearchClient(apiKey="test-key", folderId="test-folder")

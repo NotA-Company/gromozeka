@@ -50,7 +50,9 @@ internal/database/migrations/
     ├── migration_026_chat_accessibility_bot_status.py
     ├── migration_027_drop_chat_stats_backfill_aggregates.py
     ├── migration_028_add_stat_events_retention_index.py
-    └── migration_029_drop_webhook_updates.py
+    ├── migration_029_drop_webhook_updates.py
+    ├── migration_030_add_vision_url.py
+    └── migration_031_add_vision_url_index.py
 ```
 
 > **Note (pre-existing drift):** migrations 014–025 are not listed in the file tree or the Migration History table below — they were never backfilled into this README. The authoritative, complete migration list lives in [`docs/database-schema.md`](../../../docs/database-schema.md) §"Migration Files" and [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md). Adding `migration_026` here for the chat-accessibility feature; backfilling 014–025 is out of scope for this change.
@@ -132,8 +134,10 @@ This section documents all migrations in the system, dood!
 | 027 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop legacy tables | chat_stats, chat_user_stats, stat_aggregates |
 | 028 | [`migration_028_add_stat_events_retention_index.py`](versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) | stat_events |
 | 029 | [`migration_029_drop_webhook_updates.py`](versions/migration_029_drop_webhook_updates.py:1) | Drop webhook_updates table (moved to the webhook receiver's own database) | webhook_updates |
+| 030 | [`migration_030_add_vision_url.py`](versions/migration_030_add_vision_url.py:1) | Add vision_url column to media_attachments (native-vision normalized image store) | media_attachments |
+| 031 | [`migration_031_add_vision_url_index.py`](versions/migration_031_add_vision_url_index.py:1) | Add index on media_attachments (vision_url, updated_at) for the vision TTL-GC combined snapshot query | media_attachments |
 
-**Total Migrations:** 29
+**Total Migrations:** 31
 
 **Important Notes:**
 - Migration 013 is critical for SQL portability - it recreates 19 tables to remove `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns

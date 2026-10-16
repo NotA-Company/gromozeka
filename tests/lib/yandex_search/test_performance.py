@@ -190,7 +190,6 @@ class TestSearchPerformance:
     concurrent search capabilities.
     """
 
-    @pytest.mark.asyncio
     async def testSingleSearchResponseTime(
         self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
     ) -> None:
@@ -223,7 +222,6 @@ class TestSearchPerformance:
 
         logger.info(f"Single search response time: {responseTime:.3f}s")
 
-    @pytest.mark.asyncio
     async def testSequentialSearchPerformance(
         self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
     ) -> None:
@@ -263,7 +261,6 @@ class TestSearchPerformance:
         logger.info(f"Sequential searches: {len(queries)} in {totalTime:.3f}s")
         logger.info(f"Average time per search: {avgTime:.3f}s")
 
-    @pytest.mark.asyncio
     async def testConcurrentSearchPerformance(
         self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
     ) -> None:
@@ -312,7 +309,6 @@ class TestMemoryAndResourceUsage:
     leaks during normal operation.
     """
 
-    @pytest.mark.asyncio
     async def testConcurrentRequestResourceManagement(
         self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
     ) -> None:
@@ -360,7 +356,6 @@ class TestPerformanceBenchmarks:
     baseline performance metrics.
     """
 
-    @pytest.mark.asyncio
     async def benchmarkSearchThroughput(self, mockClient: MockYandexSearchClient) -> None:
         """Benchmark search throughput (requests per second).
 
@@ -397,7 +392,6 @@ class TestPerformanceBenchmarks:
         # Performance assertion - should handle at least 5 requests/second
         assert throughput >= 5.0
 
-    @pytest.mark.asyncio
     async def benchmarkCacheThroughput(self, cachedClient: MockYandexSearchClient) -> None:
         """Benchmark cache throughput (requests per second with cache).
 

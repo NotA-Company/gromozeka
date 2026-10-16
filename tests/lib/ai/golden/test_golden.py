@@ -35,7 +35,6 @@ def goldenDataProvider() -> Any:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def test_yc_openai_basic(goldenDataProvider):
     """Test basic text generation with YcOpenaiProvider using golden data.
 
@@ -92,7 +91,6 @@ async def test_yc_openai_basic(goldenDataProvider):
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def test_openrouter_basic(goldenDataProvider):
     """Test basic text generation with OpenrouterProvider using golden data.
 
@@ -168,7 +166,6 @@ duplicating the schema definition.
 """
 
 
-@pytest.mark.asyncio
 async def test_openrouter_structured(goldenDataProvider: Any) -> None:
     """Test structured-output generation with OpenrouterProvider using golden data.
 
@@ -229,7 +226,6 @@ async def test_openrouter_structured(goldenDataProvider: Any) -> None:
             assert requiredKey in result.data, f"Required key '{requiredKey}' missing from result.data"
 
 
-@pytest.mark.asyncio
 async def test_yc_openai_structured(goldenDataProvider: Any) -> None:
     """Test structured-output generation with YcOpenaiProvider using golden data.
 

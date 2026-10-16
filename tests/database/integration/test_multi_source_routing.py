@@ -58,7 +58,6 @@ async def multiSourceDb():
 class TestChatRouting:
     """Tests for chat-based routing to different data sources."""
 
-    @pytest.mark.asyncio
     async def test_chat_routing(self, multiSourceDb):
         """Test that chat data is routed to correct source."""
         # Chat 100 should go to source1
@@ -76,7 +75,6 @@ class TestChatRouting:
         assert user2 is not None
         assert user2["username"] == "@user2"
 
-    @pytest.mark.asyncio
     async def test_chat_routing_with_settings(self, multiSourceDb):
         """Test that chat settings are routed to correct source."""
         # Set chat settings for chat 100 (should go to source1)
@@ -92,7 +90,6 @@ class TestChatRouting:
         setting2 = await multiSourceDb.chatSettings.getChatSetting(200, "model", dataSource="source2")
         assert setting2 == "gpt-3.5"
 
-    @pytest.mark.asyncio
     async def test_unmapped_chat_uses_default(self, multiSourceDb):
         """Test that unmapped chats use default source."""
         # Chat 400 is not in chatMapping, should use default (source1)
@@ -111,7 +108,6 @@ class TestChatRouting:
 class TestReadOnlySources:
     """Tests for read-only source handling."""
 
-    @pytest.mark.asyncio
     async def test_read_from_readonly_source(self, multiSourceDb):
         """Test reading from read-only source."""
         # Add user to source1
@@ -122,7 +118,6 @@ class TestReadOnlySources:
         assert user is not None
         assert user["username"] == "@user1"
 
-    @pytest.mark.asyncio
     async def test_write_to_readonly_source_fails(self, multiSourceDb):
         """Test that writing to read-only source fails."""
         # Try to get provider for write operation on read-only source - should raise ValueError
@@ -147,7 +142,6 @@ class TestReadOnlySources:
 class TestCrossSourceQueries:
     """Tests for cross-source queries."""
 
-    @pytest.mark.asyncio
     async def test_query_specific_source(self, multiSourceDb):
         """Test querying a specific source."""
         # Add users to both sources
@@ -164,7 +158,6 @@ class TestCrossSourceQueries:
         assert len(users2) == 1
         assert users2[0]["username"] == "@user2"
 
-    @pytest.mark.asyncio
     async def test_cache_operations_use_default_source(self, multiSourceDb):
         """Test that cache operations use default source."""
         # Cache operations should use default source (source1)
@@ -183,7 +176,6 @@ class TestCrossSourceQueries:
 class TestTransactionHandling:
     """Tests for transaction handling across sources."""
 
-    @pytest.mark.asyncio
     async def test_transaction_in_single_source(self, multiSourceDb):
         """Test transaction within a single source."""
         # Note: The database layer uses implicit transactions via the cursor context manager.
@@ -198,7 +190,6 @@ class TestTransactionHandling:
         assert user is not None
         assert user["username"] == "@user1"
 
-    @pytest.mark.asyncio
     async def test_transaction_rollback_in_single_source(self, multiSourceDb):
         """Test transaction rollback within a single source."""
         # Note: The database layer uses implicit transactions via the cursor context manager.
@@ -219,7 +210,6 @@ class TestTransactionHandling:
 class TestDataIsolation:
     """Tests for data isolation between sources."""
 
-    @pytest.mark.asyncio
     async def test_data_isolation_between_sources(self, multiSourceDb):
         """Test that data is isolated between sources."""
         # Add users to both sources with same IDs
@@ -236,7 +226,6 @@ class TestDataIsolation:
         assert user2 is not None
         assert user2["username"] == "@user1_source2"
 
-    @pytest.mark.asyncio
     async def test_cache_isolation_between_sources(self, multiSourceDb):
         """Test that cache is isolated between sources."""
         # Add cache entries to both sources
@@ -259,7 +248,6 @@ class TestDataIsolation:
 class TestSourceManagement:
     """Tests for source management."""
 
-    @pytest.mark.asyncio
     async def test_get_provider_for_source(self, multiSourceDb):
         """Test getting provider for specific source."""
         provider1 = await multiSourceDb.manager.getProvider(dataSource="source1")
@@ -268,13 +256,11 @@ class TestSourceManagement:
         provider2 = await multiSourceDb.manager.getProvider(dataSource="source2")
         assert provider2 is not None
 
-    @pytest.mark.asyncio
     async def test_get_default_provider(self, multiSourceDb):
         """Test getting default provider."""
         provider = await multiSourceDb.manager.getProvider()
         assert provider is not None
 
-    @pytest.mark.asyncio
     async def test_close_all_sources(self, multiSourceDb):
         """Test closing all sources."""
         # Get providers to ensure they're connected

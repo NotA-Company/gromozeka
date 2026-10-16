@@ -49,14 +49,16 @@ def _resetHandlerSingletons() -> Generator[None, None, None]:
     from internal.services.storage.service import StorageService
 
     # Reset singleton instances before the test.
-    for singletonCls in (CacheService, QueueService, StorageService):
+    for singletonCls in (CacheService, QueueService):
         singletonCls._instance = None
+    StorageService._instances.clear()
 
     yield
 
     # Reset singleton instances after the test.
-    for singletonCls in (CacheService, QueueService, StorageService):
+    for singletonCls in (CacheService, QueueService):
         singletonCls._instance = None
+    StorageService._instances.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ Example:
 
 import datetime
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from internal.models import MessageType
 from lib.db import utils as dbUtils
@@ -77,9 +77,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             bool: True if the relationship was ensured successfully, False otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            False is returned; the exception is not propagated to the caller.
 
         Note:
             Writes to default source. Cannot write to readonly sources.
@@ -134,9 +133,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             bool: True if the media attachment was added successfully, False otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            False is returned; the exception is not propagated to the caller.
 
         Note:
             Writes to default source. Cannot write to readonly sources.
@@ -188,6 +186,7 @@ class MediaAttachmentsRepository(BaseRepository):
         localUrl: Optional[str] = None,
         description: Optional[str] = None,
         prompt: Optional[str] = None,
+        visionUrl: Optional[str] = None,
     ) -> bool:
         """Update a media attachment in the database.
 
@@ -204,12 +203,13 @@ class MediaAttachmentsRepository(BaseRepository):
             localUrl: Optional local URL to update.
             description: Optional description to update.
             prompt: Optional prompt to update.
+            visionUrl: Optional StorageService URL of the normalized vision
+                image to update (native-vision feature).
 
         Returns:
             bool: True if the media attachment was updated successfully, False otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            False is returned; the exception is not propagated to the caller.
 
         Note:
             Writes to default source. Cannot write to readonly sources.
@@ -236,6 +236,9 @@ class MediaAttachmentsRepository(BaseRepository):
             if prompt is not None:
                 query += "prompt = :prompt, "
                 values["prompt"] = prompt
+            if visionUrl is not None:
+                query += "vision_url = :visionUrl, "
+                values["visionUrl"] = visionUrl
             if fileSize is not None:
                 query += "file_size = :fileSize, "
                 values["fileSize"] = fileSize
@@ -272,10 +275,9 @@ class MediaAttachmentsRepository(BaseRepository):
             dataSource: Optional data source name for multi-source routing.
 
         Returns:
-            MediaAttachmentDict if found, None otherwise.
-
-        Raises:
-            Exception: If database operation fails.
+            MediaAttachmentDict if found, None otherwise. On a database failure the
+            error is logged (ERROR) by the repository and None is returned; the
+            exception is not propagated to the caller.
         """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
@@ -307,10 +309,9 @@ class MediaAttachmentsRepository(BaseRepository):
             dataSource: Optional data source name for multi-source routing.
 
         Returns:
-            List of MediaAttachmentDict objects, empty list if none found.
-
-        Raises:
-            Exception: If database operation fails.
+            List of MediaAttachmentDict objects, empty list if none found. On a
+            database failure the error is logged (ERROR) by the repository and an
+            empty list is returned; the exception is not propagated to the caller.
         """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
@@ -344,9 +345,8 @@ class MediaAttachmentsRepository(BaseRepository):
 
         Returns:
             datetime of the most recent media addition, or None if group not found.
-
-        Raises:
-            Exception: If database operation fails.
+            On a database failure the error is logged (ERROR) by the repository and
+            None is returned; the exception is not propagated to the caller.
         """
         try:
             sqlProvider = await self.manager.getProvider(readonly=True, dataSource=dataSource)
@@ -371,3 +371,145 @@ class MediaAttachmentsRepository(BaseRepository):
             logger.error(f"Failed to get media group last updated timestamp: {e}")
             logger.exception(e)
             return None
+
+    async def getExpiredVisionAttachmentsWithRetention(
+        self, cutoff: datetime.datetime, *, dataSource: Optional[str] = None
+    ) -> Optional[Tuple[List[MediaAttachmentDict], Set[str]]]:
+        """Get expired vision rows AND their retained keys from ONE consistent snapshot.
+
+        Single-statement sweep input for the vision TTL garbage collector.
+        In one database evaluation point (an atomic snapshot on SQLite, an
+        MVCC-consistent read on PostgreSQL/MySQL) the statement selects
+        every row past the retention cutoff that still references a vision
+        object and, per row, whether that row's ``vision_url`` is shared by
+        at least one live row (``updated_at >= cutoff``):
+
+        ```sql
+        SELECT e.*,
+               EXISTS(
+                   SELECT 1 FROM media_attachments l
+                   WHERE l.vision_url = e.vision_url AND l.updated_at >= :cutoff
+               ) AS retained
+        FROM media_attachments e
+        WHERE e.vision_url IS NOT NULL AND e.updated_at < :cutoff
+        ```
+
+        The ``updated_at`` column doubles as the receipt-freshness/LRU
+        signal: it is refreshed by every update (including the bare touch
+        on the vision reuse path), so a row older than the cutoff has not
+        been re-received within the retention window.
+
+        Single-statement consistency is the shipped property: expiry and
+        retention are decided at ONE database evaluation point, so no
+        interleaved write can make the two decisions inconsistent — a
+        mid-sweep re-receipt can no longer strip a live row's shared-key
+        protection (the destructive race belonged only to the intermediate,
+        uncommitted two-query shape, not to the committed baseline).
+
+        Args:
+            cutoff: Expiration boundary (aware UTC); rows with ``updated_at``
+                strictly before it are expired, rows at or after it count as
+                live sharers.
+            dataSource: Optional data source name for multi-source routing.
+
+        Returns:
+            Three-valued contract — the caller MUST distinguish all three:
+
+            - Populated tuple: ``(expiredRows, retainedKeys)`` from ONE
+              consistent snapshot. *expiredRows* is the sweep input (rows
+              with ``vision_url IS NOT NULL AND updated_at < cutoff``, as
+              MediaAttachmentDict objects — the internal ``retained`` flag
+              is stripped); *retainedKeys* contains exactly the expired
+              rows' keys that at least one live row shares — the keys the
+              GC must NOT delete; every other expired key is safe to delete.
+            - ``([], set())``: the query succeeded and genuinely nothing is
+              expired.
+            - ``None``: the query itself FAILED (error logged (ERROR) by
+              the repository; the exception is not propagated).
+
+            This method is the sanctioned exception to this repository's
+            empty-sentinel-on-error convention because its only caller is
+            a DESTRUCTIVE garbage collector that deletes every stored file
+            whose key is absent from the retained set: mistaking a failed
+            lookup for "nothing is expired / retained" would authorize
+            deleting files that live rows may still reference. Failure must
+            therefore be observable as ``None``, never collapsed into
+            emptiness.
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                """
+                SELECT e.*,
+                       EXISTS(
+                           SELECT 1 FROM media_attachments l
+                           WHERE l.vision_url = e.vision_url AND l.updated_at >= :cutoff
+                       ) AS retained
+                FROM media_attachments e
+                WHERE e.vision_url IS NOT NULL AND e.updated_at < :cutoff
+            """,
+                {"cutoff": cutoff},
+            )
+
+            expiredRows: List[MediaAttachmentDict] = []
+            retainedKeys: Set[str] = set()
+            for row in rows:
+                if row["retained"]:
+                    retainedKeys.add(row["vision_url"])
+                # Strip the synthetic retained flag: the typed dicts carry
+                # only real media_attachments columns.
+                expiredRows.append(
+                    dbUtils.sqlToTypedDict(
+                        {key: value for key, value in row.items() if key != "retained"},
+                        MediaAttachmentDict,
+                    )
+                )
+            return (expiredRows, retainedKeys)
+        except Exception as e:
+            logger.error(f"Failed to get expired vision attachments with retention: {e}")
+            return None
+
+    async def clearVisionUrl(self, mediaId: str, *, dataSource: Optional[str] = None) -> bool:
+        """Clear the vision_url of a media attachment (vision TTL garbage collection).
+
+        Sets ``vision_url`` to NULL and refreshes ``updated_at`` in a single
+        UPDATE — the ride-along ``updated_at`` refresh is consistent with
+        every update in this repository and marks the row as freshly
+        examined by the GC pass.
+
+        Args:
+            mediaId: Media attachment unique identifier (file_unique_id).
+            dataSource: Optional data source name for multi-source routing.
+
+        Returns:
+            True if the update executed successfully, False otherwise.
+            A mediaId matching no row is not an error (True, same semantics
+            as updateMediaAttachment). On a database failure the error is
+            logged (ERROR) by the repository and False is returned; the
+            exception is not propagated to the caller.
+
+        Note:
+            Writes to the routed source with ``readonly=False`` (default
+            source when no *dataSource* is given). Cannot write to readonly
+            sources.
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=False)
+            await sqlProvider.execute(
+                """
+                UPDATE media_attachments
+                SET
+                    vision_url = NULL,
+                    updated_at = :updatedAt
+                WHERE
+                    file_unique_id = :mediaId
+            """,
+                {
+                    "mediaId": mediaId,
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
+                },
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear media attachment vision_url: {e}")
+            return False

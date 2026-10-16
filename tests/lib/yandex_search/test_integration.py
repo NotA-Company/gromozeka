@@ -188,7 +188,6 @@ class TestEndToEndIntegration:
     to final parsed results, including caching and error handling.
     """
 
-    @pytest.mark.asyncio
     async def testCompleteSearchWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test complete search workflow from query to parsed results.
 
@@ -236,7 +235,6 @@ class TestEndToEndIntegration:
         assert hlwords is not None
         assert "python" in [word.lower() for word in hlwords]
 
-    @pytest.mark.asyncio
     async def testSearchWithCachingWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test search workflow with caching enabled.
 
@@ -266,7 +264,6 @@ class TestEndToEndIntegration:
         assert results3 is not None
         assert results3["requestId"] == results1["requestId"]  # Same mock response
 
-    @pytest.mark.asyncio
     async def testAdvancedSearchParameters(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test advanced search with all parameters.
 
@@ -302,7 +299,6 @@ class TestEndToEndIntegration:
         assert results["found"] == 1000
         assert results["requestId"] == "1234567890"
 
-    @pytest.mark.asyncio
     async def testCacheBypassWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test cache bypass functionality.
 
@@ -326,7 +322,6 @@ class TestEndToEndIntegration:
         assert results2 is not None
         assert results1["requestId"] == results2["requestId"]
 
-    @pytest.mark.asyncio
     async def testConcurrentSearchesWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test concurrent searches with caching.
 
@@ -352,7 +347,6 @@ class TestEndToEndIntegration:
         assert all(results)
         assert all(r and r["requestId"] == "1234567890" for r in results)
 
-    @pytest.mark.asyncio
     async def testRateLimitingWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test rate limiting in integration context.
 
@@ -384,7 +378,6 @@ class TestEndToEndIntegration:
         # So we just verify they complete successfully without expecting a delay
         assert totalTime < 1.0  # Should complete quickly without rate limiting delays
 
-    @pytest.mark.asyncio
     async def testErrorHandlingWorkflow(self) -> None:
         """Test error handling in integration context.
 
@@ -425,7 +418,6 @@ class TestCacheIntegration:
     scenarios including key generation, TTL management, and consistency.
     """
 
-    @pytest.mark.asyncio
     async def testCacheKeyConsistency(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test that cache keys are generated consistently.
 
@@ -448,7 +440,6 @@ class TestCacheIntegration:
         # Should get same cached result
         assert results1 and results2 and results1["requestId"] == results2["requestId"]
 
-    @pytest.mark.asyncio
     async def testCacheTtlExpiration(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test cache TTL expiration.
 

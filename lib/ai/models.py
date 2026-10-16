@@ -10,9 +10,12 @@ Key components:
 - LLMToolFunction: Function tool with parameters and callable implementation
 - LLMToolCall: Represents a tool call request from an LLM
 - ModelMessage: Standard message format for LLM conversations
-- ModelImageMessage: Message with image content support
+- ModelImagesMessage: Message with one or more images (image content support)
 - ModelRunResult: Unified result structure for LLM responses
 - ModelResultStatus: Enumeration of possible result statuses
+
+Image-manipulation helpers (convertImageIfNeeded, normalizeVisionImage*,
+VisionOutputImageFormat, AlphaBackground) live in :mod:`lib.ai.imaging`.
 
 Example:
     >>> from lib.ai.models import LLMToolFunction, LLMFunctionParameter, LLMParameterType
@@ -39,116 +42,26 @@ import base64
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from enum import Enum, StrEnum
-from io import BytesIO
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
-
-import magic
-from PIL import Image
+from typing import Any, Dict, List, Optional, Sequence, TypeAlias
 
 import lib.utils as utils
+from lib.ai.imaging import AlphaBackground, convertImageIfNeeded
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Image format conversion helper
-# ---------------------------------------------------------------------------
 
-#: Maps an image MIME type to the Pillow ``Image.save`` format string.
-#: Used by :func:`convertImageIfNeeded` to re-encode image bytes into a format
-#: the target LLM accepts as vision input.
-_MIME_TO_PIL_FORMAT: Dict[str, str] = {
-    "image/jpeg": "JPEG",
-    "image/png": "PNG",
-    "image/webp": "WEBP",
-    "image/gif": "GIF",
-}
+ModelMessageDescriptionResolver: TypeAlias = Callable[[], Awaitable[Optional[str]]]
+"""Type alias for the lazy media-description resolver carried by ModelMessage.
 
-#: Maximum pixel count (width × height) for an image we are willing to
-#: re-encode for a vision request. Real vision inputs are never this large;
-#: the cap bounds memory use on crafted decompression bombs BEFORE the
-#: expensive decode runs. Pillow's own ``DecompressionBombError`` still fires
-#: above ~2× its threshold and is caught by the broad except below. Scoped to
-#: this function only — the global ``Image.MAX_IMAGE_PIXELS`` is left untouched
-#: so other Pillow users in the process (e.g. python-telegram-bot) are unaffected.
-MAX_VISION_IMAGE_PIXELS = 50_000_000  # 50 MP
-
-
-def convertImageIfNeeded(imageBytes: bytes, supportedFormats: Optional[List[str]]) -> Tuple[bytes, str]:
-    """Return image bytes in a MIME format the target model accepts, converting only when required.
-
-    Detects the current MIME type of *imageBytes*. When *supportedFormats* is
-    falsy (``None`` or empty) or already contains the detected MIME, the bytes
-    are returned unchanged (passthrough). Otherwise the bytes are re-encoded to
-    the FIRST entry in *supportedFormats* via Pillow.
-
-    This function NEVER raises: any conversion failure (unreadable bytes,
-    unknown target format, oversized image, Pillow error, or even a libmagic
-    failure during MIME detection) is logged and the ORIGINAL bytes are
-    returned unchanged so the caller can still attempt the request. When MIME
-    detection itself fails the returned type is ``application/octet-stream``
-    (honest about not knowing the type; the API will reject if it can't handle
-    it).
-
-    Args:
-        imageBytes: Raw image bytes in any format Pillow can open.
-        supportedFormats: Ordered list of acceptable input MIME types for the
-            target model, e.g. ``["image/jpeg", "image/png"]``. ``None`` or an
-            empty list disables conversion (passthrough). The first element is
-            used as the conversion target when the current MIME is absent.
-
-    Returns:
-        A ``(finalBytes, finalMimeType)`` tuple where *finalBytes* is the
-        (possibly converted) image bytes and *finalMimeType* is the MIME type
-        of those bytes.
-    """
-    try:
-        currentMime = magic.from_buffer(imageBytes, mime=True)
-    except Exception:  # noqa: BLE001 — libmagic failure on malformed bytes; never-raise contract
-        logger.error("Failed to detect image MIME for conversion; sending original bytes")
-        return (imageBytes, "application/octet-stream")
-    if not supportedFormats or currentMime in supportedFormats:
-        return (imageBytes, currentMime)
-
-    targetMime = supportedFormats[0]
-    pilFormat = _MIME_TO_PIL_FORMAT.get(targetMime)
-    if pilFormat is None:
-        logger.warning(
-            f"Cannot convert image to unsupported target MIME {targetMime!r} "
-            f"(current {currentMime!r}); sending original"
-        )
-        return (imageBytes, currentMime)
-    try:
-        logger.debug(
-            f"Got image in {currentMime} format. " f"Supported formats: {supportedFormats}; converting to {targetMime}"
-        )
-        with BytesIO(imageBytes) as inBuf:
-            img = Image.open(inBuf)
-            # Cheap header read has populated width/height before any decode;
-            # reject oversized images so the (memory-expensive) decode never
-            # runs. Scoped cap — the global Image.MAX_IMAGE_PIXELS is NOT mutated.
-            if img.width * img.height > MAX_VISION_IMAGE_PIXELS:
-                logger.error(
-                    f"Image too large to convert ({img.width}x{img.height}="
-                    f"{img.width * img.height} pixels > {MAX_VISION_IMAGE_PIXELS}); "
-                    f"current={currentMime!r} target={targetMime!r}"
-                )
-                return (imageBytes, currentMime)
-            # JPEG has no alpha channel; flatten onto an RGB canvas first so
-            # Pillow can encode transparency-bearing sources (PNG/WebP) into JPEG.
-            if targetMime == "image/jpeg":
-                img = img.convert("RGB")
-            with BytesIO() as outBuf:
-                img.save(outBuf, format=pilFormat)
-                converted = outBuf.getvalue()
-        return (converted, targetMime)
-    except Exception as e:  # noqa: BLE001 — graceful degradation is the contract
-        logger.error(
-            f"Failed to convert image from {currentMime!r} to {targetMime!r}: {e}; "
-            f"returning original bytes unchanged"
-        )
-        return (imageBytes, currentMime)
+An async callable taking no arguments and returning the resolved media
+description text for the source message, or ``None``/empty when nothing
+resolves. The closure is metadata only — never serialized (mirrors
+``source``) — and must be at-most-once (cached after the first invocation)
+and never raise. Its one deliberate consumer is the condenser strip
+(``stripImagesForCondensing`` in ``internal/services/llm/service.py``).
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +476,7 @@ class ModelMessage:
         {'role': 'user', 'content': 'What is the weather in London?'}
     """
 
-    __slots__ = ("role", "content", "contentKey", "toolCalls", "toolCallId", "weight", "source")
+    __slots__ = ("role", "content", "contentKey", "toolCalls", "toolCallId", "weight", "source", "descriptionResolver")
 
     def __init__(
         self,
@@ -574,6 +487,7 @@ class ModelMessage:
         toolCallId: Optional[str] = None,
         weight: Optional[int] = None,
         source: Optional[Any] = None,
+        descriptionResolver: Optional[ModelMessageDescriptionResolver] = None,
     ):
         """Initialize a model message.
 
@@ -585,6 +499,12 @@ class ModelMessage:
             toolCallId: ID of the tool call this message is responding to (default: None).
             weight: Optional weight for the message (default: None).
             source: Optional source message (default: None).
+            descriptionResolver: Optional lazy media-description resolver
+                (default: None). Metadata only, mirroring ``source``: never
+                serialized (invisible to providers, the token estimator, JSON
+                logs, and the tools-DB round-trip) and deliberately not copied
+                implicitly — its one consumer, the condenser strip, consumes
+                it without carrying it onto its output copy.
 
         Returns:
             None
@@ -596,6 +516,7 @@ class ModelMessage:
         self.toolCallId = toolCallId
         self.weight = weight
         self.source = source
+        self.descriptionResolver = descriptionResolver
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> "ModelMessage":
@@ -708,7 +629,7 @@ class ModelMessage:
             skipRole: If True, omit the role from the output (default: False).
             supportedImageFormats: Optional list of acceptable input image MIME
                 types. Ignored by the base class; honoured by
-                :meth:`ModelImageMessage.toDict` to re-encode embedded images.
+                :meth:`ModelImagesMessage.toDict` to re-encode embedded images.
                 Accepted here so providers can pass it uniformly to every
                 message in a list regardless of concrete type.
 
@@ -772,7 +693,7 @@ class ModelMessage:
         """
         return f"{type(self).__name__}({str(self)})"
 
-    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
+    def toLogMessage(self, contentLengthLimit: int = 128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
 
         Args:
@@ -796,104 +717,142 @@ class ModelMessage:
         return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
 
 
-class ModelImageMessage(ModelMessage):
-    """Represents a message with image content for multimodal LLMs.
+class ModelImagesMessage(ModelMessage):
+    """Represents a message with one or more images for multimodal LLMs.
 
-    This class extends ModelMessage to support image content alongside text.
-    Images are automatically converted to base64 and embedded in the message
-    with appropriate MIME type detection.
+    Image message class (native-vision design v1 §3.4): holds an ordered
+    list of images — a single image or a multi-image set (e.g. a Telegram
+    album or a Max multi-attachment) — and serialises them into a single
+    OpenAI-style multipart user message: an optional text block followed
+    by one ``image_url`` block per image, in list order.
 
     Example:
-        >>> with open("image.jpg", "rb") as f:
-        ...     image_data = bytearray(f.read())
-        >>> message = ModelImageMessage(
+        >>> message = ModelImagesMessage(
         ...     role="user",
-        ...     content="What's in this image?",
-        ...     image=image_data
+        ...     content="What are in these images?",
+        ...     images=[bytearray(b"fake_image_data_1"), bytearray(b"fake_image_data_2")]
         ... )
         >>> message_dict = message.toDict()
         >>> "image_url" in str(message_dict)
         True
     """
 
-    def __init__(self, role: str = "user", content: str = "", image: bytearray = bytearray()):
-        """Initialize an image message.
+    def __init__(
+        self,
+        role: str = "user",
+        content: str = "",
+        images: Optional[List[bytearray]] = None,
+        source: Optional[object] = None,
+        descriptionResolver: Optional[ModelMessageDescriptionResolver] = None,
+    ) -> None:
+        """Initialize a message with one or more embedded images.
 
         Args:
             role: The message role (default: "user").
             content: The text content of the message (default: "").
-            image: The image data as a bytearray (default: empty bytearray).
+            images: Ordered list of image bytearrays; each becomes one
+                ``image_url`` block in list order (default: empty list).
+                The list is COPIED: the message owns its own list, so later
+                mutation of the caller's list is not reflected, and messages
+                constructed without ``images`` never share one list.
+            source: Optional source message (default: None). Metadata only:
+                never serialized (mirrors the parent ``source`` field).
+            descriptionResolver: Optional lazy media-description resolver
+                (default: None). Metadata only: never serialized; consumed
+                at most once by the condenser strip.
 
         Returns:
             None
         """
-        super().__init__(role, content)
-        self.image = image
+        super().__init__(role=role, content=content, source=source, descriptionResolver=descriptionResolver)
+        self.images = list(images) if images is not None else []
 
     def toDict(
         self,
         contentKey: Optional[str] = None,
+        # Override-compatibility exceptions (Phase 2a review precedent): the
+        # parent ``ModelMessage.toDict`` declares ``content: Optional[Any]``;
+        # narrowing a parameter in an override violates LSP and is rejected
+        # by pyright, so ``Any`` here is forced by the parent signature. The
+        # returned content value is caller-controlled through that same
+        # parameter, and the honestly-typed ``Dict[str, object]`` return
+        # trips un-narrowed iteration/subscript of ``toDict()`` results in
+        # existing sanctioned tests — so the parent's ``Dict[str, Any]``
+        # return contract is kept.
         content: Optional[Any] = None,
         skipRole: bool = False,
         supportedImageFormats: Optional[List[str]] = None,
+        alphaBackground: AlphaBackground = AlphaBackground.ADAPTIVE,
     ) -> Dict[str, Any]:
-        """Convert the message to a dictionary with image content.
+        """Convert the message to a dictionary with one image block per embedded image.
 
-        This method overrides the parent to convert the image to base64 and
-        format it according to the OpenAI multimodal message specification.
+        This method overrides the parent to convert every embedded image to
+        base64 and format the message according to the OpenAI multimodal
+        message specification: an optional ``{"type": "text"}`` block (only
+        when the text content is non-empty) followed by one
+        ``{"type": "image_url"}`` block per image, in list order.
 
         Args:
             contentKey: Optional override for the content key (default: None).
             content: Optional override for the content value (default: None).
             skipRole: If True, omit the role from the output (default: False).
             supportedImageFormats: Optional ordered list of acceptable input
-                image MIME types for the target model. When the embedded image's
-                detected MIME is not in the list, it is re-encoded to the first
-                listed format (e.g. WebP -> JPEG). ``None`` or empty preserves
-                the original format. The conversion result is derived into a
-                LOCAL variable; ``self.image`` is never mutated, so repeated
-                serialisation (e.g. primary then fallback model) always starts
-                from the original bytes.
+                image MIME types for the target model. Every embedded image's
+                detected MIME is checked independently; when it is not in the
+                list, that image is re-encoded to the first listed format
+                (e.g. WebP -> JPEG). ``None`` or empty preserves the original
+                formats. Conversion results are derived into LOCAL variables;
+                ``self.images`` is never mutated, so repeated serialisation
+                (e.g. primary then fallback model) always starts from the
+                original bytes.
+            alphaBackground: Background an image's alpha channel composites
+                onto when it must flatten to RGB for the target model (a
+                JPEG target). Defaults to :attr:`AlphaBackground.ADAPTIVE`
+                (the contrasting background of the visible pixels; see
+                :func:`lib.ai.imaging.flattenAlphaToRgb`). Pure parameter
+                threading — lib/ stays config-free, so config-aware internal
+                callers pass the value in explicitly.
 
         Returns:
-            Dict[str, Any]: A dictionary representation with the image embedded
-                as a base64 data URI.
+            A dictionary representation with the images embedded as
+            base64 data URIs.
 
         Note:
-            The image MIME type is automatically detected using the python-magic
-            library. Conversion failures degrade gracefully: the original bytes
-            are sent unchanged (see :func:`convertImageIfNeeded`).
+            Each image MIME type is automatically detected using the
+            python-magic library. Conversion failures degrade gracefully:
+            the original bytes are sent unchanged (see
+            :func:`convertImageIfNeeded`).
 
         Example:
-            >>> message = ModelImageMessage(
+            >>> message = ModelImagesMessage(
             ...     role="user",
-            ...     content="Describe this image",
-            ...     image=bytearray(b"fake_image_data")
+            ...     content="Describe these images",
+            ...     images=[bytearray(b"fake_image_data")]
             ... )
             >>> result = message.toDict()
             >>> isinstance(result.get("content"), list)
             True
         """
         if content is None:
-            imageBytes, mimeType = convertImageIfNeeded(bytes(self.image), supportedImageFormats)
-            base64Image = base64.b64encode(imageBytes).decode("utf-8")
-
             content = []
             if self.content:
                 content.append({"type": "text", "text": self.content})
 
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mimeType};base64,{base64Image}",
-                    },
-                }
-            )
+            for image in self.images:
+                imageBytes, mimeType = convertImageIfNeeded(bytes(image), supportedImageFormats, alphaBackground)
+                base64Image = base64.b64encode(imageBytes).decode("utf-8")
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mimeType};base64,{base64Image}",
+                        },
+                    }
+                )
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
-    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
+    def toLogMessage(self, contentLengthLimit: int = 128, _selfDict: Optional[Dict[str, object]] = None) -> str:
         """Return a string representation of the message for logging.
 
         Args:

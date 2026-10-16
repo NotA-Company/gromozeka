@@ -25,14 +25,12 @@ Dependencies:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx2 as httpx
-import pytest
 
 from lib.cache import DictCache
 from lib.cache.key_generator import JsonKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient
 
 
-@pytest.mark.asyncio
 async def test_error_handling_401() -> None:
     """Test handling of authentication error (401 status code).
 
@@ -60,7 +58,6 @@ async def test_error_handling_401() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_rate_limiting() -> None:
     """Test rate limiter integration.
 
@@ -90,7 +87,6 @@ async def test_rate_limiting() -> None:
             mock_limit.assert_called_once_with("geocode-maps")
 
 
-@pytest.mark.asyncio
 async def test_cache_error_handling() -> None:
     """Test cache error handling doesn't break API calls.
 
@@ -128,7 +124,6 @@ async def test_cache_error_handling() -> None:
             assert result == mockResponse
 
 
-@pytest.mark.asyncio
 async def test_error_handling_404() -> None:
     """Test handling of not found error (404 status code).
 
@@ -156,7 +151,6 @@ async def test_error_handling_404() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_error_handling_429() -> None:
     """Test handling of rate limit error (429 status code).
 
@@ -184,7 +178,6 @@ async def test_error_handling_429() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_error_handling_500() -> None:
     """Test handling of server error (500 status code).
 
@@ -212,7 +205,6 @@ async def test_error_handling_500() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_timeout_exception() -> None:
     """Test handling of timeout exception.
 
@@ -238,7 +230,6 @@ async def test_timeout_exception() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_network_error() -> None:
     """Test handling of network error.
 
@@ -264,7 +255,6 @@ async def test_network_error() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_json_decode_error() -> None:
     """Test handling of JSON decode error.
 
@@ -293,7 +283,6 @@ async def test_json_decode_error() -> None:
         assert result is None
 
 
-@pytest.mark.asyncio
 async def test_search_parameter_validation() -> None:
     """Test search method with various parameters.
 
@@ -350,7 +339,6 @@ async def test_search_parameter_validation() -> None:
             assert call_args["format"] == "jsonv2"
 
 
-@pytest.mark.asyncio
 async def test_reverse_parameter_validation() -> None:
     """Test reverse method with various parameters.
 
@@ -396,7 +384,6 @@ async def test_reverse_parameter_validation() -> None:
             assert call_args["format"] == "jsonv2"
 
 
-@pytest.mark.asyncio
 async def test_lookup_parameter_validation() -> None:
     """Test lookup method with various parameters.
 
@@ -451,7 +438,6 @@ async def test_lookup_parameter_validation() -> None:
             assert call_args["format"] == "jsonv2"
 
 
-@pytest.mark.asyncio
 async def test_lookup_cache_behavior() -> None:
     """Test lookup cache behavior.
 
@@ -492,7 +478,6 @@ async def test_lookup_cache_behavior() -> None:
             mock_client.return_value.__aenter__.return_value.get.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_client_initialization() -> None:
     """Test client initialization with various parameters.
 

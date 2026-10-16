@@ -844,3 +844,246 @@ async def test_migration_026_chat_accessibility_bot_status() -> None:
             await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)
+
+
+async def testMigration030AddVisionUrl() -> None:
+    """Test migration 030: nullable vision_url column on media_attachments.
+
+    Creates a temporary database, applies all migrations (including 030),
+    and verifies that:
+    - The vision_url column exists with TEXT type, no NOT NULL, no default
+    - Existing rows read back as NULL for vision_url
+    - The column is writable and readable through the SQL provider
+    - The down() method correctly removes the column
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If vision_url column doesn't exist or has wrong properties
+        AssertionError: If rollback doesn't remove the column
+        Exception: If database initialization or migration execution fails
+    """
+    logger.info("=" * 60)
+    logger.info("TEST: Migration 030 - media_attachments.vision_url")
+    logger.info("=" * 60)
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath: str = f.name
+
+    db: Database | None = None
+    try:
+        # Initialize database (should apply all migrations including 030)
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+
+        # Get migration 030 from discovered migrations
+        migration030 = None
+        for migration in DISCOVERED_MIGRATIONS:
+            if migration.version == 30:
+                migration030 = migration
+                break
+
+        assert migration030 is not None, "Migration 030 not found"
+
+        # Check that vision_url column exists with correct properties
+        columns = await provider.executeFetchAll("PRAGMA table_info(media_attachments)")
+        columnNames: list[str] = [row["name"] for row in columns]  # type: ignore[index]
+        assert "vision_url" in columnNames, "vision_url column should exist"
+
+        visionUrlColumn = None
+        for col in columns:
+            if col["name"] == "vision_url":  # type: ignore[index]
+                visionUrlColumn = col
+                break
+
+        assert visionUrlColumn is not None, "vision_url column not found in table_info"
+        assert (
+            visionUrlColumn["type"] == "TEXT"
+        ), f"vision_url type should be TEXT, got {visionUrlColumn['type']}"  # type: ignore[index]
+        assert visionUrlColumn["notnull"] == 0, "vision_url should be nullable"  # type: ignore[index]
+        assert (
+            visionUrlColumn["dflt_value"] is None
+        ), f"vision_url should have no default, got {visionUrlColumn['dflt_value']}"  # type: ignore[index]
+
+        logger.info("✅ vision_url column exists (TEXT, nullable, no default)")
+
+        # Verify a pre-feature row (vision_url not written) reads back as NULL
+        await provider.execute(
+            "INSERT INTO media_attachments (file_unique_id, file_id, "
+            "media_type, metadata, status, created_at, updated_at) "
+            "VALUES ('legacy1', 'file1', 'image', '{}', 'new', "
+            "datetime('now'), datetime('now'))"
+        )
+        row = await provider.executeFetchOne(
+            "SELECT vision_url FROM media_attachments WHERE file_unique_id = 'legacy1'"
+        )
+        assert row is not None, "Inserted row should exist"
+        assert row["vision_url"] is None, "vision_url should be NULL when never written"  # type: ignore[index]
+
+        # Verify the column is writable (the Phase 1b store path) and readable
+        await provider.execute(
+            "UPDATE media_attachments SET vision_url = :visionUrl WHERE file_unique_id = :mediaId",
+            {"visionUrl": "vision/abc123.jpg", "mediaId": "legacy1"},
+        )
+        row = await provider.executeFetchOne(
+            "SELECT vision_url FROM media_attachments WHERE file_unique_id = 'legacy1'"
+        )
+        assert row is not None
+        assert (
+            row["vision_url"] == "vision/abc123.jpg"
+        ), f"vision_url should read back written value, got {row['vision_url']}"  # type: ignore[index]
+
+        logger.info("✅ vision_url column is writable and readable")
+
+        # Test rollback (down()).
+        # NOTE: migration 031 adds an index ON vision_url, and SQLite cannot
+        # DROP a column while an index references it — so 031 must be rolled
+        # back FIRST, exactly like the reverse-order rollback the
+        # MigrationManager performs (rollbackTo runs 031.down() before
+        # 030.down()).
+        migration031 = None
+        for migration in DISCOVERED_MIGRATIONS:
+            if migration.version == 31:
+                migration031 = migration
+                break
+
+        assert migration031 is not None, "Migration 031 not found"
+        await migration031().down(sqlProvider=provider)
+
+        migrationInstance = migration030()
+        await migrationInstance.down(sqlProvider=provider)
+
+        # Check that column is dropped
+        columns = await provider.executeFetchAll("PRAGMA table_info(media_attachments)")
+        columnNames = [row["name"] for row in columns]  # type: ignore[index]
+        assert "vision_url" not in columnNames, "vision_url column should be dropped"
+
+        logger.info("✅ Rollback (down()) correctly removes column")
+        logger.info("✅ Migration 030 test PASSED")
+
+    finally:
+        if db is not None:
+            await db.manager.closeAll()
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)
+
+
+async def testMigration031AddVisionUrlIndex() -> None:
+    """Test migration 031: composite index for the vision TTL-GC retained-keys lookup.
+
+    Creates a temporary database, applies all migrations (including 031),
+    and verifies that:
+    - The composite index ``idx_media_attachments_vision_url_updated_at``
+      exists on ``media_attachments (vision_url, updated_at)``
+    - A row written through the indexed columns still reads back fine
+    - The down() method correctly drops the index
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the index doesn't exist or rollback doesn't remove it
+        Exception: If database initialization or migration execution fails
+    """
+    logger.info("=" * 60)
+    logger.info("TEST: Migration 031 - media_attachments (vision_url, updated_at) index")
+    logger.info("=" * 60)
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath: str = f.name
+
+    db: Database | None = None
+    try:
+        # Initialize database (should apply all migrations including 031)
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+
+        # Get migration 031 from discovered migrations
+        migration031 = None
+        for migration in DISCOVERED_MIGRATIONS:
+            if migration.version == 31:
+                migration031 = migration
+                break
+
+        assert migration031 is not None, "Migration 031 not found"
+
+        indexName = "idx_media_attachments_vision_url_updated_at"
+
+        async def indexExists() -> bool:
+            """Check the target index exists in the SQLite schema.
+
+            Returns:
+                True when an index row with the target name is present.
+            """
+            rows = await provider.executeFetchAll(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = :indexName",
+                {"indexName": indexName},
+            )
+            return any(row["name"] == indexName for row in rows)  # type: ignore[index]
+
+        assert await indexExists(), "Composite index should exist after migrations"
+        logger.info("✅ Composite index exists (vision_url, updated_at)")
+
+        # A row written through the indexed columns still reads back fine.
+        await provider.execute(
+            "INSERT INTO media_attachments (file_unique_id, file_id, "
+            "media_type, metadata, status, vision_url, created_at, updated_at) "
+            "VALUES ('indexed1', 'file1', 'image', '{}', 'new', 'vision/abc123.jpg', "
+            "datetime('now'), datetime('now'))"
+        )
+        row = await provider.executeFetchOne(
+            "SELECT vision_url, updated_at FROM media_attachments WHERE file_unique_id = 'indexed1'"
+        )
+        assert row is not None, "Inserted row should exist"
+        assert (
+            row["vision_url"] == "vision/abc123.jpg"
+        ), f"vision_url should read back written value, got {row['vision_url']}"  # type: ignore[index]
+        assert row["updated_at"] is not None, "updated_at should read back non-NULL"  # type: ignore[index]
+
+        logger.info("✅ Row through the indexed columns reads back fine")
+
+        # Test rollback (down())
+        migrationInstance = migration031()
+        await migrationInstance.down(sqlProvider=provider)
+
+        assert not await indexExists(), "Composite index should be dropped by down()"
+
+        logger.info("✅ Rollback (down()) correctly drops index")
+        logger.info("✅ Migration 031 test PASSED")
+
+    finally:
+        if db is not None:
+            await db.manager.closeAll()
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)

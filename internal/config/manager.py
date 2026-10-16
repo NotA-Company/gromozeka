@@ -26,11 +26,12 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import tomli
 
 import lib.utils as utils
+from internal.config.models import VisionConfigDict
 from lib.proxy import ProxyConfigDict
 from lib.rate_limiter import RateLimiterManagerConfig
 
@@ -448,6 +449,47 @@ class ConfigManager:
             }
         """
         return self.get("storage", {})
+
+    def getVisionConfig(self) -> VisionConfigDict:
+        """Get native-vision image configuration.
+
+        Returns the ``[bot.vision]`` table (nested under the ``bot`` table)
+        with the following keys (each optional — configuration sections are
+        merged recursively by ConfigManager._mergeConfigs, which retains
+        keys from earlier configuration: loading the defaults and then
+        overriding only ``image-quality`` still yields every other vision
+        setting from the defaults, so a key is absent only when no earlier
+        configuration supplies it):
+            - max-image-dimension: Long-edge pixel cap for normalized images
+              (never upscales; 0 disables resizing)
+            - image-format: Normalized storage MIME ("image/jpeg" or "image/png")
+            - image-quality: JPEG quality 1-95 (ignored for PNG)
+            - ttl-days: Retention for stored vision images (enforced by the
+              hourly vision GC, HandlersManager._visionGcCronJob; 0 disables
+              the GC)
+            - alpha-background: Background transparent images (e.g. stickers)
+              composite onto when flattened for vision ("adaptive", "white"
+              or "black")
+
+        Returns:
+            Vision configuration dictionary with the keys listed above.
+            Returns an empty dict if the [bot.vision] section is not
+            configured.
+
+        Example return value:
+            {
+                "max-image-dimension": 2048,
+                "image-format": "image/jpeg",
+                "image-quality": 85,
+                "ttl-days": 30,
+                "alpha-background": "adaptive"
+            }
+        """
+        botConfig = self.getBotConfig()
+        visionSection = botConfig.get("vision", {})
+        if isinstance(visionSection, dict):
+            return cast(VisionConfigDict, visionSection)
+        return {}
 
     def getStatsConfig(self) -> Dict[str, Any]:
         """Get stats-specific configuration.

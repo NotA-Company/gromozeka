@@ -520,7 +520,6 @@ def testYcOpenaiModelExtraParamsStructure(ycOpenaiModel: YcOpenaiModel) -> None:
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextSuccess(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -562,7 +561,6 @@ async def testYcOpenaiGenerateTextSuccess(
     assert result.resultText == "Привет! У меня всё хорошо, спасибо!"
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextWithYcModelId(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -604,7 +602,6 @@ async def testYcOpenaiGenerateTextWithYcModelId(
     assert callKwargs["model"].startswith("gpt://")
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextRequestParameters(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -648,7 +645,6 @@ async def testYcOpenaiGenerateTextRequestParameters(
     assert len(callKwargs["messages"]) == 2
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextWithDifferentVersions(
     ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mock
 ) -> None:
@@ -721,7 +717,6 @@ async def testYcOpenaiGenerateTextWithDifferentVersions(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextApiError(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -743,7 +738,6 @@ async def testYcOpenaiGenerateTextApiError(
         await ycOpenaiModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextAuthenticationError(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -772,7 +766,6 @@ async def testYcOpenaiGenerateTextAuthenticationError(
         await ycOpenaiModel.generateText(sampleMessages)
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextRateLimitError(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -806,7 +799,6 @@ async def testYcOpenaiGenerateTextRateLimitError(
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiFullWorkflow(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mock) -> None:
     """Test full workflow with YC OpenAI provider.
 
@@ -995,7 +987,6 @@ def testYcOpenaiModelWithCustomExtraConfig(ycOpenaiProvider: YcOpenaiProvider, m
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextEmptyResponse(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1035,7 +1026,6 @@ async def testYcOpenaiGenerateTextEmptyResponse(
     assert result.resultText == ""
 
 
-@pytest.mark.asyncio
 async def testYcOpenaiGenerateTextNullContent(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1156,7 +1146,6 @@ _YC_SAMPLE_SCHEMA: Dict[str, Any] = {
 }
 
 
-@pytest.mark.asyncio
 async def testGenerateStructuredHappyPath(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1282,7 +1271,6 @@ def testGetImageModelIdNoFolder() -> None:
             model._getImageModelId()
 
 
-@pytest.mark.asyncio
 async def testGenerateImageViaImagesApiDispatch(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
@@ -1339,7 +1327,6 @@ async def testGenerateImageViaImagesApiDispatch(
     assert result.resultText == ""
 
 
-@pytest.mark.asyncio
 async def testGenerateImageWithoutOpenaiImagesFlag(
     ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:

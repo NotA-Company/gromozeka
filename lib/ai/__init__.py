@@ -14,7 +14,7 @@ Features:
     - Extensible model architecture
 
 Example:
-    >>> from lib.ai import LLMManager, ModelMessage, ModelImageMessage
+    >>> from lib.ai import LLMManager, ModelMessage, ModelImagesMessage
     >>>
     >>> # Initialize the manager
     >>> manager = LLMManager()
@@ -45,12 +45,16 @@ Exports:
     LLMToolFunction: Model for tool/function definitions
     LLMToolCall: Model for tool/function call results
     ModelMessage: Model for text messages
-    ModelImageMessage: Model for image messages
+    ModelImagesMessage: Model for messages with one or more images
     ModelResultStatus: Enum for result status (success, error, timeout)
     ModelRunResult: Model for model run results
+    ModelStructuredResult: Model for structured-output model run results
+    VisionOutputImageFormat: Enum of normalized vision output formats (JPEG/PNG)
+    AlphaBackground: Enum of alpha-flattening backgrounds (adaptive/white/black)
 """
 
 from .abstract import AbstractLLMProvider, AbstractModel
+from .imaging import AlphaBackground, VisionOutputImageFormat
 from .manager import LLMManager
 from .models import (
     LLMAbstractTool,
@@ -58,7 +62,7 @@ from .models import (
     LLMParameterType,
     LLMToolCall,
     LLMToolFunction,
-    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -78,8 +82,10 @@ __all__ = [
     "LLMToolFunction",
     "LLMToolCall",
     "ModelMessage",
-    "ModelImageMessage",
+    "ModelImagesMessage",
     "ModelResultStatus",
     "ModelRunResult",
     "ModelStructuredResult",
+    "VisionOutputImageFormat",
+    "AlphaBackground",
 ]
